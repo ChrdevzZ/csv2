@@ -1642,6 +1642,10 @@ template <bool flag> struct first_row_is_header {
 #if ((defined(_MSVC_LANG) && _MSVC_LANG >= 201703L) || __cplusplus >= 201703L)
 #include <string_view>
 #endif
+#if defined(_MSC_VER) && !defined(__clang__) && !defined(__INTEL_LLVM_COMPILER) && !defined(__INTEL_COMPILER)
+// For `not`, `and`, `or` when compiled by MSVC
+#include <ciso646>
+#endif
 
 namespace csv2 {
 
