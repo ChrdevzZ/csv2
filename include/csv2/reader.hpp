@@ -186,6 +186,8 @@ public:
         cell.end_ = current_ + 1;
         return cell;
       }
+      
+      bool operator==(const CellIterator &rhs) { return current_ == rhs.current_; }
 
       bool operator!=(const CellIterator &rhs) { return current_ != rhs.current_; }
     };
