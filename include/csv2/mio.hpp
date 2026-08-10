@@ -802,7 +802,8 @@ inline size_t query_file_size(file_handle_type handle, std::error_code &error) {
   const int64_t file_size_value = sbuf.st_size;
 #endif
   if (file_size_value < 0 ||
-      static_cast<std::uintmax_t>(file_size_value) > std::numeric_limits<size_t>::max()) {
+      static_cast<std::uintmax_t>(file_size_value) >
+          (std::numeric_limits<size_t>::max)()) {
     error = std::make_error_code(std::errc::value_too_large);
     return 0;
   }
@@ -852,7 +853,7 @@ inline mmap_context memory_map(const file_handle_type file_handle, const int64_t
   }
 #endif
   mmap_context ctx;
-  ctx.data = mapping_start + offset - aligned_offset;
+  ctx.data = mapping_start + (offset - aligned_offset);
   ctx.length = length;
   ctx.mapped_length = length_to_map;
 #ifdef _WIN32
@@ -969,6 +970,7 @@ void basic_mmap<AccessMode, ByteT>::map(const handle_type handle, const size_typ
     return;
   }
 
+  const bool remapping_internal_handle = is_handle_internal_ && handle == file_handle_;
   const auto ctx = detail::memory_map(
       handle, offset, length == map_entire_file ? (file_size - offset) : length, AccessMode, error);
   if (!error) {
@@ -977,9 +979,11 @@ void basic_mmap<AccessMode, ByteT>::map(const handle_type handle, const size_typ
     // order to provide the strong guarantee that, should the new mapping fail, the
     // `map` function leaves this instance in a state as though the function had
     // never been invoked.
+    if (remapping_internal_handle)
+      is_handle_internal_ = false;
     unmap();
     file_handle_ = handle;
-    is_handle_internal_ = false;
+    is_handle_internal_ = remapping_internal_handle;
     data_ = reinterpret_cast<pointer>(ctx.data);
     length_ = ctx.length;
     mapped_length_ = ctx.mapped_length;
@@ -1001,8 +1005,7 @@ basic_mmap<AccessMode, ByteT>::sync(std::error_code &error) {
 
   if (data()) {
 #ifdef _WIN32
-    if (::FlushViewOfFile(get_mapping_start(), mapped_length_) == 0 ||
-        ::FlushFileBuffers(file_handle_) == 0)
+    if (::FlushViewOfFile(get_mapping_start(), mapped_length_) == 0)
 #else // POSIX
     if (::msync(get_mapping_start(), mapped_length_, MS_SYNC) != 0)
 #endif

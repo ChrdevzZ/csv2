@@ -6,14 +6,17 @@ function(csv2_set_test_standard target standard)
 endfunction()
 
 function(csv2_enable_test_options target)
-  if(MSVC)
-    target_compile_options(${target} PRIVATE /W4 /wd5285)
+  if(MSVC OR CMAKE_CXX_COMPILER_FRONTEND_VARIANT STREQUAL "MSVC")
+    target_compile_options(${target} PRIVATE /W4)
+    if(CMAKE_CXX_COMPILER_ID STREQUAL "MSVC")
+      target_compile_options(${target} PRIVATE /wd5285)
+    endif()
   else()
     target_compile_options(${target} PRIVATE -Wall -Wextra -Wpedantic)
   endif()
 
   if(CSV2_ENABLE_SANITIZERS)
-    if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+    if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang|AppleClang")
       target_compile_options(${target} PRIVATE
         -fsanitize=address,undefined
         -fno-omit-frame-pointer
@@ -53,76 +56,120 @@ csv2_add_test_variant(csv2_test_cxx17 csv2.module.cxx17 17 FALSE)
 csv2_add_test_variant(csv2_single_header_test_cxx17 csv2.single_header.cxx17 17 TRUE)
 
 csv2_add_test_variant(csv2_test_without_mmap csv2.module.no_mmap.cxx11 11 FALSE)
-target_compile_definitions(csv2_test_without_mmap PRIVATE CSV2_HAS_MMAP=0)
+target_compile_definitions(csv2_test_without_mmap PRIVATE CSV2_HAS_MMAP=0 CSV2_TEST_NO_MMAP)
 csv2_add_test_variant(csv2_single_header_test_without_mmap
   csv2.single_header.no_mmap.cxx11 11 TRUE)
-target_compile_definitions(csv2_single_header_test_without_mmap PRIVATE CSV2_HAS_MMAP=0)
+target_compile_definitions(csv2_single_header_test_without_mmap PRIVATE
+  CSV2_HAS_MMAP=0 CSV2_TEST_NO_MMAP)
+csv2_add_test_variant(csv2_test_without_mmap_cxx17
+  csv2.module.no_mmap.cxx17 17 FALSE)
+target_compile_definitions(csv2_test_without_mmap_cxx17 PRIVATE
+  CSV2_HAS_MMAP=0 CSV2_TEST_NO_MMAP)
+csv2_add_test_variant(csv2_single_header_test_without_mmap_cxx17
+  csv2.single_header.no_mmap.cxx17 17 TRUE)
+target_compile_definitions(csv2_single_header_test_without_mmap_cxx17 PRIVATE
+  CSV2_HAS_MMAP=0 CSV2_TEST_NO_MMAP)
 
-function(csv2_add_header_self_containment target source include_directory standard)
-  add_library(${target} OBJECT ${source})
+function(csv2_add_header_self_containment target header_definition include_directory standard)
+  add_library(${target} OBJECT main.cpp)
+  target_compile_definitions(${target} PRIVATE
+    CSV2_TEST_HEADER_ONLY
+    ${header_definition})
   target_include_directories(${target} PRIVATE ${include_directory})
   csv2_set_test_standard(${target} ${standard})
   csv2_enable_test_options(${target})
 endfunction()
 
-csv2_add_header_self_containment(csv2_header_mio
-  header_self_containment/mio.cpp ${csv2_SOURCE_DIR}/include 11)
-csv2_add_header_self_containment(csv2_header_parameters
-  header_self_containment/parameters.cpp ${csv2_SOURCE_DIR}/include 11)
-csv2_add_header_self_containment(csv2_header_reader
-  header_self_containment/reader.cpp ${csv2_SOURCE_DIR}/include 11)
-csv2_add_header_self_containment(csv2_header_writer
-  header_self_containment/writer.cpp ${csv2_SOURCE_DIR}/include 11)
-csv2_add_header_self_containment(csv2_header_single
-  header_self_containment/single_header.cpp ${csv2_SOURCE_DIR}/single_include 11)
+foreach(standard IN ITEMS 11 17)
+  set(suffix "")
+  if(standard EQUAL 17)
+    set(suffix "_cxx17")
+  endif()
 
-csv2_add_header_self_containment(csv2_header_mio_cxx17
-  header_self_containment/mio.cpp ${csv2_SOURCE_DIR}/include 17)
-csv2_add_header_self_containment(csv2_header_parameters_cxx17
-  header_self_containment/parameters.cpp ${csv2_SOURCE_DIR}/include 17)
-csv2_add_header_self_containment(csv2_header_reader_cxx17
-  header_self_containment/reader.cpp ${csv2_SOURCE_DIR}/include 17)
-csv2_add_header_self_containment(csv2_header_writer_cxx17
-  header_self_containment/writer.cpp ${csv2_SOURCE_DIR}/include 17)
-csv2_add_header_self_containment(csv2_header_single_cxx17
-  header_self_containment/single_header.cpp ${csv2_SOURCE_DIR}/single_include 17)
+  csv2_add_header_self_containment(csv2_header_mio${suffix}
+    CSV2_TEST_HEADER_MIO ${csv2_SOURCE_DIR}/include ${standard})
+  csv2_add_header_self_containment(csv2_header_parameters${suffix}
+    CSV2_TEST_HEADER_PARAMETERS ${csv2_SOURCE_DIR}/include ${standard})
+  csv2_add_header_self_containment(csv2_header_reader${suffix}
+    CSV2_TEST_HEADER_READER ${csv2_SOURCE_DIR}/include ${standard})
+  csv2_add_header_self_containment(csv2_header_writer${suffix}
+    CSV2_TEST_HEADER_WRITER ${csv2_SOURCE_DIR}/include ${standard})
+  csv2_add_header_self_containment(csv2_header_single${suffix}
+    CSV2_TEST_SINGLE_HEADER ${csv2_SOURCE_DIR}/single_include ${standard})
+endforeach()
 
-csv2_add_header_self_containment(csv2_header_single_without_mmap
-  header_self_containment/single_header.cpp ${csv2_SOURCE_DIR}/single_include 11)
-target_compile_definitions(csv2_header_single_without_mmap PRIVATE
-  CSV2_HAS_MMAP=0 CSV2_EXPECT_NO_MIO)
+foreach(standard IN ITEMS 11 17)
+  set(suffix "")
+  if(standard EQUAL 17)
+    set(suffix "_cxx17")
+  endif()
 
-csv2_add_header_self_containment(csv2_header_reader_without_mmap
-  header_self_containment/reader.cpp ${csv2_SOURCE_DIR}/include 11)
-target_compile_definitions(csv2_header_reader_without_mmap PRIVATE CSV2_HAS_MMAP=0)
+  csv2_add_header_self_containment(csv2_header_single_without_mmap${suffix}
+    CSV2_TEST_SINGLE_HEADER ${csv2_SOURCE_DIR}/single_include ${standard})
+  target_compile_definitions(csv2_header_single_without_mmap${suffix} PRIVATE
+    CSV2_HAS_MMAP=0 CSV2_EXPECT_NO_MIO)
 
-if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
-  function(csv2_add_no_exceptions_test target test_name single_header)
-    add_executable(${target} no_exceptions.cpp)
-    if(single_header)
-      target_compile_definitions(${target} PRIVATE CSV2_TEST_SINGLE_HEADER)
-      target_include_directories(${target} PRIVATE ${csv2_SOURCE_DIR}/single_include)
-    else()
-      target_link_libraries(${target} PRIVATE csv2::csv2)
-    endif()
+  csv2_add_header_self_containment(csv2_header_reader_without_mmap${suffix}
+    CSV2_TEST_HEADER_READER ${csv2_SOURCE_DIR}/include ${standard})
+  target_compile_definitions(csv2_header_reader_without_mmap${suffix} PRIVATE
+    CSV2_HAS_MMAP=0 CSV2_EXPECT_NO_MIO)
+endforeach()
+
+function(csv2_add_no_exceptions_test target test_name single_header)
+  if(NOT (MSVC OR CMAKE_CXX_COMPILER_FRONTEND_VARIANT STREQUAL "MSVC" OR
+          CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang|AppleClang"))
+    return()
+  endif()
+
+  add_executable(${target} main.cpp)
+  target_compile_definitions(${target} PRIVATE
+    DOCTEST_CONFIG_IMPLEMENT_WITH_MAIN
+    DOCTEST_CONFIG_NO_EXCEPTIONS_BUT_WITH_ALL_ASSERTS
+    CSV2_TEST_NO_EXCEPTIONS
+    CSV2_TEST_WRITER_OUTPUT="${target}-writer-output.csv")
+  if(single_header)
+    target_compile_definitions(${target} PRIVATE CSV2_TEST_SINGLE_HEADER)
+    target_include_directories(${target} PRIVATE ${csv2_SOURCE_DIR}/single_include)
+  else()
+    target_link_libraries(${target} PRIVATE csv2::csv2)
+  endif()
+  if(MSVC OR CMAKE_CXX_COMPILER_FRONTEND_VARIANT STREQUAL "MSVC")
+    target_compile_definitions(${target} PRIVATE _HAS_EXCEPTIONS=0)
+    target_compile_options(${target} PRIVATE /EHs-c-)
+  elseif(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang|AppleClang")
     target_compile_options(${target} PRIVATE -fno-exceptions)
-    csv2_set_test_standard(${target} 11)
-    csv2_enable_test_options(${target})
-    add_test(NAME ${test_name} COMMAND ${target} inputs/empty.csv)
-    set_tests_properties(${test_name} PROPERTIES
-      WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
-  endfunction()
+  endif()
+  csv2_set_test_standard(${target} 11)
+  csv2_enable_test_options(${target})
+  add_test(NAME ${test_name} COMMAND ${target})
+  set_tests_properties(${test_name} PROPERTIES
+    WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+endfunction()
 
-  csv2_add_no_exceptions_test(csv2_no_exceptions csv2.no_exceptions.module FALSE)
-  csv2_add_no_exceptions_test(csv2_single_header_no_exceptions
-    csv2.no_exceptions.single_header TRUE)
-endif()
+csv2_add_no_exceptions_test(csv2_no_exceptions csv2.module.no_exceptions.cxx11 FALSE)
+csv2_add_no_exceptions_test(csv2_single_header_no_exceptions
+  csv2.single_header.no_exceptions.cxx11 TRUE)
+
+add_executable(csv2_benchmark_without_mmap ../benchmark/main.cpp)
+target_link_libraries(csv2_benchmark_without_mmap PRIVATE csv2::csv2)
+target_compile_definitions(csv2_benchmark_without_mmap PRIVATE CSV2_HAS_MMAP=0)
+csv2_set_test_standard(csv2_benchmark_without_mmap 11)
+csv2_enable_test_options(csv2_benchmark_without_mmap)
+add_test(NAME csv2.benchmark.no_mmap
+  COMMAND csv2_benchmark_without_mmap inputs/test_01.csv)
+set_tests_properties(csv2.benchmark.no_mmap PROPERTIES
+  WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
+  WILL_FAIL TRUE)
 
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+  set(csv2_windows_shim_directory "${CMAKE_CURRENT_BINARY_DIR}/winapi_shim")
+  file(MAKE_DIRECTORY "${csv2_windows_shim_directory}")
+  file(WRITE "${csv2_windows_shim_directory}/windows.h" "")
+
   function(csv2_add_windows_api_test target test_name single_header)
-    add_executable(${target} mio_windows_api_test.cpp)
-    target_compile_definitions(${target} PRIVATE _WIN32)
-    target_include_directories(${target} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/winapi_shim)
+    add_executable(${target} main.cpp)
+    target_compile_definitions(${target} PRIVATE CSV2_TEST_WINDOWS_API)
+    target_include_directories(${target} PRIVATE ${csv2_windows_shim_directory})
     if(single_header)
       target_compile_definitions(${target} PRIVATE CSV2_TEST_SINGLE_HEADER)
       target_include_directories(${target} PRIVATE ${csv2_SOURCE_DIR}/single_include)
@@ -134,9 +181,10 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
     add_test(NAME ${test_name} COMMAND ${target})
   endfunction()
 
-  csv2_add_windows_api_test(csv2_mio_windows_api csv2.mio.windows_api.module FALSE)
+  csv2_add_windows_api_test(csv2_mio_windows_api
+    csv2.mio.winapi_injection.module.cxx11 FALSE)
   csv2_add_windows_api_test(csv2_single_header_mio_windows_api
-    csv2.mio.windows_api.single_header TRUE)
+    csv2.mio.winapi_injection.single_header.cxx11 TRUE)
 endif()
 
 file(COPY ${CMAKE_CURRENT_SOURCE_DIR}/inputs
