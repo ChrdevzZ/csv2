@@ -273,6 +273,17 @@ public:
     friend class RowIterator;
     friend class Reader;
 
+    template <typename Container>
+    static auto reserve_for_append_(Container &result, size_t additional, int)
+        -> decltype(result.reserve(result.size() + additional), void()) {
+      result.reserve(result.size() + additional);
+    }
+
+    template <typename Container>
+    static void reserve_for_append_(Container &result, size_t additional, long) {
+      result.reserve(additional);
+    }
+
   public:
     const char *address() const noexcept { return buffer_ ? buffer_ + start_ : nullptr; }
     size_t length() const { return end_ - start_; }
@@ -280,7 +291,7 @@ public:
     template <typename Container> void read_raw_value(Container &result) const {
       if (start_ >= end_)
         return;
-      result.reserve(result.size() + end_ - start_);
+      reserve_for_append_(result, end_ - start_, 0);
       for (size_t i = start_; i < end_; ++i)
         result.push_back(buffer_[i]);
     }
