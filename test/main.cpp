@@ -524,7 +524,6 @@ void csv2_public_header_is_self_contained() {}
 #include <list>
 #include <limits>
 #include <sstream>
-#include <stdexcept>
 #include <string>
 #include <system_error>
 #include <type_traits>
@@ -596,11 +595,13 @@ public:
 };
 
 #if !defined(CSV2_TEST_NO_EXCEPTIONS)
+struct CloseError {};
+
 class ThrowingCloseStream : public std::ostringstream {
 public:
   void close() {
     ++close_count;
-    throw std::runtime_error("close failed");
+    throw CloseError();
   }
 
   int close_count{0};
@@ -1215,7 +1216,7 @@ TEST_CASE("Report explicit Writer close errors and suppress destructor close err
   ThrowingCloseStream explicit_stream;
   {
     ThrowingWriter writer(explicit_stream);
-    REQUIRE_THROWS_AS(writer.close(), std::runtime_error);
+    REQUIRE_THROWS_AS(writer.close(), CloseError);
   }
   REQUIRE(explicit_stream.close_count == 1);
 
