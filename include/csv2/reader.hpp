@@ -1,19 +1,19 @@
-
 #pragma once
+
 #include <cstring>
-#if __has_include("sys/mman.h") || __has_include(<sys/mman.h>) || __has_include("windows.h") || __has_include(<windows.h>)
+#if __has_include("sys/mman.h") || __has_include(<sys/mman.h>) ||           \
+    __has_include("windows.h") || __has_include(<windows.h>)
 #define __CSV2_HAS_MMAN_H__ 1
 #include <csv2/mio.hpp>
 #endif
 #include <csv2/parameters.hpp>
-#include <istream>
+
+#include <memory>
 #include <string>
+#include <type_traits>
+#include <utility>
 #if ((defined(_MSVC_LANG) && _MSVC_LANG >= 201703L) || __cplusplus >= 201703L)
-	#include <string_view>
-#endif
-#if defined(_MSC_VER) && !defined(__clang__) && !defined(__INTEL_LLVM_COMPILER) && !defined(__INTEL_COMPILER)
-  // For `not`, `and`, `or` when compiled by MSVC
-  #include <ciso646>
+#include <string_view>
 #endif
 
 namespace csv2 {
@@ -22,110 +22,234 @@ template <class delimiter = delimiter<','>, class quote_character = quote_charac
           class first_row_is_header = first_row_is_header<true>,
           class trim_policy = trim_policy::trim_whitespace>
 class Reader {
-  #if __CSV2_HAS_MMAN_H__
-  mio::mmap_source mmap_;          // mmap source
-  #endif
-  const char *buffer_{nullptr};    // pointer to memory-mapped data
-  size_t buffer_size_{0};          // mapped length of buffer
-  size_t header_start_{0};         // start index of header (cache)
-  size_t header_end_{0};           // end index of header (cache)
+  struct RecordBounds {
+    size_t content_end;
+    size_t next_start;
+  };
+
+  static RecordBounds find_record_bounds_(const char *buffer, size_t buffer_size,
+                                          size_t start) noexcept {
+    if (!buffer || start >= buffer_size)
+      return {buffer_size, buffer_size};
+
+    const char *const record_start = buffer + start;
+    const size_t remaining = buffer_size - start;
+    const char *const newline =
+        static_cast<const char *>(std::memchr(record_start, '\n', remaining));
+    const size_t candidate_length =
+        newline ? static_cast<size_t>(newline - record_start) : remaining;
+    const char *const quote = static_cast<const char *>(
+        std::memchr(record_start, quote_character::value, candidate_length));
+
+    // The common unquoted case avoids the state machine entirely.
+    if (!quote) {
+      if (!newline)
+        return {buffer_size, buffer_size};
+      const size_t newline_index = start + static_cast<size_t>(newline - record_start);
+      const size_t content_end = newline_index > start && buffer[newline_index - 1] == '\r'
+                                     ? newline_index - 1
+                                     : newline_index;
+      return {content_end, newline_index + 1};
+    }
+
+    bool quote_opened = false;
+    for (size_t i = start; i < buffer_size; ++i) {
+      if (buffer[i] == quote_character::value) {
+        if (quote_opened && i + 1 < buffer_size && buffer[i + 1] == quote_character::value) {
+          ++i;
+          continue;
+        }
+        quote_opened = !quote_opened;
+      } else if (buffer[i] == '\n' && !quote_opened) {
+        const size_t content_end = i > start && buffer[i - 1] == '\r' ? i - 1 : i;
+        return {content_end, i + 1};
+      }
+    }
+
+    // An unclosed quoted field is treated as content through EOF.
+    return {buffer_size, buffer_size};
+  }
+
+#if defined(__CSV2_HAS_MMAN_H__)
+  mio::mmap_source mmap_;
+#endif
+  std::unique_ptr<std::string> owned_buffer_;
+  const char *buffer_{nullptr};
+  size_t buffer_size_{0};
+
+  void clear_buffer_() noexcept {
+    buffer_ = nullptr;
+    buffer_size_ = 0;
+  }
+
+  void reset_source_() {
+    clear_buffer_();
+    owned_buffer_.reset();
+#if defined(__CSV2_HAS_MMAN_H__)
+    mmap_.unmap();
+#endif
+  }
+
+  template <typename StringType> bool parse_dispatch_(StringType &&contents, std::true_type) {
+    const char *const data = contents.c_str();
+    const size_t size = contents.size();
+    reset_source_();
+    if (size == 0)
+      return false;
+    buffer_ = data;
+    buffer_size_ = size;
+    return true;
+  }
+
+  template <typename StringType> bool parse_owned_(StringType &&contents, std::true_type) {
+    std::unique_ptr<std::string> new_buffer(new std::string(std::forward<StringType>(contents)));
+    reset_source_();
+    if (new_buffer->empty())
+      return false;
+    owned_buffer_ = std::move(new_buffer);
+    buffer_ = owned_buffer_->c_str();
+    buffer_size_ = owned_buffer_->size();
+    return true;
+  }
+
+  template <typename StringType> bool parse_owned_(StringType &&contents, std::false_type) {
+    std::unique_ptr<std::string> new_buffer(new std::string(contents.c_str(), contents.size()));
+    reset_source_();
+    if (new_buffer->empty())
+      return false;
+    owned_buffer_ = std::move(new_buffer);
+    buffer_ = owned_buffer_->c_str();
+    buffer_size_ = owned_buffer_->size();
+    return true;
+  }
+
+  template <typename StringType> bool parse_dispatch_(StringType &&contents, std::false_type) {
+    typedef typename std::decay<StringType>::type DecayedString;
+    return parse_owned_(std::forward<StringType>(contents),
+                        typename std::is_same<DecayedString, std::string>::type());
+  }
 
 public:
-  #if __CSV2_HAS_MMAN_H__
-  // Use this if you'd like to mmap the CSV file
+  Reader() = default;
+  Reader(const Reader &) = delete;
+  Reader &operator=(const Reader &) = delete;
+
+  Reader(Reader &&other)
+      :
+#if defined(__CSV2_HAS_MMAN_H__)
+        mmap_(std::move(other.mmap_)),
+#endif
+        owned_buffer_(std::move(other.owned_buffer_)), buffer_(other.buffer_),
+        buffer_size_(other.buffer_size_) {
+    other.clear_buffer_();
+  }
+
+  Reader &operator=(Reader &&other) {
+    if (this != &other) {
+      reset_source_();
+#if defined(__CSV2_HAS_MMAN_H__)
+      mmap_ = std::move(other.mmap_);
+#endif
+      owned_buffer_ = std::move(other.owned_buffer_);
+      buffer_ = other.buffer_;
+      buffer_size_ = other.buffer_size_;
+      other.clear_buffer_();
+    }
+    return *this;
+  }
+
+#if defined(__CSV2_HAS_MMAN_H__)
+  // Memory-map a file. A failed mapping clears any previous source.
   template <typename StringType> bool mmap(StringType &&filename) {
-    mmap_ = mio::mmap_source(filename);
-    if (!mmap_.is_open() || !mmap_.is_mapped())
+    reset_source_();
+    mmap_ = mio::mmap_source(std::forward<StringType>(filename));
+    if (!mmap_.is_open() || !mmap_.is_mapped() || mmap_.mapped_length() == 0) {
+      mmap_.unmap();
       return false;
+    }
     buffer_ = mmap_.data();
     buffer_size_ = mmap_.mapped_length();
     return true;
   }
-  #endif
+#endif
 
-  // Use this if you have the CSV contents
-  // in an std::string already
+  // Lvalue strings are borrowed. Rvalue strings are owned by this Reader.
   template <typename StringType> bool parse(StringType &&contents) {
-    buffer_ = std::forward<StringType>(contents).c_str();
-    buffer_size_ = contents.size();
-    return buffer_size_ > 0;
+    return parse_dispatch_(std::forward<StringType>(contents),
+                           typename std::is_lvalue_reference<StringType &&>::type());
   }
 
-
-  // Use this if you already have the CSV contents
-  // in a std::string_view 
 #if ((defined(_MSVC_LANG) && _MSVC_LANG >= 201703L) || __cplusplus >= 201703L)
+  // Borrow a string_view. The view's storage must outlive Reader access.
   bool parse_view(std::string_view sv) {
-    buffer_ = sv.data();
-    buffer_size_ = sv.size();
-    return buffer_size_ > 0;
+    const char *const data = sv.data();
+    const size_t size = sv.size();
+    reset_source_();
+    if (size == 0)
+      return false;
+    buffer_ = data;
+    buffer_size_ = size;
+    return true;
   }
 #endif
 
-
   class RowIterator;
   class Row;
-  class CellIterator;
 
   class Cell {
-    const char *buffer_{nullptr}; // Pointer to memory-mapped buffer
-    size_t start_{0};             // Start index of cell content
-    size_t end_{0};               // End index of cell content
-    bool escaped_{false};         // Does the cell have escaped content?
+    const char *buffer_{nullptr};
+    size_t start_{0};
+    size_t end_{0};
+    bool escaped_{false};
     friend class Row;
-    friend class CellIterator;
 
   public:
-  
-	// returns a view on the cell's contents if C++17 available
-	#if ((defined(_MSVC_LANG) && _MSVC_LANG >= 201703L) || __cplusplus >= 201703L)
-      std::string_view read_view() const {
-      const auto new_start_end = trim_policy::trim(buffer_, start_, end_);
-      return std::string_view(buffer_ + new_start_end.first, new_start_end.second- new_start_end.first);
-      }
-	#endif
-    // Returns the raw_value of the cell without handling escaped
-    // content, e.g., cell containing """foo""" will be returned
-    // as is
+#if ((defined(_MSVC_LANG) && _MSVC_LANG >= 201703L) || __cplusplus >= 201703L)
+    std::string_view read_view() const {
+      const auto bounds = trim_policy::trim(buffer_, start_, end_);
+      return std::string_view(buffer_ + bounds.first, bounds.second - bounds.first);
+    }
+#endif
+
     template <typename Container> void read_raw_value(Container &result) const {
       if (start_ >= end_)
         return;
-      result.reserve(end_ - start_);
+      result.reserve(result.size() + end_ - start_);
       for (size_t i = start_; i < end_; ++i)
         result.push_back(buffer_[i]);
     }
 
-    // If cell is escaped, convert and return correct cell contents,
-    // e.g., """foo""" => ""foo""
     template <typename Container> void read_value(Container &result) const {
       if (start_ >= end_)
         return;
-      result.reserve(end_ - start_);
-      const auto new_start_end = trim_policy::trim(buffer_, start_, end_);
-      for (size_t i = new_start_end.first; i < new_start_end.second; ++i)
+      const auto bounds = trim_policy::trim(buffer_, start_, end_);
+      result.reserve(result.size() + bounds.second - bounds.first);
+      if (!escaped_) {
+        for (size_t i = bounds.first; i < bounds.second; ++i)
+          result.push_back(buffer_[i]);
+        return;
+      }
+
+      for (size_t i = bounds.first; i < bounds.second; ++i) {
         result.push_back(buffer_[i]);
-      for (size_t i = 1; i < result.size(); ++i) {
-        if (result[i] == quote_character::value && result[i - 1] == quote_character::value) {
-          result.erase(i - 1, 1);
-        }
+        if (buffer_[i] == quote_character::value && i + 1 < bounds.second &&
+            buffer_[i + 1] == quote_character::value)
+          ++i;
       }
     }
   };
 
   class Row {
-    const char *buffer_{nullptr}; // Pointer to memory-mapped buffer
-    size_t start_{0};             // Start index of row content
-    size_t end_{0};               // End index of row content
+    const char *buffer_{nullptr};
+    size_t start_{0};
+    size_t end_{0};
     friend class RowIterator;
     friend class Reader;
 
   public:
-    // address of row
     const char *address() const { return buffer_; }
-	// returns the char length of the row
-	size_t length() const { return end_ - start_; }
+    size_t length() const { return end_ - start_; }
 
-    // Returns the raw_value of the row
     template <typename Container> void read_raw_value(Container &result) const {
       if (start_ >= end_)
         return;
@@ -135,61 +259,87 @@ public:
     }
 
     class CellIterator {
-      friend class Row;
+      struct CellBounds {
+        size_t content_end;
+        bool escaped;
+      };
+
       const char *buffer_;
-      size_t buffer_size_;
-      size_t start_;
+      size_t range_size_;
       size_t current_;
       size_t end_;
+      size_t content_end_;
+      bool escaped_;
+      bool at_end_;
+
+      CellBounds find_cell_bounds_() const noexcept {
+        bool quote_opened = false;
+        bool escaped = false;
+        for (size_t i = current_; i < end_; ++i) {
+          if (buffer_[i] == quote_character::value) {
+            const bool adjacent_quote = i + 1 < end_ && buffer_[i + 1] == quote_character::value;
+            if (adjacent_quote)
+              escaped = true;
+            if (quote_opened && adjacent_quote) {
+              ++i;
+              continue;
+            }
+            quote_opened = !quote_opened;
+          } else if (buffer_[i] == delimiter::value && !quote_opened) {
+            return {i, escaped};
+          }
+        }
+        return {end_, escaped};
+      }
+
+      void update_bounds_() noexcept {
+        if (!at_end_) {
+          const CellBounds bounds = find_cell_bounds_();
+          content_end_ = bounds.content_end;
+          escaped_ = bounds.escaped;
+        } else {
+          content_end_ = end_;
+          escaped_ = false;
+        }
+      }
+
+      friend class Row;
 
     public:
       CellIterator(const char *buffer, size_t buffer_size, size_t start, size_t end)
-          : buffer_(buffer), buffer_size_(buffer_size), start_(start), current_(start_), end_(end) {
+          : buffer_(buffer), range_size_(buffer_size), current_(start), end_(end),
+            content_end_(end), escaped_(false), at_end_(start >= end) {
+        update_bounds_();
       }
 
       CellIterator &operator++() {
-        current_ += 1;
+        if (!at_end_) {
+          if (content_end_ < end_) {
+            current_ = content_end_ + 1;
+          } else {
+            current_ = end_;
+            at_end_ = true;
+          }
+          update_bounds_();
+        }
         return *this;
       }
 
-      Cell operator*() {
-        bool escaped{false};
-        class Cell cell;
+      Cell operator*() const {
+        Cell cell;
         cell.buffer_ = buffer_;
         cell.start_ = current_;
-        cell.end_ = end_;
-
-        size_t last_quote_location = 0;
-        bool quote_opened = false;
-        for (auto i = current_; i < end_; i++) {
-          current_ = i;
-          if (buffer_[i] == delimiter::value && !quote_opened) {
-            // actual delimiter
-            // end of cell
-            cell.end_ = current_;
-            cell.escaped_ = escaped;
-            return cell;
-          } else {
-            if (buffer_[i] == quote_character::value) {
-              if (!quote_opened) {
-                // first quote for this cell
-                quote_opened = true;
-                last_quote_location = i;
-              } else {
-                escaped = (last_quote_location == i - 1);
-                last_quote_location += (i - last_quote_location) * size_t(!escaped);
-                quote_opened = escaped || (buffer_[i + 1] != delimiter::value);
-              }
-            }
-          }
-        }
-        cell.end_ = current_ + 1;
+        cell.end_ = content_end_;
+        cell.escaped_ = escaped_;
         return cell;
       }
-      
-      bool operator==(const CellIterator &rhs) { return current_ == rhs.current_; }
 
-      bool operator!=(const CellIterator &rhs) { return current_ != rhs.current_; }
+      bool operator==(const CellIterator &rhs) const noexcept {
+        return buffer_ == rhs.buffer_ && range_size_ == rhs.range_size_ &&
+               current_ == rhs.current_ && end_ == rhs.end_ && at_end_ == rhs.at_end_;
+      }
+
+      bool operator!=(const CellIterator &rhs) const noexcept { return !(*this == rhs); }
     };
 
     CellIterator begin() const { return CellIterator(buffer_, end_ - start_, start_, end_); }
@@ -197,116 +347,104 @@ public:
   };
 
   class RowIterator {
-    friend class Reader;
     const char *buffer_;
     size_t buffer_size_;
     size_t start_;
-    size_t end_;
+    size_t content_end_;
+    size_t next_start_;
+    friend class Reader;
 
   public:
     RowIterator(const char *buffer, size_t buffer_size, size_t start)
-        : buffer_(buffer), buffer_size_(buffer_size), start_(start), end_(start_) {}
+        : buffer_(buffer), buffer_size_(buffer_size),
+          start_(start < buffer_size ? start : buffer_size), content_end_(buffer_size),
+          next_start_(buffer_size) {
+      if (start_ < buffer_size_) {
+        const RecordBounds bounds = find_record_bounds_(buffer_, buffer_size_, start_);
+        content_end_ = bounds.content_end;
+        next_start_ = bounds.next_start;
+      }
+    }
 
     RowIterator &operator++() {
-      start_ = end_ + 1;
-      end_ = start_;
+      start_ = next_start_;
+      if (start_ < buffer_size_) {
+        const RecordBounds bounds = find_record_bounds_(buffer_, buffer_size_, start_);
+        content_end_ = bounds.content_end;
+        next_start_ = bounds.next_start;
+      } else {
+        start_ = buffer_size_;
+        content_end_ = buffer_size_;
+        next_start_ = buffer_size_;
+      }
       return *this;
     }
 
-    Row operator*() {
+    Row operator*() const {
       Row result;
       result.buffer_ = buffer_;
       result.start_ = start_;
-      result.end_ = end_;
-
-      if (const char *ptr =
-              static_cast<const char *>(memchr(&buffer_[start_], '\n', (buffer_size_ - start_)))) {
-        end_ = start_ + (ptr - &buffer_[start_]);
-        result.end_ = end_;
-        start_ = end_ + 1;
-      } else {
-        // last row
-        end_ = buffer_size_;
-        result.end_ = end_;
-      }
+      result.end_ = content_end_;
       return result;
     }
 
-    bool operator!=(const RowIterator &rhs) { return start_ != rhs.start_; }
+    bool operator==(const RowIterator &rhs) const noexcept {
+      return buffer_ == rhs.buffer_ && buffer_size_ == rhs.buffer_size_ && start_ == rhs.start_ &&
+             content_end_ == rhs.content_end_ && next_start_ == rhs.next_start_;
+    }
+
+    bool operator!=(const RowIterator &rhs) const noexcept { return !(*this == rhs); }
   };
 
   RowIterator begin() const {
-    if (buffer_size_ == 0)
+    if (!buffer_ || buffer_size_ == 0)
       return end();
     if (first_row_is_header::value) {
-      const auto header_indices = header_indices_();
-      return RowIterator(buffer_, buffer_size_, header_indices.second  > 0 ? header_indices.second + 1 : 0);
-    } else {
-      return RowIterator(buffer_, buffer_size_, 0);
+      const RecordBounds header = find_record_bounds_(buffer_, buffer_size_, 0);
+      return RowIterator(buffer_, buffer_size_, header.next_start);
     }
+    return RowIterator(buffer_, buffer_size_, 0);
   }
 
-  RowIterator end() const { return RowIterator(buffer_, buffer_size_, buffer_size_ + 1); }
-
-private:
-  std::pair<size_t, size_t> header_indices_() const {
-    size_t start = 0, end = 0;
-
-    if (const char *ptr =
-            static_cast<const char *>(memchr(&buffer_[start], '\n', (buffer_size_ - start)))) {
-      end = start + (ptr - &buffer_[start]);
-    }
-    return {start, end};
-  }
-
-public:
+  RowIterator end() const { return RowIterator(buffer_, buffer_size_, buffer_size_); }
 
   Row header() const {
-    size_t start = 0, end = 0;
     Row result;
     result.buffer_ = buffer_;
-    result.start_ = start;
-    result.end_ = end;
-
-    if (const char *ptr =
-            static_cast<const char *>(memchr(&buffer_[start], '\n', (buffer_size_ - start)))) {
-      end = start + (ptr - &buffer_[start]);
-      result.end_ = end;
-    }
+    if (!buffer_ || buffer_size_ == 0)
+      return result;
+    const RecordBounds bounds = find_record_bounds_(buffer_, buffer_size_, 0);
+    result.end_ = bounds.content_end;
     return result;
   }
 
-  /**
-   * @returns The number of rows (excluding the header)
-  */
+  /** Returns the number of records, excluding the header when configured. */
   size_t rows(bool ignore_empty_lines = false) const {
-    size_t result{0};
     if (!buffer_ || buffer_size_ == 0)
-      return result;
-    
-    // Count the first row if not header
-    if (not first_row_is_header::value
-        and (not ignore_empty_lines
-        or *(static_cast<const char*>(buffer_)) != '\r'))
-      ++result;
+      return 0;
 
-    for (const char *p = buffer_
-        ; (p = static_cast<const char *>(memchr(p, '\n', (buffer_ + buffer_size_) - p)))
-        ; ++p) {
-      if (ignore_empty_lines
-          and (p >= buffer_ + buffer_size_ - 1
-          or *(p + 1) == '\r'))
-        continue;
-      ++result;
+    size_t start = 0;
+    if (first_row_is_header::value)
+      start = find_record_bounds_(buffer_, buffer_size_, 0).next_start;
+
+    size_t result = 0;
+    while (start < buffer_size_) {
+      const RecordBounds bounds = find_record_bounds_(buffer_, buffer_size_, start);
+      if (!ignore_empty_lines || bounds.content_end != start)
+        ++result;
+      start = bounds.next_start;
     }
     return result;
   }
 
   size_t cols() const {
-    size_t result{0};
-    for (const auto cell : header())
-      result += 1;
+    size_t result = 0;
+    for (const auto cell : header()) {
+      (void)cell;
+      ++result;
+    }
     return result;
   }
 };
+
 } // namespace csv2

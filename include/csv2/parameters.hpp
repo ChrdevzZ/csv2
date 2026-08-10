@@ -1,5 +1,5 @@
-
 #pragma once
+
 #include <utility>
 
 namespace csv2 {
@@ -47,4 +47,4 @@ template <bool flag> struct first_row_is_header {
   constexpr static bool value = flag;
 };
 
-}
+} // namespace csv2

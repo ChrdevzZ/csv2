@@ -1,12 +1,17 @@
 cmake_minimum_required(VERSION 3.10)
 
-set(CSV2_SUBPROJECT OFF)
-if (${CMAKE_SOURCE_DIR} STREQUAL ${CMAKE_CURRENT_SOURCE_DIR})
-  set(CSV2_SUBPROJECT ON)
+project(csv2 VERSION 1.8.0 LANGUAGES CXX)
+
+if(POLICY CMP0077)
+  cmake_policy(SET CMP0077 NEW)
 endif()
 
-project(csv2 VERSION 1.8.0 LANGUAGES CXX)
-  
+if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
+  set(CSV2_IS_TOP_LEVEL ON)
+else()
+  set(CSV2_IS_TOP_LEVEL OFF)
+endif()
+
 if(EXISTS "${CMAKE_BINARY_DIR}/conanbuildinfo.cmake")
     include("${CMAKE_BINARY_DIR}/conanbuildinfo.cmake")
     conan_basic_setup()
@@ -16,7 +21,6 @@ option(CSV2_BUILD_TESTS "Build csv2 tests + enable CTest")
 option(CSV2_SAMPLES "Build csv2 samples")
 option(CSV2_DEMO "Build csv2 demo" OFF)
 
-include(CMakePackageConfigHelpers)
 include(GNUInstallDirs)
 
 add_library(csv2 INTERFACE)
@@ -28,10 +32,15 @@ target_include_directories(csv2 INTERFACE
   $<BUILD_INTERFACE:${CMAKE_CURRENT_LIST_DIR}/include>)
 
 if(CSV2_BUILD_TESTS)
+  if(CSV2_IS_TOP_LEVEL)
+    enable_testing()
+  endif()
   add_subdirectory(test)
 endif()
 
-if(NOT CSV2_SUBPROJECT)
+if(CSV2_IS_TOP_LEVEL)
+  include(CMakePackageConfigHelpers)
+
   configure_package_config_file(csv2Config.cmake.in
     ${CMAKE_CURRENT_BINARY_DIR}/csv2Config.cmake
     INSTALL_DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/csv2)

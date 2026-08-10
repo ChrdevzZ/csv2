@@ -1,22 +1,43 @@
-
 #pragma once
+
 #include <cstring>
 #include <csv2/parameters.hpp>
 #include <fstream>
 #include <iostream>
 #include <iterator>
 #include <string>
+#include <type_traits>
 #include <utility>
 
 namespace csv2 {
 
+template <typename, typename T> struct has_close : std::false_type {};
+
+template <typename C, typename Ret, typename... Args> struct has_close<C, Ret(Args...)> {
+private:
+  template <typename T>
+  static constexpr auto check(T *) ->
+      typename std::is_same<decltype(std::declval<T &>().close(std::declval<Args>()...)),
+                            Ret>::type;
+
+  template <typename> static constexpr std::false_type check(...);
+
+public:
+  static constexpr bool value = decltype(check<C>(0))::value;
+};
+
 template <class delimiter = delimiter<','>, typename Stream = std::ofstream> class Writer {
   Stream &stream_; // output stream for the writer
+
+  static void close_stream_(Stream &stream, std::true_type) { stream.close(); }
+
+  static void close_stream_(Stream &, std::false_type) {}
+
 public:
   Writer(Stream &stream) : stream_(stream) {}
 
   ~Writer() {
-    stream_.close();
+    close_stream_(stream_, std::integral_constant<bool, has_close<Stream, void()>::value>());
   }
 
   template <typename Container> void write_row(Container &&row) {

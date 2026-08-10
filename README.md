@@ -38,6 +38,29 @@ int main() {
 }
 ```
 
+### Input Lifetime and Record Semantics
+
+`Reader::parse()` borrows an lvalue string without copying it. The caller must
+keep that string alive and must not perform an operation that invalidates its
+`c_str()` pointer while the reader is in use. Passing an rvalue string transfers
+the contents to storage owned by the reader, so parsing a temporary is safe.
+When C++17 is available, `parse_view()` remains a borrowed API and the
+`std::string_view` storage must outlive reader access. Calling `mmap()`,
+`parse()`, or `parse_view()` replaces the previous input source.
+
+Records may be terminated by LF or CRLF. LF and CRLF inside a quoted field are
+part of that field, and doubled quote characters (`""`) do not close it. A final
+record delimiter terminates the last record without creating another empty
+record; delimiters before the final one can still represent empty records.
+Standalone CR characters are treated as record content.
+
+A field delimiter at the end of a non-empty record creates a final empty
+`Cell`. A record containing no characters remains an empty `Row` with zero
+cells. `Cell::read_value()` trims according to the configured policy, retains
+outer quote characters, folds each adjacent pair of configured quote
+characters into one, and appends the decoded value without modifying content
+already present in the output container.
+
 ### Performance Benchmark
 
 This benchmark measures the average execution time (of 5 runs after 3 warmup runs) for `csv2` to memory-map the input CSV file and iterate over every cell in the CSV. See `benchmark/main.cpp` for more details.
@@ -89,11 +112,15 @@ public:
   // Use this if you'd like to mmap and read from file
   bool mmap(string_type filename);
 
-  // Use this if you have the CSV contents in std::string already
-  bool parse(string_type contents);
+  // Lvalues are borrowed; rvalues are owned by the Reader
+  template <typename StringType>
+  bool parse(StringType&& contents);
+
+  // C++17: borrowed view; its storage must outlive Reader access
+  bool parse_view(std::string_view contents);
 
   // Shape
-  size_t rows() const;
+  size_t rows(bool ignore_empty_lines = false) const;
   size_t cols() const;
   
   // Row iterator
@@ -186,11 +213,9 @@ public:
 ## Compiling Tests
 
 ```bash
-mkdir build && cd build
-cmake -DCSV2_BUILD_TESTS=ON ..
-make
-cd test
-./csv2_test
+cmake -S . -B build -DCSV2_BUILD_TESTS=ON
+cmake --build build
+ctest --test-dir build --output-on-failure
 ```
 
 ## Generating Single Header
