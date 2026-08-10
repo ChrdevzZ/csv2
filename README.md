@@ -48,6 +48,12 @@ When C++17 is available, `parse_view()` remains a borrowed API and the
 `std::string_view` storage must outlive reader access. Calling `mmap()`,
 `parse()`, or `parse_view()` replaces the previous input source.
 
+`Reader::mmap()` returns `false` for ordinary open or mapping failures and
+clears the previous source; it does not translate those failures into
+exceptions. Use the overload accepting `std::error_code&` when the reason is
+needed. Memory mapping can be disabled consistently for all translation units
+with `CSV2_HAS_MMAP=0`.
+
 Records may be terminated by LF or CRLF. LF and CRLF inside a quoted field are
 part of that field, and doubled quote characters (`""`) do not close it. A final
 record delimiter terminates the last record without creating another empty
@@ -63,13 +69,24 @@ already present in the output container.
 
 ### Performance Benchmark
 
-This benchmark measures the average execution time (of 5 runs after 3 warmup runs) for `csv2` to memory-map the input CSV file and iterate over every cell in the CSV. See `benchmark/main.cpp` for more details.
+The benchmark executable performs one memory-map and full cell traversal per
+process. Use an external harness such as Hyperfine for isolated repetitions;
+the command below performs 3 warmup runs followed by 5 measured runs.
 
 ```bash
-cd benchmark
-g++ -I../include -O3 -std=c++11 -o main main.cpp
-./main <csv_file>
+mkdir build-benchmark
+cd build-benchmark
+cmake .. \
+  -DCSV2_BUILD_BENCHMARKS=ON \
+  -DCMAKE_BUILD_TYPE=Release
+cmake --build . --target csv2_benchmark
+hyperfine --warmup 3 --runs 5 \
+  './benchmark/csv2_benchmark /absolute/path/input.csv'
 ```
+
+The table below is historical (23 September 2022). Compare new measurements
+only when the input, csv2 commit, compiler, flags, operating system, CPU, and
+storage are recorded consistently.
 
 #### System Details
 
@@ -110,7 +127,10 @@ class Reader {
 public:
   
   // Use this if you'd like to mmap and read from file
-  bool mmap(string_type filename);
+  template <typename StringType>
+  bool mmap(StringType&& filename);
+  template <typename StringType>
+  bool mmap(StringType&& filename, std::error_code& error);
 
   // Lvalues are borrowed; rvalues are owned by the Reader
   template <typename StringType>
@@ -140,6 +160,10 @@ Here's the `Row` class:
 // Row class
 class Row {
 public:
+  // Address and length of this row's raw logical-record contents
+  const char* address() const noexcept;
+  size_t length() const;
+
   // Get raw contents of the row
   void read_raw_value(Container& value) const;
   
@@ -177,46 +201,71 @@ using namespace csv2;
 
 int main() {
     std::ofstream stream("foo.csv");
-    Writer<delimiter<','>> writer(stream);
-
-    std::vector<std::vector<std::string>> rows = 
-        {
+    {
+        Writer<delimiter<','>> writer(stream);
+        const std::vector<std::vector<std::string>> rows = {
             {"a", "b", "c"},
             {"1", "2", "3"},
             {"4", "5", "6"}
         };
-
-    writer.write_rows(rows);
-    stream.close();
+        writer.write_rows(rows);
+    } // closes stream
 }
 ```
+
+`Writer` borrows the stream object, which must outlive it, but assumes the sole
+responsibility for closing a stream that provides `void close()`. It is
+move-only, and moving it transfers that responsibility. Call `Writer::close()`
+when close errors must be observed; it is idempotent, and the destructor never
+lets a close exception escape. Do not close the underlying stream directly
+while an active `Writer` still owns that responsibility. After a Writer is
+closed or moved from, further write calls have no effect.
+
+This is intentionally a basic writer: values are emitted exactly as supplied.
+It does not quote or escape delimiters, quote characters, or newlines. A row
+with zero values writes one newline, as does a row containing one empty string,
+so those two shapes are not reversibly distinguishable.
 
 ### Writer API
 
 Here is the public API available to you:
 
 ```cpp
-template <class delimiter = delimiter<','>>
+template <class delimiter = delimiter<','>, typename Stream = std::ofstream>
 class Writer {
 public:
-  
-  // Construct using an std::ofstream
-  Writer(output_file_stream stream);
+  Writer(Stream& stream) noexcept;
+  Writer(const Writer&) = delete;
+  Writer& operator=(const Writer&) = delete;
+  Writer(Writer&&) noexcept;
+  Writer& operator=(Writer&&) noexcept;
+
+  // Close at most once and report stream exceptions to the caller
+  void close();
 
   // Use this to write a single row to file
   void write_row(container_of_strings row);
 
   // Use this to write a list of rows to file
   void write_rows(container_of_rows rows);
+};
 ```
 
 ## Compiling Tests
 
 ```bash
-cmake -S . -B build -DCSV2_BUILD_TESTS=ON
-cmake --build build
-ctest --test-dir build --output-on-failure
+mkdir build
+cd build
+cmake .. -DCSV2_BUILD_TESTS=ON
+cmake --build .
+ctest --output-on-failure
 ```
+
+The test build compiles the modular and single-header forms in strict C++11
+and C++17 modes, checks every public header independently, and adds
+no-exceptions and platform-failure-path tests where supported. With GCC,
+Clang, or AppleClang, add `-DCSV2_ENABLE_SANITIZERS=ON` to enable ASan and
+UBSan.
 
 ## Generating Single Header
 
