@@ -1,0 +1,63 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Linux GCC + ASan/UBSan
+            os: ubuntu-latest
+            compiler: -DCMAKE_CXX_COMPILER=g++
+            sanitizers: ON
+          - name: Linux Clang + ASan/UBSan
+            os: ubuntu-latest
+            compiler: -DCMAKE_CXX_COMPILER=clang++
+            sanitizers: ON
+          - name: macOS AppleClang
+            os: macos-latest
+            compiler: -DCMAKE_CXX_COMPILER=clang++
+            sanitizers: OFF
+          - name: Windows MSVC
+            os: windows-latest
+            compiler: ""
+            sanitizers: OFF
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - name: Configure
+        run: >-
+          cmake -S . -B build
+          -DCSV2_BUILD_TESTS=ON
+          -DCSV2_BUILD_BENCHMARKS=ON
+          -DCSV2_ENABLE_SANITIZERS=${{ matrix.sanitizers }}
+          -DCMAKE_BUILD_TYPE=Debug
+          ${{ matrix.compiler }}
+
+      - name: Build
+        run: cmake --build build --config Debug --parallel
+
+      - name: Test
+        env:
+          ASAN_OPTIONS: detect_leaks=1:halt_on_error=1
+          UBSAN_OPTIONS: halt_on_error=1:print_stacktrace=1
+        run: ctest --test-dir build -C Debug --output-on-failure
+
+      - name: Verify single-header regeneration
+        run: |
+          python utils/amalgamate/amalgamate.py -c single_include.json -s .
+          git diff --exit-code -- single_include/csv2/csv2.hpp

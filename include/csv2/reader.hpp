@@ -1,15 +1,35 @@
 #pragma once
 
 #include <cstring>
-#if __has_include("sys/mman.h") || __has_include(<sys/mman.h>) ||           \
-    __has_include("windows.h") || __has_include(<windows.h>)
-#define __CSV2_HAS_MMAN_H__ 1
+
+#ifndef CSV2_HAS_MMAP
+#if defined(__has_include)
+#if defined(_WIN32)
+#if __has_include(<windows.h>)
+#define CSV2_HAS_MMAP 1
+#else
+#define CSV2_HAS_MMAP 0
+#endif
+#elif __has_include(<sys/mman.h>)
+#define CSV2_HAS_MMAP 1
+#else
+#define CSV2_HAS_MMAP 0
+#endif
+#elif defined(_WIN32) || defined(__unix__) || defined(__unix) || defined(__APPLE__)
+#define CSV2_HAS_MMAP 1
+#else
+#define CSV2_HAS_MMAP 0
+#endif
+#endif
+
+#if CSV2_HAS_MMAP
 #include <csv2/mio.hpp>
 #endif
 #include <csv2/parameters.hpp>
 
 #include <memory>
 #include <string>
+#include <system_error>
 #include <type_traits>
 #include <utility>
 #if ((defined(_MSVC_LANG) && _MSVC_LANG >= 201703L) || __cplusplus >= 201703L)
@@ -70,7 +90,7 @@ class Reader {
     return {buffer_size, buffer_size};
   }
 
-#if defined(__CSV2_HAS_MMAN_H__)
+#if CSV2_HAS_MMAP
   mio::mmap_source mmap_;
 #endif
   std::unique_ptr<std::string> owned_buffer_;
@@ -85,7 +105,7 @@ class Reader {
   void reset_source_() {
     clear_buffer_();
     owned_buffer_.reset();
-#if defined(__CSV2_HAS_MMAN_H__)
+#if CSV2_HAS_MMAP
     mmap_.unmap();
 #endif
   }
@@ -136,7 +156,7 @@ public:
 
   Reader(Reader &&other)
       :
-#if defined(__CSV2_HAS_MMAN_H__)
+#if CSV2_HAS_MMAP
         mmap_(std::move(other.mmap_)),
 #endif
         owned_buffer_(std::move(other.owned_buffer_)), buffer_(other.buffer_),
@@ -147,7 +167,7 @@ public:
   Reader &operator=(Reader &&other) {
     if (this != &other) {
       reset_source_();
-#if defined(__CSV2_HAS_MMAN_H__)
+#if CSV2_HAS_MMAP
       mmap_ = std::move(other.mmap_);
 #endif
       owned_buffer_ = std::move(other.owned_buffer_);
@@ -158,18 +178,25 @@ public:
     return *this;
   }
 
-#if defined(__CSV2_HAS_MMAN_H__)
+#if CSV2_HAS_MMAP
   // Memory-map a file. A failed mapping clears any previous source.
-  template <typename StringType> bool mmap(StringType &&filename) {
+  template <typename StringType> bool mmap(StringType &&filename, std::error_code &error) {
     reset_source_();
-    mmap_ = mio::mmap_source(std::forward<StringType>(filename));
-    if (!mmap_.is_open() || !mmap_.is_mapped() || mmap_.mapped_length() == 0) {
+    mmap_.map(std::forward<StringType>(filename), error);
+    if (error || !mmap_.is_open() || !mmap_.is_mapped() || mmap_.size() == 0) {
+      if (!error)
+        error = std::make_error_code(std::errc::invalid_argument);
       mmap_.unmap();
       return false;
     }
     buffer_ = mmap_.data();
-    buffer_size_ = mmap_.mapped_length();
+    buffer_size_ = mmap_.size();
     return true;
+  }
+
+  template <typename StringType> bool mmap(StringType &&filename) {
+    std::error_code error;
+    return mmap(std::forward<StringType>(filename), error);
   }
 #endif
 
@@ -247,13 +274,13 @@ public:
     friend class Reader;
 
   public:
-    const char *address() const { return buffer_; }
+    const char *address() const noexcept { return buffer_ ? buffer_ + start_ : nullptr; }
     size_t length() const { return end_ - start_; }
 
     template <typename Container> void read_raw_value(Container &result) const {
       if (start_ >= end_)
         return;
-      result.reserve(end_ - start_);
+      result.reserve(result.size() + end_ - start_);
       for (size_t i = start_; i < end_; ++i)
         result.push_back(buffer_[i]);
     }

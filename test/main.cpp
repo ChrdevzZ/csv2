@@ -11,10 +11,22 @@
 #include <cstdio>
 #include <exception>
 #include <fstream>
+#include <forward_list>
+#include <list>
+#include <limits>
 #include <sstream>
+#include <stdexcept>
 #include <string>
+#include <system_error>
+#include <type_traits>
 #include <utility>
 #include <vector>
+
+#if defined(__linux__)
+#include <dirent.h>
+#elif defined(_WIN32)
+#include <windows.h>
+#endif
 
 using doctest::test_suite;
 
@@ -62,26 +74,72 @@ public:
   bool closed;
 };
 
+class CountingCloseStream : public std::ostringstream {
+public:
+  void close() { ++close_count; }
+
+  int close_count{0};
+};
+
+class ThrowingCloseStream : public std::ostringstream {
+public:
+  void close() {
+    ++close_count;
+    throw std::runtime_error("close failed");
+  }
+
+  int close_count{0};
+};
+
+class ReserveTrackingBuffer {
+public:
+  explicit ReserveTrackingBuffer(const char *prefix) : value(prefix) {}
+
+  std::size_t size() const { return value.size(); }
+  void reserve(std::size_t requested) {
+    last_reserve = requested;
+    value.reserve(requested);
+  }
+  void push_back(char character) { value.push_back(character); }
+
+  std::string value;
+  std::size_t last_reserve{0};
+};
+
+#if CSV2_HAS_MMAP && (defined(__linux__) || defined(_WIN32))
+std::size_t process_handle_count() {
+#if defined(_WIN32)
+  DWORD count = 0;
+  if (!::GetProcessHandleCount(::GetCurrentProcess(), &count))
+    return std::numeric_limits<std::size_t>::max();
+  return static_cast<std::size_t>(count);
+#else
+  DIR *directory = ::opendir("/proc/self/fd");
+  if (!directory)
+    return std::numeric_limits<std::size_t>::max();
+
+  std::size_t count = 0;
+  while (::readdir(directory))
+    ++count;
+  ::closedir(directory);
+  return count;
+#endif
+}
+#endif
+
 const char *writer_output_path() {
-#if defined(CSV2_TEST_SINGLE_HEADER)
+#if defined(CSV2_TEST_WRITER_OUTPUT)
+  return CSV2_TEST_WRITER_OUTPUT;
+#elif defined(CSV2_TEST_SINGLE_HEADER)
   return "csv2-single-header-writer-output.csv";
 #else
   return "csv2-module-writer-output.csv";
 #endif
 }
 
-#if defined(__CSV2_HAS_MMAN_H__)
-template <typename ReaderType> bool mapping_fails(ReaderType &reader, const char *path) {
-  try {
-    return !reader.mmap(path);
-  } catch (const std::exception &) {
-    return true;
-  }
-}
-#endif
-
 } // namespace
 
+#if CSV2_HAS_MMAP
 TEST_CASE("Read a file, its header, rows, columns, and cells" * test_suite("Reader")) {
   ReaderWithHeader reader;
   REQUIRE(reader.mmap("inputs/test_01.csv"));
@@ -92,6 +150,7 @@ TEST_CASE("Read a file, its header, rows, columns, and cells" * test_suite("Read
   REQUIRE(read_rows(reader) ==
           std::vector<std::vector<std::string>>({{"1", "2", "3"}, {"4", "5", "6"}}));
 }
+#endif
 
 TEST_CASE("Honor delimiter, quote, and trim policies" * test_suite("Reader")) {
   using TrimmedReader =
@@ -133,6 +192,40 @@ TEST_CASE("Handle record terminators and quoted newlines" * test_suite("Reader")
     REQUIRE(reader.parse(input));
     REQUIRE(read_rows(reader) == test_case.expected);
   }
+}
+
+TEST_CASE("Expose the address and length of each logical row" * test_suite("Reader")) {
+  struct AddressCase {
+    const char *input;
+    std::vector<std::size_t> offsets;
+    std::vector<std::string> records;
+  };
+
+  const AddressCase cases[] = {
+      {"a,b\nc,d", {0, 4}, {"a,b", "c,d"}},
+      {"a,b\r\nc,d", {0, 5}, {"a,b", "c,d"}},
+      {"a,\"b\nc\"\nd,e", {0, 8}, {"a,\"b\nc\"", "d,e"}},
+      {"a\n\nb", {0, 2, 3}, {"a", "", "b"}},
+  };
+
+  for (const auto &test_case : cases) {
+    ReaderWithoutHeader reader;
+    std::string input(test_case.input);
+    REQUIRE(reader.parse(input));
+
+    auto row = reader.begin();
+    for (std::size_t i = 0; i < test_case.offsets.size(); ++i, ++row) {
+      REQUIRE(row != reader.end());
+      const auto value = *row;
+      REQUIRE(value.address() == input.data() + test_case.offsets[i]);
+      REQUIRE(std::string(value.address(), value.length()) == test_case.records[i]);
+    }
+    REQUIRE(row == reader.end());
+  }
+
+  ReaderWithoutHeader empty;
+  REQUIRE(empty.header().address() == nullptr);
+  REQUIRE(empty.header().length() == 0);
 }
 
 TEST_CASE("Preserve trailing empty fields and normalize empty records" * test_suite("Reader")) {
@@ -212,6 +305,17 @@ TEST_CASE("Read raw and decoded cell values by appending to the output" * test_s
   REQUIRE(decoded == "value:\"a\"b\"");
 }
 
+TEST_CASE("Reserve for existing output when appending a raw row" * test_suite("Reader")) {
+  ReaderWithoutHeader reader;
+  std::string input("a,b");
+  REQUIRE(reader.parse(input));
+
+  ReserveTrackingBuffer output("pre:");
+  (*reader.begin()).read_raw_value(output);
+  REQUIRE(output.last_reserve == 7);
+  REQUIRE(output.value == "pre:a,b");
+}
+
 TEST_CASE("Own rvalue input, borrow lvalue input, and preserve input across moves" *
           test_suite("Reader")) {
   ReaderWithoutHeader temporary_reader;
@@ -259,16 +363,55 @@ TEST_CASE("Clear old input when replacing a source or a source fails" * test_sui
   REQUIRE_FALSE(reader.parse(std::string()));
   REQUIRE(reader.rows() == 0);
 
-#if defined(__CSV2_HAS_MMAN_H__)
+#if CSV2_HAS_MMAP
   REQUIRE(reader.parse(borrowed));
-  REQUIRE(mapping_fails(reader, "inputs/this-file-does-not-exist.csv"));
+  REQUIRE_FALSE(reader.mmap("inputs/this-file-does-not-exist.csv"));
   REQUIRE(reader.rows() == 0);
 
   REQUIRE(reader.parse(borrowed));
-  REQUIRE(mapping_fails(reader, "inputs/empty.csv"));
+  REQUIRE_FALSE(reader.mmap("inputs/empty.csv"));
   REQUIRE(reader.rows() == 0);
 #endif
 }
+
+#if CSV2_HAS_MMAP
+TEST_CASE("Report mmap errors and release handles after mapping failures" * test_suite("Reader")) {
+  ReaderWithoutHeader reader;
+  std::error_code error = std::make_error_code(std::errc::address_in_use);
+  REQUIRE(reader.mmap("inputs/test_01.csv", error));
+  REQUIRE_FALSE(error);
+
+  REQUIRE_FALSE(reader.mmap("inputs/this-file-does-not-exist.csv", error));
+  REQUIRE(error);
+  REQUIRE(reader.rows() == 0);
+
+  REQUIRE_FALSE(reader.mmap("inputs/empty.csv", error));
+  REQUIRE(error);
+#if defined(_WIN32)
+  REQUIRE(error.value() == ERROR_FILE_INVALID);
+#endif
+
+#if defined(__linux__) || defined(_WIN32)
+  const std::size_t handles_before = process_handle_count();
+  REQUIRE(handles_before != std::numeric_limits<std::size_t>::max());
+  for (int attempt = 0; attempt < 2048; ++attempt) {
+    mio::mmap_source mapping;
+    mapping.map("inputs/empty.csv", error);
+    REQUIRE(error);
+#if defined(_WIN32)
+    REQUIRE(error.value() == ERROR_FILE_INVALID);
+#endif
+  }
+  REQUIRE(process_handle_count() == handles_before);
+#endif
+
+  mio::mmap_source mapping;
+  mapping.map("inputs/test_01.csv", std::numeric_limits<std::size_t>::max(), 2, error);
+  REQUIRE(error);
+  REQUIRE(error == std::errc::invalid_argument);
+  REQUIRE(error.category() == std::generic_category());
+}
+#endif
 
 #if ((defined(_MSVC_LANG) && _MSVC_LANG >= 201703L) || __cplusplus >= 201703L)
 TEST_CASE("Borrow storage passed through parse_view" * test_suite("Reader")) {
@@ -350,4 +493,72 @@ TEST_CASE("Write to streams with and without close" * test_suite("Writer")) {
   }
   REQUIRE(lvalue_close_stream.closed);
   REQUIRE(lvalue_close_stream.str() == "x,y\n");
+}
+
+TEST_CASE("Write empty and forward-iterable rows" * test_suite("Writer")) {
+  std::ostringstream output;
+  csv2::Writer<csv2::delimiter<','>, std::ostringstream> writer(output);
+
+  writer.write_row(std::vector<std::string>());
+  writer.write_row(std::vector<std::string>({""}));
+  writer.write_row(std::list<std::string>({"a", "b"}));
+  writer.write_row(std::forward_list<std::string>({"x", "y", "z"}));
+
+  REQUIRE(output.str() == "\n\na,b\nx,y,z\n");
+}
+
+TEST_CASE("Transfer and release Writer close responsibility exactly once" * test_suite("Writer")) {
+  using CountingWriter = csv2::Writer<csv2::delimiter<','>, CountingCloseStream>;
+  REQUIRE_FALSE(std::is_copy_constructible<CountingWriter>::value);
+  REQUIRE_FALSE(std::is_copy_assignable<CountingWriter>::value);
+  REQUIRE(std::is_nothrow_move_constructible<CountingWriter>::value);
+  REQUIRE(std::is_nothrow_move_assignable<CountingWriter>::value);
+
+  CountingCloseStream moved_stream;
+  {
+    CountingWriter source(moved_stream);
+    CountingWriter destination(std::move(source));
+    source.write_row(std::vector<std::string>({"ignored"}));
+    destination.close();
+    destination.write_row(std::vector<std::string>({"ignored"}));
+  }
+  REQUIRE(moved_stream.close_count == 1);
+  REQUIRE(moved_stream.str().empty());
+
+  CountingCloseStream source_stream;
+  CountingCloseStream replaced_stream;
+  {
+    CountingWriter source(source_stream);
+    CountingWriter destination(replaced_stream);
+    destination = std::move(source);
+    REQUIRE(replaced_stream.close_count == 1);
+  }
+  REQUIRE(source_stream.close_count == 1);
+  REQUIRE(replaced_stream.close_count == 1);
+
+  CountingCloseStream explicitly_closed_stream;
+  {
+    CountingWriter writer(explicitly_closed_stream);
+    writer.close();
+    writer.close();
+  }
+  REQUIRE(explicitly_closed_stream.close_count == 1);
+}
+
+TEST_CASE("Report explicit Writer close errors and suppress destructor close errors" *
+          test_suite("Writer")) {
+  using ThrowingWriter = csv2::Writer<csv2::delimiter<','>, ThrowingCloseStream>;
+
+  ThrowingCloseStream explicit_stream;
+  {
+    ThrowingWriter writer(explicit_stream);
+    REQUIRE_THROWS_AS(writer.close(), std::runtime_error);
+  }
+  REQUIRE(explicit_stream.close_count == 1);
+
+  ThrowingCloseStream destructor_stream;
+  {
+    ThrowingWriter writer(destructor_stream);
+  }
+  REQUIRE(destructor_stream.close_count == 1);
 }

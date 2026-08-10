@@ -97,6 +97,7 @@ inline size_t make_offset_page_aligned(size_t offset) noexcept {
 
 #include <cstdint>
 #include <iterator>
+#include <limits>
 #include <string>
 #include <system_error>
 
@@ -124,6 +125,13 @@ using file_handle_type = int;
 // This value represents an invalid file handle type. This can be used to
 // determine whether `basic_mmap::file_handle` is valid, for example.
 const static file_handle_type invalid_handle = INVALID_HANDLE_VALUE;
+
+// Windows file-mapping APIs use nullptr rather than INVALID_HANDLE_VALUE.
+#ifdef _WIN32
+const static file_handle_type invalid_mapping_handle = nullptr;
+#else
+const static file_handle_type invalid_mapping_handle = invalid_handle;
+#endif
 
 template <access_mode AccessMode, typename ByteT> struct basic_mmap {
   using value_type = ByteT;
@@ -159,7 +167,7 @@ private:
   // through the latter.
   handle_type file_handle_ = INVALID_HANDLE_VALUE;
 #ifdef _WIN32
-  handle_type file_mapping_handle_ = INVALID_HANDLE_VALUE;
+  handle_type file_mapping_handle_ = invalid_mapping_handle;
 #endif
 
   // Letting user map a file using both an existing file handle and a path
@@ -752,6 +760,30 @@ file_handle_type open_file(const String &path, const access_mode mode, std::erro
   return handle;
 }
 
+inline void close_file(const file_handle_type handle) noexcept {
+  if (handle == invalid_handle)
+    return;
+#ifdef _WIN32
+  ::CloseHandle(handle);
+#else
+  ::close(handle);
+#endif
+}
+
+class file_handle_guard {
+public:
+  explicit file_handle_guard(const file_handle_type handle) noexcept : handle_(handle) {}
+  ~file_handle_guard() { close_file(handle_); }
+
+  file_handle_guard(const file_handle_guard &) = delete;
+  file_handle_guard &operator=(const file_handle_guard &) = delete;
+
+  void release() noexcept { handle_ = invalid_handle; }
+
+private:
+  file_handle_type handle_;
+};
+
 inline size_t query_file_size(file_handle_type handle, std::error_code &error) {
   error.clear();
 #ifdef _WIN32
@@ -760,15 +792,21 @@ inline size_t query_file_size(file_handle_type handle, std::error_code &error) {
     error = detail::last_error();
     return 0;
   }
-  return static_cast<int64_t>(file_size.QuadPart);
+  const int64_t file_size_value = file_size.QuadPart;
 #else // POSIX
   struct stat sbuf;
   if (::fstat(handle, &sbuf) == -1) {
     error = detail::last_error();
     return 0;
   }
-  return sbuf.st_size;
+  const int64_t file_size_value = sbuf.st_size;
 #endif
+  if (file_size_value < 0 ||
+      static_cast<std::uintmax_t>(file_size_value) > std::numeric_limits<size_t>::max()) {
+    error = std::make_error_code(std::errc::value_too_large);
+    return 0;
+  }
+  return static_cast<size_t>(file_size_value);
 }
 
 struct mmap_context {
@@ -790,7 +828,7 @@ inline mmap_context memory_map(const file_handle_type file_handle, const int64_t
   const auto file_mapping_handle = ::CreateFileMapping(
       file_handle, 0, mode == access_mode::read ? PAGE_READONLY : PAGE_READWRITE,
       win::int64_high(max_file_size), win::int64_low(max_file_size), 0);
-  if (file_mapping_handle == invalid_handle) {
+  if (file_mapping_handle == invalid_mapping_handle) {
     error = detail::last_error();
     return {};
   }
@@ -798,9 +836,9 @@ inline mmap_context memory_map(const file_handle_type file_handle, const int64_t
       file_mapping_handle, mode == access_mode::read ? FILE_MAP_READ : FILE_MAP_WRITE,
       win::int64_high(aligned_offset), win::int64_low(aligned_offset), length_to_map));
   if (mapping_start == nullptr) {
-    // Close file handle if mapping it failed.
+    const std::error_code mapping_error = detail::last_error();
     ::CloseHandle(file_mapping_handle);
-    error = detail::last_error();
+    error = mapping_error;
     return {};
   }
 #else // POSIX
@@ -846,8 +884,9 @@ basic_mmap<AccessMode, ByteT>::basic_mmap(basic_mmap &&other)
   other.length_ = other.mapped_length_ = 0;
   other.file_handle_ = invalid_handle;
 #ifdef _WIN32
-  other.file_mapping_handle_ = invalid_handle;
+  other.file_mapping_handle_ = invalid_mapping_handle;
 #endif
+  other.is_handle_internal_ = false;
 }
 
 template <access_mode AccessMode, typename ByteT>
@@ -871,7 +910,7 @@ basic_mmap<AccessMode, ByteT> &basic_mmap<AccessMode, ByteT>::operator=(basic_mm
     other.length_ = other.mapped_length_ = 0;
     other.file_handle_ = invalid_handle;
 #ifdef _WIN32
-    other.file_mapping_handle_ = invalid_handle;
+    other.file_mapping_handle_ = invalid_mapping_handle;
 #endif
     other.is_handle_internal_ = false;
   }
@@ -902,11 +941,13 @@ void basic_mmap<AccessMode, ByteT>::map(const String &path, const size_type offs
     return;
   }
 
+  detail::file_handle_guard handle_guard(handle);
   map(handle, offset, length, error);
-  // This MUST be after the call to map, as that sets this to true.
-  if (!error) {
-    is_handle_internal_ = true;
-  }
+  if (error)
+    return;
+
+  is_handle_internal_ = true;
+  handle_guard.release();
 }
 
 template <access_mode AccessMode, typename ByteT>
@@ -923,7 +964,7 @@ void basic_mmap<AccessMode, ByteT>::map(const handle_type handle, const size_typ
     return;
   }
 
-  if (offset + length > file_size) {
+  if (offset > file_size || length > file_size - offset) {
     error = std::make_error_code(std::errc::invalid_argument);
     return;
   }
@@ -1010,14 +1051,15 @@ template <access_mode AccessMode, typename ByteT> void basic_mmap<AccessMode, By
   length_ = mapped_length_ = 0;
   file_handle_ = invalid_handle;
 #ifdef _WIN32
-  file_mapping_handle_ = invalid_handle;
+  file_mapping_handle_ = invalid_mapping_handle;
 #endif
+  is_handle_internal_ = false;
 }
 
 template <access_mode AccessMode, typename ByteT>
 bool basic_mmap<AccessMode, ByteT>::is_mapped() const noexcept {
 #ifdef _WIN32
-  return file_mapping_handle_ != invalid_handle;
+  return file_mapping_handle_ != invalid_mapping_handle;
 #else // POSIX
   return is_open();
 #endif
@@ -1299,7 +1341,7 @@ public:
   }
 
   handle_type mapping_handle() const noexcept {
-    return pimpl_ ? pimpl_->mapping_handle() : invalid_handle;
+    return pimpl_ ? pimpl_->mapping_handle() : invalid_mapping_handle;
   }
 
   /** Returns whether a valid memory mapping has been created. */
