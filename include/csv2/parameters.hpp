@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstddef>
 #include <utility>
 
 namespace csv2 {
@@ -7,7 +8,8 @@ namespace csv2 {
 namespace trim_policy {
 struct no_trimming {
 public:
-  static std::pair<size_t, size_t> trim(const char *buffer, size_t start, size_t end) {
+  static std::pair<std::size_t, std::size_t> trim(const char *buffer, std::size_t start,
+                                                  std::size_t end) {
     (void)(buffer); // to silence unused parameter warning
     return {start, end};
   }
@@ -22,8 +24,9 @@ private:
   }
 
 public:
-  static std::pair<size_t, size_t> trim(const char *buffer, size_t start, size_t end) {
-    size_t new_start = start, new_end = end;
+  static std::pair<std::size_t, std::size_t> trim(const char *buffer, std::size_t start,
+                                                  std::size_t end) {
+    std::size_t new_start = start, new_end = end;
     while (new_start != new_end && is_trim_char(buffer[new_start], character_list...))
       ++new_start;
     while (new_start != new_end && is_trim_char(buffer[new_end - 1], character_list...))

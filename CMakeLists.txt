@@ -17,9 +17,10 @@ if(EXISTS "${CMAKE_BINARY_DIR}/conanbuildinfo.cmake")
     conan_basic_setup()
 endif()
 
-option(CSV2_BUILD_TESTS "Build csv2 tests + enable CTest")
-option(CSV2_SAMPLES "Build csv2 samples")
-option(CSV2_DEMO "Build csv2 demo" OFF)
+option(CSV2_BUILD_TESTS "Build csv2 tests + enable CTest" OFF)
+option(CSV2_BUILD_BENCHMARKS "Build csv2 benchmarks" OFF)
+option(CSV2_ENABLE_SANITIZERS
+  "Enable AddressSanitizer and UndefinedBehaviorSanitizer for tests" OFF)
 
 include(GNUInstallDirs)
 
@@ -36,6 +37,10 @@ if(CSV2_BUILD_TESTS)
     enable_testing()
   endif()
   add_subdirectory(test)
+endif()
+
+if(CSV2_BUILD_BENCHMARKS)
+  add_subdirectory(benchmark)
 endif()
 
 if(CSV2_IS_TOP_LEVEL)

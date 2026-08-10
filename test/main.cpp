@@ -1,3 +1,504 @@
+#if defined(CSV2_TEST_WINDOWS_API)
+
+#include <algorithm>
+#include <cstddef>
+#include <cstdint>
+#include <iterator>
+#include <limits>
+#include <memory>
+#include <string>
+#include <system_error>
+#include <type_traits>
+#include <utility>
+
+typedef void *HANDLE;
+typedef std::uint32_t DWORD;
+typedef int BOOL;
+typedef std::size_t SIZE_T;
+
+struct LARGE_INTEGER {
+  std::int64_t QuadPart;
+};
+
+struct SYSTEM_INFO {
+  DWORD dwAllocationGranularity;
+};
+
+#define INVALID_HANDLE_VALUE reinterpret_cast<HANDLE>(static_cast<std::intptr_t>(-1))
+#define GENERIC_READ 0x80000000u
+#define GENERIC_WRITE 0x40000000u
+#define FILE_SHARE_READ 0x00000001u
+#define FILE_SHARE_WRITE 0x00000002u
+#define OPEN_EXISTING 3u
+#define FILE_ATTRIBUTE_NORMAL 0x00000080u
+#define PAGE_READONLY 0x00000002u
+#define PAGE_READWRITE 0x00000004u
+#define FILE_MAP_READ 0x00000004u
+#define FILE_MAP_WRITE 0x00000002u
+#define ERROR_ACCESS_DENIED 5u
+#define ERROR_NOT_ENOUGH_MEMORY 8u
+#define ERROR_FILE_INVALID 1006u
+
+void GetSystemInfo(SYSTEM_INFO *system_info);
+DWORD GetLastError();
+HANDLE CreateFileA(const char *path, DWORD desired_access, DWORD share_mode,
+                   void *security_attributes, DWORD creation_disposition,
+                   DWORD flags_and_attributes, HANDLE template_file);
+HANDLE CreateFileW(const wchar_t *path, DWORD desired_access, DWORD share_mode,
+                   void *security_attributes, DWORD creation_disposition,
+                   DWORD flags_and_attributes, HANDLE template_file);
+BOOL GetFileSizeEx(HANDLE file, LARGE_INTEGER *file_size);
+HANDLE CreateFileMapping(HANDLE file, void *attributes, DWORD protection,
+                         DWORD maximum_size_high, DWORD maximum_size_low,
+                         const char *name);
+void *MapViewOfFile(HANDLE mapping, DWORD desired_access, DWORD offset_high,
+                    DWORD offset_low, SIZE_T bytes_to_map);
+BOOL CloseHandle(HANDLE handle);
+BOOL FlushViewOfFile(const void *base_address, SIZE_T bytes_to_flush);
+BOOL FlushFileBuffers(HANDLE file);
+BOOL UnmapViewOfFile(const void *base_address);
+
+#if !defined(_WIN32)
+#define _WIN32
+#define CSV2_TEST_UNDEFINE_WIN32
+#endif
+
+#define max(left, right) ((left) > (right) ? (left) : (right))
+
+#if defined(CSV2_TEST_SINGLE_HEADER)
+#include <csv2/csv2.hpp>
+#else
+#include <csv2/mio.hpp>
+#endif
+
+#undef max
+#if defined(CSV2_TEST_UNDEFINE_WIN32)
+#undef _WIN32
+#undef CSV2_TEST_UNDEFINE_WIN32
+#endif
+
+namespace {
+
+DWORD last_error = 0;
+HANDLE open_file_result = INVALID_HANDLE_VALUE;
+DWORD open_file_error = 0;
+BOOL query_size_result = 0;
+DWORD query_size_error = 0;
+std::int64_t query_size = 0;
+HANDLE create_mapping_result = nullptr;
+DWORD create_mapping_error = 0;
+void *map_view_result = nullptr;
+DWORD map_view_error = 0;
+DWORD close_error = 0;
+int map_view_calls = 0;
+int create_mapping_calls = 0;
+int close_calls = 0;
+int flush_view_calls = 0;
+int flush_file_calls = 0;
+DWORD create_mapping_size_high = 0;
+DWORD create_mapping_size_low = 0;
+DWORD map_view_offset_high = 0;
+DWORD map_view_offset_low = 0;
+SIZE_T map_view_length = 0;
+HANDLE closed_handles[8] = {};
+
+void reset_scenario() {
+  last_error = 0;
+  open_file_result = INVALID_HANDLE_VALUE;
+  open_file_error = 0;
+  query_size_result = 0;
+  query_size_error = 0;
+  query_size = 0;
+  create_mapping_result = nullptr;
+  create_mapping_error = 0;
+  map_view_result = nullptr;
+  map_view_error = 0;
+  close_error = 0;
+  map_view_calls = 0;
+  create_mapping_calls = 0;
+  close_calls = 0;
+  flush_view_calls = 0;
+  flush_file_calls = 0;
+  create_mapping_size_high = 0;
+  create_mapping_size_low = 0;
+  map_view_offset_high = 0;
+  map_view_offset_low = 0;
+  map_view_length = 0;
+  for (std::size_t i = 0; i < 8; ++i)
+    closed_handles[i] = nullptr;
+}
+
+HANDLE test_file_handle() {
+  return reinterpret_cast<HANDLE>(static_cast<std::intptr_t>(1));
+}
+
+HANDLE test_mapping_handle() {
+  return reinterpret_cast<HANDLE>(static_cast<std::intptr_t>(2));
+}
+
+HANDLE test_replacement_file_handle() {
+  return reinterpret_cast<HANDLE>(static_cast<std::intptr_t>(3));
+}
+
+HANDLE test_replacement_mapping_handle() {
+  return reinterpret_cast<HANDLE>(static_cast<std::intptr_t>(4));
+}
+
+HANDLE test_final_mapping_handle() {
+  return reinterpret_cast<HANDLE>(static_cast<std::intptr_t>(5));
+}
+
+int size_query_failure_releases_file_handle() {
+  reset_scenario();
+  open_file_result = test_file_handle();
+  query_size_error = ERROR_ACCESS_DENIED;
+
+  std::error_code error;
+  mio::mmap_source mapping;
+  mapping.map("file.csv", error);
+
+  if (error.value() != ERROR_ACCESS_DENIED)
+    return 1;
+  if (close_calls != 1 || closed_handles[0] != test_file_handle())
+    return 2;
+  return 0;
+}
+
+int open_failure_preserves_error_without_closing_invalid_handle() {
+  reset_scenario();
+  open_file_error = ERROR_ACCESS_DENIED;
+
+  std::error_code error;
+  mio::mmap_source mapping;
+  mapping.map("missing.csv", error);
+
+  if (error.value() != ERROR_ACCESS_DENIED)
+    return 29;
+  if (close_calls != 0 || create_mapping_calls != 0 || map_view_calls != 0)
+    return 30;
+  return 0;
+}
+
+int invalid_file_size_is_rejected_and_releases_file_handle() {
+  reset_scenario();
+  open_file_result = test_file_handle();
+  query_size_result = 1;
+  query_size = -1;
+
+  std::error_code error;
+  mio::mmap_source mapping;
+  mapping.map("file.csv", error);
+
+  if (error != std::errc::value_too_large)
+    return 3;
+  if (create_mapping_calls != 0)
+    return 4;
+  if (close_calls != 1 || closed_handles[0] != test_file_handle())
+    return 5;
+  return 0;
+}
+
+int creation_failure_releases_file_handle_without_followup_calls() {
+  reset_scenario();
+  open_file_result = test_file_handle();
+  query_size_result = 1;
+  query_size = 1;
+  create_mapping_error = ERROR_FILE_INVALID;
+
+  std::error_code error;
+  mio::mmap_source mapping;
+  mapping.map("file.csv", error);
+
+  if (error.value() != ERROR_FILE_INVALID)
+    return 6;
+  if (map_view_calls != 0)
+    return 7;
+  if (close_calls != 1 || closed_handles[0] != test_file_handle())
+    return 8;
+  return 0;
+}
+
+int view_failure_preserves_error_and_releases_both_handles() {
+  reset_scenario();
+  open_file_result = test_file_handle();
+  query_size_result = 1;
+  query_size = 1;
+  create_mapping_result = test_mapping_handle();
+  map_view_error = ERROR_NOT_ENOUGH_MEMORY;
+  close_error = ERROR_ACCESS_DENIED;
+
+  std::error_code error;
+  mio::mmap_source mapping;
+  mapping.map("file.csv", error);
+
+  if (error.value() != ERROR_NOT_ENOUGH_MEMORY)
+    return 9;
+  if (map_view_calls != 1)
+    return 10;
+  if (close_calls != 2 || closed_handles[0] != test_mapping_handle() ||
+      closed_handles[1] != test_file_handle())
+    return 11;
+  return 0;
+}
+
+int successful_move_and_failed_remap_preserve_owned_mapping() {
+  reset_scenario();
+  char mapped_byte = 'x';
+  open_file_result = test_file_handle();
+  query_size_result = 1;
+  query_size = 1;
+  create_mapping_result = test_mapping_handle();
+  map_view_result = &mapped_byte;
+
+  std::error_code error;
+  {
+    mio::mmap_source source;
+    source.map("file.csv", error);
+    if (error || !source.is_open() || !source.is_mapped())
+      return 12;
+
+    mio::mmap_source moved(std::move(source));
+    if (source.is_open() || source.is_mapped() || !moved.is_mapped() ||
+        moved.mapping_handle() != test_mapping_handle())
+      return 13;
+
+    open_file_result = test_replacement_file_handle();
+    create_mapping_result = nullptr;
+    create_mapping_error = ERROR_FILE_INVALID;
+    moved.map("replacement.csv", error);
+    if (error.value() != ERROR_FILE_INVALID)
+      return 14;
+    if (!moved.is_mapped() || moved.mapping_handle() != test_mapping_handle() ||
+        moved.data() != &mapped_byte)
+      return 15;
+    if (close_calls != 1 || closed_handles[0] != test_replacement_file_handle())
+      return 16;
+  }
+
+  if (close_calls != 3 || closed_handles[1] != test_mapping_handle() ||
+      closed_handles[2] != test_file_handle())
+    return 17;
+  return 0;
+}
+
+int own_handle_remap_preserves_file_handle_and_strong_guarantee() {
+  reset_scenario();
+  char mapped_bytes[8] = {};
+  open_file_result = test_file_handle();
+  query_size_result = 1;
+  query_size = 8;
+  create_mapping_result = test_mapping_handle();
+  map_view_result = mapped_bytes;
+
+  std::error_code error;
+  mio::mmap_source mapping;
+  mapping.map("file.csv", error);
+  if (error || mapping.file_handle() != test_file_handle())
+    return 18;
+
+  const HANDLE owned_file_handle = mapping.file_handle();
+  create_mapping_result = test_replacement_mapping_handle();
+  mapping.map(owned_file_handle, 1, 1, error);
+  if (error || mapping.file_handle() != owned_file_handle || mapping.data() != mapped_bytes + 1)
+    return 19;
+  if (close_calls != 1 || closed_handles[0] != test_mapping_handle())
+    return 20;
+
+  create_mapping_result = nullptr;
+  create_mapping_error = ERROR_NOT_ENOUGH_MEMORY;
+  mapping.map(owned_file_handle, 2, 1, error);
+  if (error.value() != ERROR_NOT_ENOUGH_MEMORY ||
+      mapping.mapping_handle() != test_replacement_mapping_handle() ||
+      mapping.data() != mapped_bytes + 1)
+    return 21;
+  if (close_calls != 1)
+    return 22;
+
+  create_mapping_result = test_final_mapping_handle();
+  create_mapping_error = 0;
+  mapping.map(owned_file_handle, 2, 1, error);
+  if (error || mapping.file_handle() != owned_file_handle || mapping.data() != mapped_bytes + 2)
+    return 23;
+  if (close_calls != 2 || closed_handles[1] != test_replacement_mapping_handle())
+    return 24;
+
+  mapping.unmap();
+  if (close_calls != 4 || closed_handles[2] != test_final_mapping_handle() ||
+      closed_handles[3] != owned_file_handle)
+    return 25;
+  return 0;
+}
+
+int writable_sync_flushes_view_and_file_once() {
+  reset_scenario();
+  char mapped_byte = 'x';
+  open_file_result = test_file_handle();
+  query_size_result = 1;
+  query_size = 1;
+  create_mapping_result = test_mapping_handle();
+  map_view_result = &mapped_byte;
+
+  std::error_code error;
+  mio::mmap_sink mapping;
+  mapping.map("file.csv", error);
+  if (error)
+    return 26;
+
+  mapping.sync(error);
+  if (error)
+    return 27;
+  if (flush_view_calls != 1 || flush_file_calls != 1)
+    return 28;
+
+  mapping.unmap();
+  return 0;
+}
+
+int non_aligned_offset_uses_aligned_view_and_exact_lengths() {
+  reset_scenario();
+  char mapped_bytes[4] = {'a', 'b', 'c', 'd'};
+  query_size_result = 1;
+  query_size = 8192;
+  create_mapping_result = test_mapping_handle();
+  map_view_result = mapped_bytes;
+
+  std::error_code error;
+  mio::mmap_source mapping;
+  mapping.map(test_file_handle(), 4097, 2, error);
+  if (error || mapping.data() != mapped_bytes + 1 || mapping.size() != 2 ||
+      mapping.mapping_offset() != 1 || mapping.mapped_length() != 3)
+    return 31;
+  if (create_mapping_size_high != 0 || create_mapping_size_low != 4099)
+    return 32;
+  if (map_view_offset_high != 0 || map_view_offset_low != 4096 || map_view_length != 3)
+    return 33;
+  mapping.unmap();
+  if (close_calls != 1 || closed_handles[0] != test_mapping_handle())
+    return 34;
+  return 0;
+}
+
+} // namespace
+
+void GetSystemInfo(SYSTEM_INFO *system_info) { system_info->dwAllocationGranularity = 4096; }
+
+DWORD GetLastError() { return last_error; }
+
+HANDLE CreateFileA(const char *, DWORD, DWORD, void *, DWORD, DWORD, HANDLE) {
+  last_error = open_file_error;
+  return open_file_result;
+}
+
+HANDLE CreateFileW(const wchar_t *, DWORD, DWORD, void *, DWORD, DWORD, HANDLE) {
+  last_error = open_file_error;
+  return open_file_result;
+}
+
+BOOL GetFileSizeEx(HANDLE, LARGE_INTEGER *file_size) {
+  last_error = query_size_error;
+  if (query_size_result)
+    file_size->QuadPart = query_size;
+  return query_size_result;
+}
+
+HANDLE CreateFileMapping(HANDLE, void *, DWORD, DWORD maximum_size_high,
+                         DWORD maximum_size_low, const char *) {
+  ++create_mapping_calls;
+  create_mapping_size_high = maximum_size_high;
+  create_mapping_size_low = maximum_size_low;
+  last_error = create_mapping_error;
+  return create_mapping_result;
+}
+
+void *MapViewOfFile(HANDLE, DWORD, DWORD offset_high, DWORD offset_low,
+                    SIZE_T bytes_to_map) {
+  ++map_view_calls;
+  map_view_offset_high = offset_high;
+  map_view_offset_low = offset_low;
+  map_view_length = bytes_to_map;
+  last_error = map_view_error;
+  return map_view_result;
+}
+
+BOOL CloseHandle(HANDLE handle) {
+  if (close_calls < 8)
+    closed_handles[close_calls] = handle;
+  ++close_calls;
+  last_error = close_error;
+  return 1;
+}
+
+BOOL FlushViewOfFile(const void *, SIZE_T) {
+  ++flush_view_calls;
+  return 1;
+}
+BOOL FlushFileBuffers(HANDLE) {
+  ++flush_file_calls;
+  return 1;
+}
+BOOL UnmapViewOfFile(const void *) { return 1; }
+
+int main() {
+  const int open_failure = open_failure_preserves_error_without_closing_invalid_handle();
+  if (open_failure != 0)
+    return open_failure;
+  const int size_failure = size_query_failure_releases_file_handle();
+  if (size_failure != 0)
+    return size_failure;
+  const int invalid_size = invalid_file_size_is_rejected_and_releases_file_handle();
+  if (invalid_size != 0)
+    return invalid_size;
+  const int creation_failure = creation_failure_releases_file_handle_without_followup_calls();
+  if (creation_failure != 0)
+    return creation_failure;
+  const int view_failure = view_failure_preserves_error_and_releases_both_handles();
+  if (view_failure != 0)
+    return view_failure;
+  const int move_and_failed_remap = successful_move_and_failed_remap_preserve_owned_mapping();
+  if (move_and_failed_remap != 0)
+    return move_and_failed_remap;
+  const int own_handle_remap = own_handle_remap_preserves_file_handle_and_strong_guarantee();
+  if (own_handle_remap != 0)
+    return own_handle_remap;
+  const int writable_sync = writable_sync_flushes_view_and_file_once();
+  if (writable_sync != 0)
+    return writable_sync;
+  return non_aligned_offset_uses_aligned_view_and_exact_lengths();
+}
+
+#elif defined(CSV2_TEST_HEADER_ONLY)
+
+#if defined(CSV2_TEST_HEADER_MIO)
+#include <csv2/mio.hpp>
+#elif defined(CSV2_TEST_HEADER_PARAMETERS)
+#include <csv2/parameters.hpp>
+#elif defined(CSV2_TEST_HEADER_READER)
+#include <csv2/reader.hpp>
+#elif defined(CSV2_TEST_HEADER_WRITER)
+#include <csv2/writer.hpp>
+#elif defined(CSV2_TEST_SINGLE_HEADER)
+#include <csv2/csv2.hpp>
+#else
+#error "A public header must be selected for the self-containment test"
+#endif
+
+#if defined(CSV2_EXPECT_NO_MIO) && CSV2_HAS_MMAP
+#error "CSV2_HAS_MMAP must remain disabled"
+#endif
+
+#if defined(CSV2_EXPECT_NO_MIO) && defined(MIO_MMAP_HEADER)
+#error "mio must not be included when CSV2_HAS_MMAP is disabled"
+#endif
+
+void csv2_public_header_is_self_contained() {}
+
+#else
+
+#if defined(CSV2_TEST_NO_EXCEPTIONS) &&                                                \
+    (defined(__cpp_exceptions) || defined(__EXCEPTIONS) || defined(_CPPUNWIND))
+#error "The no-exceptions test must be compiled with exception handling disabled"
+#endif
+
 #include "doctest.hpp"
 
 #if defined(CSV2_TEST_SINGLE_HEADER)
@@ -7,14 +508,38 @@
 #include <csv2/writer.hpp>
 #endif
 
+#if defined(CSV2_TEST_NO_MMAP) && CSV2_HAS_MMAP
+#error "CSV2_HAS_MMAP must remain disabled"
+#endif
+
+#if defined(CSV2_TEST_NO_MMAP) && defined(MIO_MMAP_HEADER)
+#error "mio must not be included when CSV2_HAS_MMAP is disabled"
+#endif
+
 #include <cstddef>
 #include <cstdio>
 #include <exception>
 #include <fstream>
+#include <forward_list>
+#include <list>
+#include <limits>
 #include <sstream>
 #include <string>
+#include <system_error>
+#include <type_traits>
 #include <utility>
 #include <vector>
+
+#if defined(__linux__)
+#include <dirent.h>
+#elif defined(_WIN32)
+#include <windows.h>
+#endif
+
+#if CSV2_HAS_MMAP && (defined(__unix__) || defined(__APPLE__))
+#include <cerrno>
+#include <fcntl.h>
+#endif
 
 using doctest::test_suite;
 
@@ -62,26 +587,99 @@ public:
   bool closed;
 };
 
+class CountingCloseStream : public std::ostringstream {
+public:
+  void close() { ++close_count; }
+
+  int close_count{0};
+};
+
+#if !defined(CSV2_TEST_NO_EXCEPTIONS)
+struct CloseError {};
+
+class ThrowingCloseStream : public std::ostringstream {
+public:
+  void close() {
+    ++close_count;
+    throw CloseError();
+  }
+
+  int close_count{0};
+};
+#endif
+
+class ReserveTrackingBuffer {
+public:
+  explicit ReserveTrackingBuffer(const char *prefix) : value(prefix) {}
+
+  std::size_t size() const { return value.size(); }
+  void reserve(std::size_t requested) {
+    last_reserve = requested;
+    value.reserve(requested);
+  }
+  void push_back(char character) { value.push_back(character); }
+
+  std::string value;
+  std::size_t last_reserve{0};
+};
+
+class ReserveOnlyBuffer {
+public:
+  explicit ReserveOnlyBuffer(const char *prefix) : value(prefix) {}
+
+  void reserve(std::size_t requested) {
+    last_reserve = requested;
+    value.reserve(requested);
+  }
+  void push_back(char character) { value.push_back(character); }
+
+  std::string value;
+  std::size_t last_reserve{0};
+};
+
+#if CSV2_HAS_MMAP && (defined(__linux__) || defined(_WIN32))
+std::size_t process_handle_count() {
+#if defined(_WIN32)
+  DWORD count = 0;
+  if (!::GetProcessHandleCount(::GetCurrentProcess(), &count))
+    return (std::numeric_limits<std::size_t>::max)();
+  return static_cast<std::size_t>(count);
+#else
+  DIR *directory = ::opendir("/proc/self/fd");
+  if (!directory)
+    return (std::numeric_limits<std::size_t>::max)();
+
+  std::size_t count = 0;
+  while (::readdir(directory))
+    ++count;
+  ::closedir(directory);
+  return count;
+#endif
+}
+#endif
+
 const char *writer_output_path() {
-#if defined(CSV2_TEST_SINGLE_HEADER)
+#if defined(CSV2_TEST_WRITER_OUTPUT)
+  return CSV2_TEST_WRITER_OUTPUT;
+#elif defined(CSV2_TEST_SINGLE_HEADER)
   return "csv2-single-header-writer-output.csv";
 #else
   return "csv2-module-writer-output.csv";
 #endif
 }
 
-#if defined(__CSV2_HAS_MMAN_H__)
-template <typename ReaderType> bool mapping_fails(ReaderType &reader, const char *path) {
-  try {
-    return !reader.mmap(path);
-  } catch (const std::exception &) {
-    return true;
-  }
-}
-#endif
+class ScopedFileRemoval {
+public:
+  explicit ScopedFileRemoval(std::string path) : path_(std::move(path)) {}
+  ~ScopedFileRemoval() { std::remove(path_.c_str()); }
+
+private:
+  std::string path_;
+};
 
 } // namespace
 
+#if CSV2_HAS_MMAP
 TEST_CASE("Read a file, its header, rows, columns, and cells" * test_suite("Reader")) {
   ReaderWithHeader reader;
   REQUIRE(reader.mmap("inputs/test_01.csv"));
@@ -92,6 +690,7 @@ TEST_CASE("Read a file, its header, rows, columns, and cells" * test_suite("Read
   REQUIRE(read_rows(reader) ==
           std::vector<std::vector<std::string>>({{"1", "2", "3"}, {"4", "5", "6"}}));
 }
+#endif
 
 TEST_CASE("Honor delimiter, quote, and trim policies" * test_suite("Reader")) {
   using TrimmedReader =
@@ -133,6 +732,40 @@ TEST_CASE("Handle record terminators and quoted newlines" * test_suite("Reader")
     REQUIRE(reader.parse(input));
     REQUIRE(read_rows(reader) == test_case.expected);
   }
+}
+
+TEST_CASE("Expose the address and length of each logical row" * test_suite("Reader")) {
+  struct AddressCase {
+    const char *input;
+    std::vector<std::size_t> offsets;
+    std::vector<std::string> records;
+  };
+
+  const AddressCase cases[] = {
+      {"a,b\nc,d", {0, 4}, {"a,b", "c,d"}},
+      {"a,b\r\nc,d", {0, 5}, {"a,b", "c,d"}},
+      {"a,\"b\nc\"\nd,e", {0, 8}, {"a,\"b\nc\"", "d,e"}},
+      {"a\n\nb", {0, 2, 3}, {"a", "", "b"}},
+  };
+
+  for (const auto &test_case : cases) {
+    ReaderWithoutHeader reader;
+    std::string input(test_case.input);
+    REQUIRE(reader.parse(input));
+
+    auto row = reader.begin();
+    for (std::size_t i = 0; i < test_case.offsets.size(); ++i, ++row) {
+      REQUIRE(row != reader.end());
+      const auto value = *row;
+      REQUIRE(value.address() == input.data() + test_case.offsets[i]);
+      REQUIRE(std::string(value.address(), value.length()) == test_case.records[i]);
+    }
+    REQUIRE(row == reader.end());
+  }
+
+  ReaderWithoutHeader empty;
+  REQUIRE(empty.header().address() == nullptr);
+  REQUIRE(empty.header().length() == 0);
 }
 
 TEST_CASE("Preserve trailing empty fields and normalize empty records" * test_suite("Reader")) {
@@ -212,6 +845,28 @@ TEST_CASE("Read raw and decoded cell values by appending to the output" * test_s
   REQUIRE(decoded == "value:\"a\"b\"");
 }
 
+TEST_CASE("Reserve for existing output when appending a raw row" * test_suite("Reader")) {
+  ReaderWithoutHeader reader;
+  std::string input("a,b");
+  REQUIRE(reader.parse(input));
+
+  ReserveTrackingBuffer output("pre:");
+  (*reader.begin()).read_raw_value(output);
+  REQUIRE(output.last_reserve == 7);
+  REQUIRE(output.value == "pre:a,b");
+}
+
+TEST_CASE("Append a raw row to a reserve-only output type" * test_suite("Reader")) {
+  ReaderWithoutHeader reader;
+  std::string input("a,b");
+  REQUIRE(reader.parse(input));
+
+  ReserveOnlyBuffer output("pre:");
+  (*reader.begin()).read_raw_value(output);
+  REQUIRE(output.last_reserve == 3);
+  REQUIRE(output.value == "pre:a,b");
+}
+
 TEST_CASE("Own rvalue input, borrow lvalue input, and preserve input across moves" *
           test_suite("Reader")) {
   ReaderWithoutHeader temporary_reader;
@@ -219,7 +874,7 @@ TEST_CASE("Own rvalue input, borrow lvalue input, and preserve input across move
   const std::string temporary_payload = first_cell + ",b\nc,d";
   REQUIRE(temporary_reader.parse(std::string(temporary_payload)));
   std::vector<std::string> heap_churn(512, std::string(temporary_payload.size(), 'x'));
-  REQUIRE(heap_churn.size() == 512);
+  (void)heap_churn;
   REQUIRE(read_rows(temporary_reader) ==
           std::vector<std::vector<std::string>>({{first_cell, "b"}, {"c", "d"}}));
 
@@ -259,16 +914,156 @@ TEST_CASE("Clear old input when replacing a source or a source fails" * test_sui
   REQUIRE_FALSE(reader.parse(std::string()));
   REQUIRE(reader.rows() == 0);
 
-#if defined(__CSV2_HAS_MMAN_H__)
+#if CSV2_HAS_MMAP
   REQUIRE(reader.parse(borrowed));
-  REQUIRE(mapping_fails(reader, "inputs/this-file-does-not-exist.csv"));
+  REQUIRE_FALSE(reader.mmap("inputs/this-file-does-not-exist.csv"));
   REQUIRE(reader.rows() == 0);
 
   REQUIRE(reader.parse(borrowed));
-  REQUIRE(mapping_fails(reader, "inputs/empty.csv"));
+  REQUIRE_FALSE(reader.mmap("inputs/empty.csv"));
   REQUIRE(reader.rows() == 0);
 #endif
 }
+
+#if CSV2_HAS_MMAP
+TEST_CASE("Report mmap errors and release handles after mapping failures" * test_suite("Reader")) {
+  ReaderWithoutHeader reader;
+  std::error_code error = std::make_error_code(std::errc::address_in_use);
+  REQUIRE(reader.mmap("inputs/test_01.csv", error));
+  REQUIRE_FALSE(error);
+
+  REQUIRE_FALSE(reader.mmap("inputs/this-file-does-not-exist.csv", error));
+  REQUIRE(error);
+  REQUIRE(reader.rows() == 0);
+
+  REQUIRE_FALSE(reader.mmap("inputs/empty.csv", error));
+  REQUIRE(error);
+#if defined(_WIN32)
+  REQUIRE(error.value() == ERROR_FILE_INVALID);
+#endif
+
+#if defined(__linux__) || defined(_WIN32)
+  const std::size_t warmup_handle_count = process_handle_count();
+  REQUIRE(warmup_handle_count != (std::numeric_limits<std::size_t>::max)());
+  const std::size_t handles_before = process_handle_count();
+  REQUIRE(handles_before != (std::numeric_limits<std::size_t>::max)());
+  for (int attempt = 0; attempt < 2048; ++attempt) {
+    mio::mmap_source mapping;
+    mapping.map("inputs/empty.csv", error);
+    REQUIRE(error);
+#if defined(_WIN32)
+    REQUIRE(error.value() == ERROR_FILE_INVALID);
+#endif
+  }
+  REQUIRE(process_handle_count() == handles_before);
+#endif
+
+  mio::mmap_source mapping;
+  mapping.map("inputs/test_01.csv", (std::numeric_limits<std::size_t>::max)(), 2, error);
+  REQUIRE(error);
+  REQUIRE(error == std::errc::invalid_argument);
+  REQUIRE(error.category() == std::generic_category());
+}
+
+TEST_CASE("Map a non-page-aligned offset beyond the first page" * test_suite("mio")) {
+  const std::size_t page = mio::page_size();
+  REQUIRE(page > 0);
+  REQUIRE(page < (std::numeric_limits<std::size_t>::max)() - 3);
+
+  const std::string path = std::string(writer_output_path()) + ".mmap-offset";
+  ScopedFileRemoval cleanup(path);
+  std::string contents(page + 3, 'x');
+  contents[page + 1] = 'Z';
+  {
+    std::ofstream output(path.c_str(), std::ios::binary | std::ios::trunc);
+    REQUIRE(output.is_open());
+    output.write(contents.data(), static_cast<std::streamsize>(contents.size()));
+    REQUIRE(output.good());
+  }
+
+  std::error_code error;
+  mio::mmap_source mapping;
+  mapping.map(path, page + 1, 1, error);
+  REQUIRE_FALSE(error);
+  REQUIRE(mapping.size() == 1);
+  REQUIRE(mapping[0] == 'Z');
+  REQUIRE(mapping.mapping_offset() == 1);
+  REQUIRE(mapping.mapped_length() == 2);
+}
+
+TEST_CASE("Preserve ownership when remapping through the mapping's own handle" *
+          test_suite("mio")) {
+  std::error_code error;
+  mio::mmap_source mapping;
+  mapping.map("inputs/test_01.csv", error);
+  REQUIRE_FALSE(error);
+
+  const mio::file_handle_type handle = mapping.file_handle();
+  mapping.map(handle, 6, 5, error);
+  REQUIRE_FALSE(error);
+  REQUIRE(std::string(mapping.data(), mapping.size()) == "1,2,3");
+
+#if defined(__unix__) || defined(__APPLE__)
+  errno = 0;
+  REQUIRE(::fcntl(handle, F_GETFD) != -1);
+#endif
+
+  mapping.map(handle, 12, 5, error);
+  REQUIRE_FALSE(error);
+  REQUIRE(std::string(mapping.data(), mapping.size()) == "4,5,6");
+
+  mapping.unmap();
+#if defined(__unix__) || defined(__APPLE__)
+  errno = 0;
+  REQUIRE(::fcntl(handle, F_GETFD) == -1);
+  REQUIRE(errno == EBADF);
+#endif
+}
+
+TEST_CASE("Preserve ownership through shared and writable same-handle remaps" *
+          test_suite("mio")) {
+  std::error_code error;
+  mio::shared_mmap_source shared;
+  shared.map("inputs/test_01.csv", error);
+  REQUIRE_FALSE(error);
+  const mio::file_handle_type shared_handle = shared.file_handle();
+  shared.map(shared_handle, 6, 5, error);
+  REQUIRE_FALSE(error);
+  REQUIRE(std::string(shared.data(), shared.size()) == "1,2,3");
+  shared.map(shared_handle, 12, 5, error);
+  REQUIRE_FALSE(error);
+  REQUIRE(std::string(shared.data(), shared.size()) == "4,5,6");
+  shared.unmap();
+
+  const std::string path = std::string(writer_output_path()) + ".mmap-sink";
+  ScopedFileRemoval cleanup(path);
+  {
+    std::ofstream output(path.c_str(), std::ios::binary | std::ios::trunc);
+    REQUIRE(output.is_open());
+    output << "abcdef";
+    REQUIRE(output.good());
+  }
+
+  mio::mmap_sink sink;
+  sink.map(path, error);
+  REQUIRE_FALSE(error);
+  const mio::file_handle_type sink_handle = sink.file_handle();
+  sink.map(sink_handle, 1, 1, error);
+  REQUIRE_FALSE(error);
+  sink[0] = 'Z';
+  sink.sync(error);
+  REQUIRE_FALSE(error);
+  sink.map(sink_handle, 2, 1, error);
+  REQUIRE_FALSE(error);
+  REQUIRE(sink[0] == 'c');
+  sink.unmap();
+
+  std::ifstream input(path.c_str(), std::ios::binary);
+  std::string persisted((std::istreambuf_iterator<char>(input)),
+                        std::istreambuf_iterator<char>());
+  REQUIRE(persisted == "aZcdef");
+}
+#endif
 
 #if ((defined(_MSVC_LANG) && _MSVC_LANG >= 201703L) || __cplusplus >= 201703L)
 TEST_CASE("Borrow storage passed through parse_view" * test_suite("Reader")) {
@@ -351,3 +1146,86 @@ TEST_CASE("Write to streams with and without close" * test_suite("Writer")) {
   REQUIRE(lvalue_close_stream.closed);
   REQUIRE(lvalue_close_stream.str() == "x,y\n");
 }
+
+TEST_CASE("Write empty and forward-iterable rows" * test_suite("Writer")) {
+  std::ostringstream output;
+  csv2::Writer<csv2::delimiter<','>, std::ostringstream> writer(output);
+
+  writer.write_row(std::vector<std::string>());
+  writer.write_row(std::vector<std::string>({""}));
+  writer.write_row(std::list<std::string>({"a", "b"}));
+  writer.write_row(std::forward_list<std::string>({"x", "y", "z"}));
+
+  REQUIRE(output.str() == "\n\na,b\nx,y,z\n");
+}
+
+TEST_CASE("Write a forward-iterable collection of rows" * test_suite("Writer")) {
+  std::ostringstream output;
+  csv2::Writer<csv2::delimiter<','>, std::ostringstream> writer(output);
+  const std::forward_list<std::vector<std::string>> rows = {
+      {"a", "b"}, {}, {"c", "d", "e"}};
+
+  writer.write_rows(rows);
+
+  REQUIRE(output.str() == "a,b\n\nc,d,e\n");
+}
+
+TEST_CASE("Transfer and release Writer close responsibility exactly once" * test_suite("Writer")) {
+  using CountingWriter = csv2::Writer<csv2::delimiter<','>, CountingCloseStream>;
+  REQUIRE_FALSE(std::is_copy_constructible<CountingWriter>::value);
+  REQUIRE_FALSE(std::is_copy_assignable<CountingWriter>::value);
+  REQUIRE(std::is_nothrow_move_constructible<CountingWriter>::value);
+  REQUIRE(std::is_nothrow_move_assignable<CountingWriter>::value);
+
+  CountingCloseStream moved_stream;
+  {
+    CountingWriter source(moved_stream);
+    CountingWriter destination(std::move(source));
+    source.write_row(std::vector<std::string>({"ignored"}));
+    destination.close();
+    destination.write_row(std::vector<std::string>({"ignored"}));
+  }
+  REQUIRE(moved_stream.close_count == 1);
+  REQUIRE(moved_stream.str().empty());
+
+  CountingCloseStream source_stream;
+  CountingCloseStream replaced_stream;
+  {
+    CountingWriter source(source_stream);
+    CountingWriter destination(replaced_stream);
+    destination = std::move(source);
+    REQUIRE(replaced_stream.close_count == 1);
+  }
+  REQUIRE(source_stream.close_count == 1);
+  REQUIRE(replaced_stream.close_count == 1);
+
+  CountingCloseStream explicitly_closed_stream;
+  {
+    CountingWriter writer(explicitly_closed_stream);
+    writer.close();
+    writer.close();
+  }
+  REQUIRE(explicitly_closed_stream.close_count == 1);
+}
+
+#if !defined(CSV2_TEST_NO_EXCEPTIONS)
+TEST_CASE("Report explicit Writer close errors and suppress destructor close errors" *
+          test_suite("Writer")) {
+  using ThrowingWriter = csv2::Writer<csv2::delimiter<','>, ThrowingCloseStream>;
+
+  ThrowingCloseStream explicit_stream;
+  {
+    ThrowingWriter writer(explicit_stream);
+    REQUIRE_THROWS_AS(writer.close(), CloseError);
+  }
+  REQUIRE(explicit_stream.close_count == 1);
+
+  ThrowingCloseStream destructor_stream;
+  {
+    ThrowingWriter writer(destructor_stream);
+  }
+  REQUIRE(destructor_stream.close_count == 1);
+}
+#endif
+
+#endif

@@ -1,4 +1,29 @@
+#pragma once
 
+#include <cstring>
+
+#ifndef CSV2_HAS_MMAP
+#if defined(__has_include)
+#if defined(_WIN32)
+#if __has_include(<windows.h>)
+#define CSV2_HAS_MMAP 1
+#else
+#define CSV2_HAS_MMAP 0
+#endif
+#elif __has_include(<sys/mman.h>)
+#define CSV2_HAS_MMAP 1
+#else
+#define CSV2_HAS_MMAP 0
+#endif
+#elif defined(_WIN32) || defined(__unix__) || defined(__unix) || defined(__APPLE__)
+#define CSV2_HAS_MMAP 1
+#else
+#define CSV2_HAS_MMAP 0
+#endif
+#endif
+
+#if CSV2_HAS_MMAP
+// #include <csv2/mio.hpp>
 /* Copyright 2017 https://github.com/mandreyel
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy of this
@@ -97,6 +122,7 @@ inline size_t make_offset_page_aligned(size_t offset) noexcept {
 
 #include <cstdint>
 #include <iterator>
+#include <limits>
 #include <string>
 #include <system_error>
 
@@ -124,6 +150,13 @@ using file_handle_type = int;
 // This value represents an invalid file handle type. This can be used to
 // determine whether `basic_mmap::file_handle` is valid, for example.
 const static file_handle_type invalid_handle = INVALID_HANDLE_VALUE;
+
+// Windows file-mapping APIs use nullptr rather than INVALID_HANDLE_VALUE.
+#ifdef _WIN32
+const static file_handle_type invalid_mapping_handle = nullptr;
+#else
+const static file_handle_type invalid_mapping_handle = invalid_handle;
+#endif
 
 template <access_mode AccessMode, typename ByteT> struct basic_mmap {
   using value_type = ByteT;
@@ -159,7 +192,7 @@ private:
   // through the latter.
   handle_type file_handle_ = INVALID_HANDLE_VALUE;
 #ifdef _WIN32
-  handle_type file_mapping_handle_ = INVALID_HANDLE_VALUE;
+  handle_type file_mapping_handle_ = invalid_mapping_handle;
 #endif
 
   // Letting user map a file using both an existing file handle and a path
@@ -752,6 +785,30 @@ file_handle_type open_file(const String &path, const access_mode mode, std::erro
   return handle;
 }
 
+inline void close_file(const file_handle_type handle) noexcept {
+  if (handle == invalid_handle)
+    return;
+#ifdef _WIN32
+  ::CloseHandle(handle);
+#else
+  ::close(handle);
+#endif
+}
+
+class file_handle_guard {
+public:
+  explicit file_handle_guard(const file_handle_type handle) noexcept : handle_(handle) {}
+  ~file_handle_guard() { close_file(handle_); }
+
+  file_handle_guard(const file_handle_guard &) = delete;
+  file_handle_guard &operator=(const file_handle_guard &) = delete;
+
+  void release() noexcept { handle_ = invalid_handle; }
+
+private:
+  file_handle_type handle_;
+};
+
 inline size_t query_file_size(file_handle_type handle, std::error_code &error) {
   error.clear();
 #ifdef _WIN32
@@ -760,15 +817,22 @@ inline size_t query_file_size(file_handle_type handle, std::error_code &error) {
     error = detail::last_error();
     return 0;
   }
-  return static_cast<int64_t>(file_size.QuadPart);
+  const int64_t file_size_value = file_size.QuadPart;
 #else // POSIX
   struct stat sbuf;
   if (::fstat(handle, &sbuf) == -1) {
     error = detail::last_error();
     return 0;
   }
-  return sbuf.st_size;
+  const int64_t file_size_value = sbuf.st_size;
 #endif
+  if (file_size_value < 0 ||
+      static_cast<std::uintmax_t>(file_size_value) >
+          (std::numeric_limits<size_t>::max)()) {
+    error = std::make_error_code(std::errc::value_too_large);
+    return 0;
+  }
+  return static_cast<size_t>(file_size_value);
 }
 
 struct mmap_context {
@@ -790,7 +854,7 @@ inline mmap_context memory_map(const file_handle_type file_handle, const int64_t
   const auto file_mapping_handle = ::CreateFileMapping(
       file_handle, 0, mode == access_mode::read ? PAGE_READONLY : PAGE_READWRITE,
       win::int64_high(max_file_size), win::int64_low(max_file_size), 0);
-  if (file_mapping_handle == invalid_handle) {
+  if (file_mapping_handle == invalid_mapping_handle) {
     error = detail::last_error();
     return {};
   }
@@ -798,9 +862,9 @@ inline mmap_context memory_map(const file_handle_type file_handle, const int64_t
       file_mapping_handle, mode == access_mode::read ? FILE_MAP_READ : FILE_MAP_WRITE,
       win::int64_high(aligned_offset), win::int64_low(aligned_offset), length_to_map));
   if (mapping_start == nullptr) {
-    // Close file handle if mapping it failed.
+    const std::error_code mapping_error = detail::last_error();
     ::CloseHandle(file_mapping_handle);
-    error = detail::last_error();
+    error = mapping_error;
     return {};
   }
 #else // POSIX
@@ -814,7 +878,7 @@ inline mmap_context memory_map(const file_handle_type file_handle, const int64_t
   }
 #endif
   mmap_context ctx;
-  ctx.data = mapping_start + offset - aligned_offset;
+  ctx.data = mapping_start + (offset - aligned_offset);
   ctx.length = length;
   ctx.mapped_length = length_to_map;
 #ifdef _WIN32
@@ -846,8 +910,9 @@ basic_mmap<AccessMode, ByteT>::basic_mmap(basic_mmap &&other)
   other.length_ = other.mapped_length_ = 0;
   other.file_handle_ = invalid_handle;
 #ifdef _WIN32
-  other.file_mapping_handle_ = invalid_handle;
+  other.file_mapping_handle_ = invalid_mapping_handle;
 #endif
+  other.is_handle_internal_ = false;
 }
 
 template <access_mode AccessMode, typename ByteT>
@@ -871,7 +936,7 @@ basic_mmap<AccessMode, ByteT> &basic_mmap<AccessMode, ByteT>::operator=(basic_mm
     other.length_ = other.mapped_length_ = 0;
     other.file_handle_ = invalid_handle;
 #ifdef _WIN32
-    other.file_mapping_handle_ = invalid_handle;
+    other.file_mapping_handle_ = invalid_mapping_handle;
 #endif
     other.is_handle_internal_ = false;
   }
@@ -902,11 +967,13 @@ void basic_mmap<AccessMode, ByteT>::map(const String &path, const size_type offs
     return;
   }
 
+  detail::file_handle_guard handle_guard(handle);
   map(handle, offset, length, error);
-  // This MUST be after the call to map, as that sets this to true.
-  if (!error) {
-    is_handle_internal_ = true;
-  }
+  if (error)
+    return;
+
+  is_handle_internal_ = true;
+  handle_guard.release();
 }
 
 template <access_mode AccessMode, typename ByteT>
@@ -923,11 +990,12 @@ void basic_mmap<AccessMode, ByteT>::map(const handle_type handle, const size_typ
     return;
   }
 
-  if (offset + length > file_size) {
+  if (offset > file_size || length > file_size - offset) {
     error = std::make_error_code(std::errc::invalid_argument);
     return;
   }
 
+  const bool remapping_internal_handle = is_handle_internal_ && handle == file_handle_;
   const auto ctx = detail::memory_map(
       handle, offset, length == map_entire_file ? (file_size - offset) : length, AccessMode, error);
   if (!error) {
@@ -936,9 +1004,11 @@ void basic_mmap<AccessMode, ByteT>::map(const handle_type handle, const size_typ
     // order to provide the strong guarantee that, should the new mapping fail, the
     // `map` function leaves this instance in a state as though the function had
     // never been invoked.
+    if (remapping_internal_handle)
+      is_handle_internal_ = false;
     unmap();
     file_handle_ = handle;
-    is_handle_internal_ = false;
+    is_handle_internal_ = remapping_internal_handle;
     data_ = reinterpret_cast<pointer>(ctx.data);
     length_ = ctx.length;
     mapped_length_ = ctx.mapped_length;
@@ -960,8 +1030,7 @@ basic_mmap<AccessMode, ByteT>::sync(std::error_code &error) {
 
   if (data()) {
 #ifdef _WIN32
-    if (::FlushViewOfFile(get_mapping_start(), mapped_length_) == 0 ||
-        ::FlushFileBuffers(file_handle_) == 0)
+    if (::FlushViewOfFile(get_mapping_start(), mapped_length_) == 0)
 #else // POSIX
     if (::msync(get_mapping_start(), mapped_length_, MS_SYNC) != 0)
 #endif
@@ -1010,14 +1079,15 @@ template <access_mode AccessMode, typename ByteT> void basic_mmap<AccessMode, By
   length_ = mapped_length_ = 0;
   file_handle_ = invalid_handle;
 #ifdef _WIN32
-  file_mapping_handle_ = invalid_handle;
+  file_mapping_handle_ = invalid_mapping_handle;
 #endif
+  is_handle_internal_ = false;
 }
 
 template <access_mode AccessMode, typename ByteT>
 bool basic_mmap<AccessMode, ByteT>::is_mapped() const noexcept {
 #ifdef _WIN32
-  return file_mapping_handle_ != invalid_handle;
+  return file_mapping_handle_ != invalid_mapping_handle;
 #else // POSIX
   return is_open();
 #endif
@@ -1299,7 +1369,7 @@ public:
   }
 
   handle_type mapping_handle() const noexcept {
-    return pimpl_ ? pimpl_->mapping_handle() : invalid_handle;
+    return pimpl_ ? pimpl_->mapping_handle() : invalid_mapping_handle;
   }
 
   /** Returns whether a valid memory mapping has been created. */
@@ -1560,8 +1630,11 @@ using shared_ummap_sink = basic_shared_mmap_sink<unsigned char>;
 } // namespace mio
 
 #endif // MIO_SHARED_MMAP_HEADER
-#pragma once
 
+#endif
+// #include <csv2/parameters.hpp>
+
+#include <cstddef>
 #include <utility>
 
 namespace csv2 {
@@ -1569,7 +1642,8 @@ namespace csv2 {
 namespace trim_policy {
 struct no_trimming {
 public:
-  static std::pair<size_t, size_t> trim(const char *buffer, size_t start, size_t end) {
+  static std::pair<std::size_t, std::size_t> trim(const char *buffer, std::size_t start,
+                                                  std::size_t end) {
     (void)(buffer); // to silence unused parameter warning
     return {start, end};
   }
@@ -1584,8 +1658,9 @@ private:
   }
 
 public:
-  static std::pair<size_t, size_t> trim(const char *buffer, size_t start, size_t end) {
-    size_t new_start = start, new_end = end;
+  static std::pair<std::size_t, std::size_t> trim(const char *buffer, std::size_t start,
+                                                  std::size_t end) {
+    std::size_t new_start = start, new_end = end;
     while (new_start != new_end && is_trim_char(buffer[new_start], character_list...))
       ++new_start;
     while (new_start != new_end && is_trim_char(buffer[new_end - 1], character_list...))
@@ -1610,18 +1685,11 @@ template <bool flag> struct first_row_is_header {
 };
 
 } // namespace csv2
-#pragma once
 
-#include <cstring>
-#if __has_include("sys/mman.h") || __has_include(<sys/mman.h>) ||           \
-    __has_include("windows.h") || __has_include(<windows.h>)
-#define __CSV2_HAS_MMAN_H__ 1
-// #include <csv2/mio.hpp>
-#endif
-// #include <csv2/parameters.hpp>
 
 #include <memory>
 #include <string>
+#include <system_error>
 #include <type_traits>
 #include <utility>
 #if ((defined(_MSVC_LANG) && _MSVC_LANG >= 201703L) || __cplusplus >= 201703L)
@@ -1682,7 +1750,7 @@ class Reader {
     return {buffer_size, buffer_size};
   }
 
-#if defined(__CSV2_HAS_MMAN_H__)
+#if CSV2_HAS_MMAP
   mio::mmap_source mmap_;
 #endif
   std::unique_ptr<std::string> owned_buffer_;
@@ -1697,7 +1765,7 @@ class Reader {
   void reset_source_() {
     clear_buffer_();
     owned_buffer_.reset();
-#if defined(__CSV2_HAS_MMAN_H__)
+#if CSV2_HAS_MMAP
     mmap_.unmap();
 #endif
   }
@@ -1748,7 +1816,7 @@ public:
 
   Reader(Reader &&other)
       :
-#if defined(__CSV2_HAS_MMAN_H__)
+#if CSV2_HAS_MMAP
         mmap_(std::move(other.mmap_)),
 #endif
         owned_buffer_(std::move(other.owned_buffer_)), buffer_(other.buffer_),
@@ -1759,7 +1827,7 @@ public:
   Reader &operator=(Reader &&other) {
     if (this != &other) {
       reset_source_();
-#if defined(__CSV2_HAS_MMAN_H__)
+#if CSV2_HAS_MMAP
       mmap_ = std::move(other.mmap_);
 #endif
       owned_buffer_ = std::move(other.owned_buffer_);
@@ -1770,18 +1838,25 @@ public:
     return *this;
   }
 
-#if defined(__CSV2_HAS_MMAN_H__)
+#if CSV2_HAS_MMAP
   // Memory-map a file. A failed mapping clears any previous source.
-  template <typename StringType> bool mmap(StringType &&filename) {
+  template <typename StringType> bool mmap(StringType &&filename, std::error_code &error) {
     reset_source_();
-    mmap_ = mio::mmap_source(std::forward<StringType>(filename));
-    if (!mmap_.is_open() || !mmap_.is_mapped() || mmap_.mapped_length() == 0) {
+    mmap_.map(std::forward<StringType>(filename), error);
+    if (error || !mmap_.is_open() || !mmap_.is_mapped() || mmap_.size() == 0) {
+      if (!error)
+        error = std::make_error_code(std::errc::invalid_argument);
       mmap_.unmap();
       return false;
     }
     buffer_ = mmap_.data();
-    buffer_size_ = mmap_.mapped_length();
+    buffer_size_ = mmap_.size();
     return true;
+  }
+
+  template <typename StringType> bool mmap(StringType &&filename) {
+    std::error_code error;
+    return mmap(std::forward<StringType>(filename), error);
   }
 #endif
 
@@ -1858,14 +1933,25 @@ public:
     friend class RowIterator;
     friend class Reader;
 
+    template <typename Container>
+    static auto reserve_for_append_(Container &result, size_t additional, int)
+        -> decltype(result.reserve(result.size() + additional), void()) {
+      result.reserve(result.size() + additional);
+    }
+
+    template <typename Container>
+    static void reserve_for_append_(Container &result, size_t additional, long) {
+      result.reserve(additional);
+    }
+
   public:
-    const char *address() const { return buffer_; }
+    const char *address() const noexcept { return buffer_ ? buffer_ + start_ : nullptr; }
     size_t length() const { return end_ - start_; }
 
     template <typename Container> void read_raw_value(Container &result) const {
       if (start_ >= end_)
         return;
-      result.reserve(end_ - start_);
+      reserve_for_append_(result, end_ - start_, 0);
       for (size_t i = start_; i < end_; ++i)
         result.push_back(buffer_[i]);
     }
@@ -2089,28 +2175,77 @@ public:
 };
 
 template <class delimiter = delimiter<','>, typename Stream = std::ofstream> class Writer {
-  Stream &stream_; // output stream for the writer
+  Stream *stream_; // output stream for the writer
+  bool active_;
 
   static void close_stream_(Stream &stream, std::true_type) { stream.close(); }
 
   static void close_stream_(Stream &, std::false_type) {}
 
-public:
-  Writer(Stream &stream) : stream_(stream) {}
+  void close_noexcept_() noexcept {
+    if (!active_)
+      return;
+    active_ = false;
+#if defined(__cpp_exceptions) || defined(__EXCEPTIONS) || defined(_CPPUNWIND)
+    try {
+      close_stream_(*stream_,
+                    std::integral_constant<bool, has_close<Stream, void()>::value>());
+    } catch (...) {
+    }
+#else
+    close_stream_(*stream_, std::integral_constant<bool, has_close<Stream, void()>::value>());
+#endif
+  }
 
-  ~Writer() {
-    close_stream_(stream_, std::integral_constant<bool, has_close<Stream, void()>::value>());
+public:
+  Writer(Stream &stream) noexcept : stream_(&stream), active_(true) {}
+
+  Writer(const Writer &) = delete;
+  Writer &operator=(const Writer &) = delete;
+
+  Writer(Writer &&other) noexcept : stream_(other.stream_), active_(other.active_) {
+    other.stream_ = nullptr;
+    other.active_ = false;
+  }
+
+  Writer &operator=(Writer &&other) noexcept {
+    if (this != &other) {
+      close_noexcept_();
+      stream_ = other.stream_;
+      active_ = other.active_;
+      other.stream_ = nullptr;
+      other.active_ = false;
+    }
+    return *this;
+  }
+
+  ~Writer() noexcept { close_noexcept_(); }
+
+  void close() {
+    if (!active_)
+      return;
+    active_ = false;
+    close_stream_(*stream_, std::integral_constant<bool, has_close<Stream, void()>::value>());
   }
 
   template <typename Container> void write_row(Container &&row) {
+    if (!active_)
+      return;
     const auto &strings = std::forward<Container>(row);
-    const auto delimiter_string = std::string(1, delimiter::value);
-    std::copy(strings.begin(), strings.end() - 1,
-              std::ostream_iterator<std::string>(stream_, delimiter_string.c_str()));
-    stream_ << strings.back() << "\n";
+    auto current = strings.begin();
+    const auto end = strings.end();
+    if (current != end) {
+      *stream_ << *current;
+      const char separator = delimiter::value;
+      while (++current != end)
+        *stream_ << separator << *current;
+    }
+    *stream_ << '\n';
   }
 
   template <typename Container> void write_rows(Container &&rows) {
+    if (!active_)
+      return;
     const auto &container_of_rows = std::forward<Container>(rows);
     for (const auto &row : container_of_rows) {
       write_row(row);
