@@ -517,6 +517,7 @@ static_assert(true, "compiling this translation unit is the assertion");
 #include <fstream>
 #include <limits>
 #include <list>
+#include <iterator>
 #include <sstream>
 #include <string>
 #include <system_error>
@@ -526,6 +527,11 @@ static_assert(true, "compiling this translation unit is the assertion");
 
 #if CSV2_HAS_FILESYSTEM
 #include <filesystem>
+#endif
+
+#if CSV2_HAS_RANGES
+#include <concepts>
+#include <ranges>
 #endif
 
 #if defined(__linux__)
@@ -547,6 +553,18 @@ using ReaderWithoutHeader = csv2::Reader<csv2::delimiter<','>, csv2::quote_chara
                                          csv2::first_row_is_header<false>>;
 using ReaderWithHeader =
     csv2::Reader<csv2::delimiter<','>, csv2::quote_character<'"'>, csv2::first_row_is_header<true>>;
+
+#if CSV2_HAS_RANGES
+using ConceptRowIterator = decltype(std::declval<ReaderWithoutHeader &>().begin());
+using ConceptRow = decltype(*std::declval<ConceptRowIterator &>());
+using ConceptCellIterator = decltype(std::declval<ConceptRow &>().begin());
+static_assert(std::input_iterator<ConceptRowIterator>);
+static_assert(std::forward_iterator<ConceptRowIterator>);
+static_assert(std::input_iterator<ConceptCellIterator>);
+static_assert(std::forward_iterator<ConceptCellIterator>);
+static_assert(std::ranges::forward_range<ReaderWithoutHeader>);
+static_assert(std::ranges::forward_range<ConceptRow>);
+#endif
 
 template <typename RowType> std::vector<std::string> read_cells(const RowType &row) {
   std::vector<std::string> result;
@@ -1202,6 +1220,32 @@ TEST_CASE("Compare const iterators and expose a trailing empty cell before end" 
   REQUIRE(trailing_value.empty());
   ++trailing_cell;
   REQUIRE(trailing_cell == trailing_end);
+}
+
+TEST_CASE("Use default and post-incremented iterators with classic algorithms" *
+          test_suite("Reader")) {
+  ReaderWithoutHeader::RowIterator default_row_a;
+  ReaderWithoutHeader::RowIterator default_row_b;
+  REQUIRE(default_row_a == default_row_b);
+
+  ReaderWithoutHeader reader;
+  std::string input("a,b\nc,d");
+  REQUIRE(reader.parse(input));
+  REQUIRE(std::distance(reader.begin(), reader.end()) == 2);
+
+  auto row = reader.begin();
+  const auto first_row = row++;
+  REQUIRE(first_row != row);
+
+  auto cells = (*first_row).begin();
+  ReaderWithoutHeader::Row::CellIterator default_cell_a;
+  ReaderWithoutHeader::Row::CellIterator default_cell_b;
+  REQUIRE(default_cell_a == default_cell_b);
+  const auto first_cell = cells++;
+  REQUIRE(first_cell != cells);
+  std::string value;
+  (*first_cell).read_value(value);
+  REQUIRE(value == "a");
 }
 
 TEST_CASE("Write to streams with and without close" * test_suite("Writer")) {

@@ -1820,6 +1820,7 @@ template <bool flag> struct first_row_is_header {
 } // namespace csv2
 
 
+#include <iterator>
 #include <memory>
 #include <string>
 #include <system_error>
@@ -2136,13 +2137,13 @@ public:
         bool escaped;
       };
 
-      const char *buffer_;
-      size_t range_size_;
-      size_t current_;
-      size_t end_;
-      size_t content_end_;
-      bool escaped_;
-      bool at_end_;
+      const char *buffer_{nullptr};
+      size_t range_size_{0};
+      size_t current_{0};
+      size_t end_{0};
+      size_t content_end_{0};
+      bool escaped_{false};
+      bool at_end_{true};
 
       CellBounds find_cell_bounds_() const noexcept {
         bool quote_opened = false;
@@ -2178,6 +2179,17 @@ public:
       friend class Row;
 
     public:
+      using value_type = Cell;
+      using difference_type = std::ptrdiff_t;
+      using reference = Cell;
+      using pointer = void;
+      using iterator_category = std::input_iterator_tag;
+#if CSV2_HAS_RANGES
+      using iterator_concept = std::forward_iterator_tag;
+#endif
+
+      CellIterator() = default;
+
       CellIterator(const char *buffer, size_t buffer_size, size_t start, size_t end)
           : buffer_(buffer), range_size_(buffer_size), current_(start), end_(end),
             content_end_(end), escaped_(false), at_end_(start >= end) {
@@ -2195,6 +2207,12 @@ public:
           update_bounds_();
         }
         return *this;
+      }
+
+      CellIterator operator++(int) {
+        CellIterator previous(*this);
+        ++(*this);
+        return previous;
       }
 
       Cell operator*() const {
@@ -2219,14 +2237,25 @@ public:
   };
 
   class RowIterator {
-    const char *buffer_;
-    size_t buffer_size_;
-    size_t start_;
-    size_t content_end_;
-    size_t next_start_;
+    const char *buffer_{nullptr};
+    size_t buffer_size_{0};
+    size_t start_{0};
+    size_t content_end_{0};
+    size_t next_start_{0};
     friend class Reader;
 
   public:
+    using value_type = Row;
+    using difference_type = std::ptrdiff_t;
+    using reference = Row;
+    using pointer = void;
+    using iterator_category = std::input_iterator_tag;
+#if CSV2_HAS_RANGES
+    using iterator_concept = std::forward_iterator_tag;
+#endif
+
+    RowIterator() = default;
+
     RowIterator(const char *buffer, size_t buffer_size, size_t start)
         : buffer_(buffer), buffer_size_(buffer_size),
           start_(start < buffer_size ? start : buffer_size), content_end_(buffer_size),
@@ -2250,6 +2279,12 @@ public:
         next_start_ = buffer_size_;
       }
       return *this;
+    }
+
+    RowIterator operator++(int) {
+      RowIterator previous(*this);
+      ++(*this);
+      return previous;
     }
 
     Row operator*() const {
