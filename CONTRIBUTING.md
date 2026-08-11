@@ -16,10 +16,13 @@ ctest --test-dir build -C Debug --output-on-failure
 
 The behavioral suite is compiled against both the modular headers and the
 single-header distribution in C++11, C++14, C++17, and, when advertised by
-CMake and the compiler, C++20 and C++23. Public-header self-containment is
-checked in C++11 and C++17. To reproduce the modern-standard CI gate on a
-current toolchain, configure with
-`-DCSV2_REQUIRE_MODERN_STANDARD_TESTS=ON` as well.
+CMake and the compiler, C++20, C++23, and C++26. C++26 requires CMake 3.30 or
+newer and is a forward-compatibility build mode, not a claim of complete
+compiler or standard-library conformance. Public-header self-containment is
+checked in C++11 and C++17. To reproduce the CI standard gates on a current
+toolchain, configure with `-DCSV2_REQUIRE_MODERN_STANDARD_TESTS=ON`; add
+`-DCSV2_REQUIRE_CXX26_TESTS=ON` only when CMake reports `cxx_std_26` for the
+selected compiler.
 
 Sanitizer behavior is compiler-specific. `CSV2_ENABLE_SANITIZERS=ON` selects
 ASan and UBSan for GCC, GNU-style Clang, and AppleClang, AddressSanitizer for
@@ -29,7 +32,15 @@ selected compiler; CI uses Release. Its UBSan configuration excludes only the
 `object-size` check because that check diagnoses the MSVC standard library's
 `forward_list` pseudo-node implementation. Linux enables leak detection through
 ASan, while Windows disables it because LeakSanitizer is not supported there.
-See the root README for the exact CI matrix.
+See the root README for the current CI matrix.
+
+CI uses stable hosted images and stable runner/distribution toolchains. The
+current enforced lines are GCC 14 and Clang/libc++ 18 on Linux, MSVC 19.51 and
+Clang-CL 22.1 on Windows, and AppleClang 21 on macOS. CI verifies compiler ID
+and version during CMake configuration. Do not replace these with preview
+runners, compiler snapshots, PPAs, or nightly repositories merely to obtain a
+newer version. Linux Clang has separate Release/no-sanitizer and
+Debug/ASan+UBSan jobs; both must remain present when changing the matrix.
 
 ## Source and generated header
 

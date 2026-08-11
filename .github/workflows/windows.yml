@@ -30,30 +30,50 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - compiler: MSVC
+          - compiler: MSVC 19.51
             configuration: Debug
             toolset: ""
             benchmarks: "ON"
             sanitizers: "OFF"
             sanitizer_runtime: none
-          - compiler: MSVC ASan
+            expected_id: MSVC
+            expected_version: "19.51"
+            require_cxx26: "OFF"
+            sanitizer_test_count: 0
+            install: true
+          - compiler: MSVC 19.51 ASan
             configuration: Release
             toolset: ""
             benchmarks: "OFF"
             sanitizers: "ON"
             sanitizer_runtime: msvc
-          - compiler: Clang-CL
+            expected_id: MSVC
+            expected_version: "19.51"
+            require_cxx26: "OFF"
+            sanitizer_test_count: 16
+            install: false
+          - compiler: Clang-CL 22.1
             configuration: Release
             toolset: -T ClangCL
             benchmarks: "OFF"
             sanitizers: "OFF"
             sanitizer_runtime: none
-          - compiler: Clang-CL ASan + UBSan
+            expected_id: Clang
+            expected_version: "22.1"
+            require_cxx26: "ON"
+            sanitizer_test_count: 0
+            install: false
+          - compiler: Clang-CL 22.1 ASan + UBSan
             configuration: Release
             toolset: -T ClangCL
             benchmarks: "OFF"
             sanitizers: "ON"
             sanitizer_runtime: clang
+            expected_id: Clang
+            expected_version: "22.1"
+            require_cxx26: "ON"
+            sanitizer_test_count: 18
+            install: false
 
     steps:
       - name: Check out repository
@@ -71,6 +91,9 @@ jobs:
           -DCSV2_BUILD_BENCHMARKS=${{ matrix.benchmarks }}
           -DCSV2_ENABLE_SANITIZERS=${{ matrix.sanitizers }}
           -DCSV2_REQUIRE_MODERN_STANDARD_TESTS=ON
+          -DCSV2_REQUIRE_CXX26_TESTS=${{ matrix.require_cxx26 }}
+          -DCSV2_CI_EXPECTED_COMPILER_ID=${{ matrix.expected_id }}
+          -DCSV2_CI_EXPECTED_COMPILER_VERSION_PREFIX=${{ matrix.expected_version }}
 
       - name: Build
         run: cmake --build build --config ${{ matrix.configuration }} --parallel
@@ -100,8 +123,10 @@ jobs:
             -L sanitizer-runtime `
             --show-only=json-v1 | ConvertFrom-Json
           $tests = @($testManifest.tests)
-          if ($tests.Count -ne 16) {
-            throw "Expected 16 sanitizer runtime tests, found $($tests.Count)"
+          $expectedTestCount = [int] "${{ matrix.sanitizer_test_count }}"
+          if ($tests.Count -ne $expectedTestCount) {
+            throw "Expected $expectedTestCount sanitizer runtime tests, " +
+              "found $($tests.Count)"
           }
 
           $commands = @(
@@ -163,7 +188,7 @@ jobs:
           }
 
       - name: Install package
-        if: matrix.compiler == 'MSVC'
+        if: matrix.install
         run: >-
           cmake --install build
           --config ${{ matrix.configuration }}

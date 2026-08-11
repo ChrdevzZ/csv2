@@ -23,7 +23,7 @@ concurrency:
 
 jobs:
   gcc:
-    name: Linux / GCC 13
+    name: Linux / GCC 14
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
@@ -36,11 +36,14 @@ jobs:
         run: >-
           cmake -S . -B build -G Ninja
           -DCMAKE_BUILD_TYPE=Release
-          -DCMAKE_CXX_COMPILER=g++-13
+          -DCMAKE_CXX_COMPILER=g++-14
           -DCMAKE_COMPILE_WARNING_AS_ERROR=ON
           -DCSV2_BUILD_TESTS=ON
           -DCSV2_BUILD_BENCHMARKS=ON
           -DCSV2_REQUIRE_MODERN_STANDARD_TESTS=ON
+          -DCSV2_REQUIRE_CXX26_TESTS=ON
+          -DCSV2_CI_EXPECTED_COMPILER_ID=GNU
+          -DCSV2_CI_EXPECTED_COMPILER_VERSION_PREFIX=14
 
       - name: Build
         run: cmake --build build --parallel
@@ -81,7 +84,7 @@ jobs:
           git diff --exit-code -- single_include/csv2/csv2.hpp
 
   gcc-sanitizers:
-    name: Linux / GCC 13 / ASan + UBSan
+    name: Linux / GCC 14 / ASan + UBSan
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
@@ -94,12 +97,15 @@ jobs:
         run: >-
           cmake -S . -B build -G Ninja
           -DCMAKE_BUILD_TYPE=Debug
-          -DCMAKE_CXX_COMPILER=g++-13
+          -DCMAKE_CXX_COMPILER=g++-14
           -DCMAKE_COMPILE_WARNING_AS_ERROR=ON
           -DCSV2_BUILD_TESTS=ON
           -DCSV2_BUILD_BENCHMARKS=OFF
           -DCSV2_ENABLE_SANITIZERS=ON
           -DCSV2_REQUIRE_MODERN_STANDARD_TESTS=ON
+          -DCSV2_REQUIRE_CXX26_TESTS=ON
+          -DCSV2_CI_EXPECTED_COMPILER_ID=GNU
+          -DCSV2_CI_EXPECTED_COMPILER_VERSION_PREFIX=14
 
       - name: Build
         run: cmake --build build --parallel
@@ -115,16 +121,28 @@ jobs:
           --output-on-failure
 
   clang:
-    name: Linux / Clang 18 + libc++ / ASan + UBSan
+    name: Linux / ${{ matrix.compiler }}
     runs-on: ubuntu-24.04
     timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - compiler: Clang 18 + libc++
+            build_type: Release
+            benchmarks: "ON"
+            sanitizers: "OFF"
+          - compiler: Clang 18 + libc++ / ASan + UBSan
+            build_type: Debug
+            benchmarks: "OFF"
+            sanitizers: "ON"
     steps:
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
-      - name: Install libc++ and clang-format
+      - name: Install stable Clang 18 libc++ and clang-format
         run: |
           sudo apt-get update
           sudo apt-get install --no-install-recommends libc++-18-dev libc++abi-18-dev clang-format-18
@@ -132,18 +150,27 @@ jobs:
       - name: Configure
         run: >-
           cmake -S . -B build -G Ninja
-          -DCMAKE_BUILD_TYPE=Debug
+          -DCMAKE_BUILD_TYPE=${{ matrix.build_type }}
           -DCMAKE_CXX_COMPILER=clang++-18
           -DCMAKE_CXX_FLAGS=-stdlib=libc++
           -DCMAKE_COMPILE_WARNING_AS_ERROR=ON
           -DCSV2_BUILD_TESTS=ON
-          -DCSV2_ENABLE_SANITIZERS=ON
+          -DCSV2_BUILD_BENCHMARKS=${{ matrix.benchmarks }}
+          -DCSV2_ENABLE_SANITIZERS=${{ matrix.sanitizers }}
           -DCSV2_REQUIRE_MODERN_STANDARD_TESTS=ON
+          -DCSV2_REQUIRE_CXX26_TESTS=ON
+          -DCSV2_CI_EXPECTED_COMPILER_ID=Clang
+          -DCSV2_CI_EXPECTED_COMPILER_VERSION_PREFIX=18
 
       - name: Build
         run: cmake --build build --parallel
 
+      - name: Test
+        if: matrix.sanitizers == 'OFF'
+        run: ctest --test-dir build --output-on-failure
+
       - name: Test with ASan and UBSan
+        if: matrix.sanitizers == 'ON'
         env:
           ASAN_OPTIONS: detect_leaks=1:halt_on_error=1
           UBSAN_OPTIONS: halt_on_error=1:print_stacktrace=1
@@ -154,6 +181,7 @@ jobs:
           --output-on-failure
 
       - name: Check first-party C++ formatting
+        if: matrix.sanitizers == 'OFF'
         run: >-
           clang-format-18 --dry-run --Werror
           include/csv2/parameters.hpp

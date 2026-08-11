@@ -23,7 +23,7 @@ concurrency:
 
 jobs:
   test:
-    name: macOS / AppleClang
+    name: macOS / AppleClang 21
     runs-on: macos-26
     timeout-minutes: 15
     steps:
@@ -39,6 +39,10 @@ jobs:
           -DCMAKE_CXX_COMPILER=clang++
           -DCMAKE_COMPILE_WARNING_AS_ERROR=ON
           -DCSV2_BUILD_TESTS=ON
+          -DCSV2_REQUIRE_MODERN_STANDARD_TESTS=ON
+          -DCSV2_REQUIRE_CXX26_TESTS=ON
+          -DCSV2_CI_EXPECTED_COMPILER_ID=AppleClang
+          -DCSV2_CI_EXPECTED_COMPILER_VERSION_PREFIX=21
 
       - name: Build
         run: cmake --build build --parallel
