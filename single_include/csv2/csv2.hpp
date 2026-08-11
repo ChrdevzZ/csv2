@@ -1820,6 +1820,7 @@ template <bool flag> struct first_row_is_header {
 } // namespace csv2
 
 
+#include <functional>
 #include <iterator>
 #include <memory>
 #include <string>
@@ -1827,8 +1828,10 @@ template <bool flag> struct first_row_is_header {
 #include <type_traits>
 #include <utility>
 #if CSV2_HAS_STRING_VIEW
-#include <functional>
 #include <string_view>
+#endif
+#if CSV2_HAS_SPAN
+#include <span>
 #endif
 
 namespace csv2 {
@@ -1905,7 +1908,6 @@ class Reader {
 #endif
   }
 
-#if CSV2_HAS_STRING_VIEW
   static bool contains_range_(const char *source, size_t source_size, const char *data,
                               size_t size) noexcept {
     if (!source || !data || size > source_size)
@@ -1926,17 +1928,9 @@ class Reader {
 #endif
     return false;
   }
-#endif
 
   template <typename StringType> bool parse_dispatch_(StringType &&contents, std::true_type) {
-    const char *const data = contents.c_str();
-    const size_t size = contents.size();
-    reset_source_();
-    if (size == 0)
-      return false;
-    buffer_ = data;
-    buffer_size_ = size;
-    return true;
+    return parse_borrowed(contents.c_str(), contents.size());
   }
 
   template <typename StringType> bool parse_owned_(StringType &&contents, std::true_type) {
@@ -1984,7 +1978,6 @@ public:
 
   Reader &operator=(Reader &&other) {
     if (this != &other) {
-#if CSV2_HAS_STRING_VIEW
       // The borrowed source may be a view into storage currently owned by this Reader.
       if (owns_range_(other.buffer_, other.buffer_size_)) {
         buffer_ = other.buffer_;
@@ -1992,7 +1985,6 @@ public:
         other.clear_buffer_();
         return *this;
       }
-#endif
       reset_source_();
 #if CSV2_HAS_MMAP
       mmap_ = std::move(other.mmap_);
@@ -2037,6 +2029,30 @@ public:
                            typename std::is_lvalue_reference<StringType &&>::type());
   }
 
+  // Borrow exactly size bytes. The caller keeps the storage alive.
+  bool parse_borrowed(const char *data, size_t size) noexcept {
+    if (!data || size == 0) {
+      reset_source_();
+      return false;
+    }
+    if (!owns_range_(data, size))
+      reset_source_();
+    buffer_ = data;
+    buffer_size_ = size;
+    return true;
+  }
+
+  // Own an independent copy (or moved value) of the input string.
+  bool parse_owned(std::string contents) {
+    return parse_owned_(std::move(contents), std::true_type());
+  }
+
+#if CSV2_HAS_SPAN
+  bool parse_borrowed(std::span<const char> contents) noexcept {
+    return parse_borrowed(contents.data(), contents.size());
+  }
+#endif
+
 #if CSV2_HAS_STRING_VIEW
   // Borrow a string_view. The view's storage must outlive Reader access.
   bool parse_view(std::string_view sv) {
@@ -2065,11 +2081,17 @@ public:
     friend class Row;
 
   public:
+    const char *raw_data() const noexcept { return buffer_ ? buffer_ + start_ : nullptr; }
+    size_t raw_size() const noexcept { return end_ - start_; }
+    bool has_escaped_quotes() const noexcept { return escaped_; }
+
 #if CSV2_HAS_STRING_VIEW
-    std::string_view read_view() const {
+    std::string_view raw_trimmed_view() const noexcept {
       const auto bounds = trim_policy::trim(buffer_, start_, end_);
       return std::string_view(buffer_ + bounds.first, bounds.second - bounds.first);
     }
+
+    std::string_view read_view() const noexcept { return raw_trimmed_view(); }
 #endif
 
     template <typename Container> void read_raw_value(Container &result) const {
@@ -2120,8 +2142,10 @@ public:
     }
 
   public:
-    const char *address() const noexcept { return buffer_ ? buffer_ + start_ : nullptr; }
-    size_t length() const { return end_ - start_; }
+    const char *raw_data() const noexcept { return buffer_ ? buffer_ + start_ : nullptr; }
+    size_t raw_size() const noexcept { return end_ - start_; }
+    const char *address() const noexcept { return raw_data(); }
+    size_t length() const noexcept { return raw_size(); }
 
     template <typename Container> void read_raw_value(Container &result) const {
       if (start_ >= end_)

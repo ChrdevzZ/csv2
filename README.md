@@ -66,6 +66,12 @@ When C++17 is available, `parse_view()` remains a borrowed API and the
 view of the same reader's owned or mapped source back to `parse_view()` keeps
 that backing storage alive and selects the view without copying.
 
+For ownership-visible code, `parse_borrowed(const char*, size_t)` accepts an
+exact byte range and never copies, while `parse_owned(std::string)` stores an
+independent source. C++20 additionally accepts `std::span<const char>` through
+`parse_borrowed`. The legacy `parse()` overloads retain their existing lvalue
+borrow/rvalue ownership behavior.
+
 `Reader::mmap()` returns `false` for ordinary open or mapping failures and
 clears the previous source; it does not translate those failures into
 exceptions. Use the overload accepting `std::error_code&` when the reason is
@@ -176,6 +182,12 @@ public:
   template <typename StringType>
   bool parse(StringType&& contents);
 
+  bool parse_borrowed(const char* data, size_t size);
+  bool parse_owned(std::string contents);
+
+  // C++20
+  bool parse_borrowed(std::span<const char> contents);
+
   // C++17: externally owned storage remains borrowed. A view into this
   // Reader's current owned or mapped source retains that backing source.
   bool parse_view(std::string_view contents);
@@ -194,6 +206,12 @@ public:
   Row header() const;
 };
 ```
+
+`Row::raw_data()/raw_size()` and `Cell::raw_data()/raw_size()` expose stable
+non-owning byte ranges. `Cell::has_escaped_quotes()` reports whether doubled
+quote pairs were observed during boundary scanning. In C++17,
+`Cell::raw_trimmed_view()` returns the trim-policy-adjusted raw view; the older
+`read_view()` name remains available.
 
 Here's the `Row` class:
 

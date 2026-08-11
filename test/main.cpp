@@ -534,6 +534,10 @@ static_assert(true, "compiling this translation unit is the assertion");
 #include <ranges>
 #endif
 
+#if CSV2_HAS_SPAN
+#include <span>
+#endif
+
 #if defined(__linux__)
 #include <dirent.h>
 #elif defined(_WIN32)
@@ -869,6 +873,46 @@ TEST_CASE("Read raw and decoded cell values by appending to the output" * test_s
   cell.read_value(decoded);
   REQUIRE(decoded == "value:\"a\"b\"");
 }
+
+TEST_CASE("Expose stable raw byte views and explicit source ownership" * test_suite("Reader")) {
+  const char borrowed[] = "  \"a\"\"b\"  ,tail";
+  ReaderWithoutHeader reader;
+  REQUIRE(reader.parse_borrowed(borrowed, sizeof(borrowed) - 1));
+
+  const auto row = *reader.begin();
+  REQUIRE(row.raw_data() == borrowed);
+  REQUIRE(row.raw_size() == sizeof(borrowed) - 1);
+  REQUIRE(row.address() == row.raw_data());
+  REQUIRE(row.length() == row.raw_size());
+
+  const auto cell = *row.begin();
+  REQUIRE(cell.raw_data() == borrowed);
+  REQUIRE(cell.raw_size() == 10);
+  REQUIRE(cell.has_escaped_quotes());
+#if CSV2_HAS_STRING_VIEW
+  REQUIRE(cell.raw_trimmed_view() == "\"a\"\"b\"");
+#endif
+
+  std::string owned("owned,value");
+  REQUIRE(reader.parse_owned(owned));
+  owned[0] = 'X';
+  std::string owned_row;
+  (*reader.begin()).read_raw_value(owned_row);
+  REQUIRE(owned_row == "owned,value");
+}
+
+#if CSV2_HAS_SPAN
+TEST_CASE("Borrow a span source without copying" * test_suite("Reader")) {
+  char bytes[] = {'a', ',', 'b'};
+  ReaderWithoutHeader reader;
+  REQUIRE(reader.parse_borrowed(std::span<const char>(bytes)));
+  REQUIRE((*reader.begin()).raw_data() == bytes);
+  bytes[0] = 'x';
+  std::string row;
+  (*reader.begin()).read_raw_value(row);
+  REQUIRE(row == "x,b");
+}
+#endif
 
 TEST_CASE("Reserve for existing output when appending a raw row" * test_suite("Reader")) {
   ReaderWithoutHeader reader;
