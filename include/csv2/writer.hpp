@@ -6,6 +6,7 @@
 #include <fstream>
 #include <iostream>
 #include <iterator>
+#include <sstream>
 #include <string>
 #include <type_traits>
 #include <utility>
@@ -16,6 +17,12 @@ namespace stream_ownership {
 struct close_on_destroy {};
 struct leave_open {};
 } // namespace stream_ownership
+
+namespace quote_policy {
+struct none {};
+struct minimal {};
+struct always {};
+} // namespace quote_policy
 
 template <typename, typename T> struct has_close : std::false_type {};
 
@@ -33,7 +40,8 @@ public:
 };
 
 template <class delimiter = delimiter<','>, typename Stream = std::ofstream,
-          typename Ownership = stream_ownership::close_on_destroy>
+          typename Ownership = stream_ownership::close_on_destroy,
+          typename QuotePolicy = quote_policy::none>
 class Writer {
   Stream *stream_; // output stream for the writer
   bool active_;
@@ -66,7 +74,7 @@ class Writer {
   }
 
   template <typename Field>
-  auto write_field_(const Field &field, int)
+  auto write_raw_field_(const Field &field, int)
       -> decltype(static_cast<const char *>(field.data()), field.size(),
                   stream_->write(static_cast<const char *>(field.data()),
                                  static_cast<std::streamsize>(field.size())),
@@ -75,7 +83,63 @@ class Writer {
                    static_cast<std::streamsize>(field.size()));
   }
 
-  template <typename Field> void write_field_(const Field &field, long) { *stream_ << field; }
+  template <typename Field> void write_raw_field_(const Field &field, long) { *stream_ << field; }
+
+  static bool should_quote_(const char *, size_t, quote_policy::always) noexcept { return true; }
+
+  static bool should_quote_(const char *data, size_t size, quote_policy::minimal) noexcept {
+    for (size_t i = 0; i < size; ++i) {
+      if (data[i] == delimiter::value || data[i] == '"' || data[i] == '\r' || data[i] == '\n')
+        return true;
+    }
+    return false;
+  }
+
+  template <class Policy>
+  void write_escaped_chars_(const char *data, size_t size, Policy policy) {
+    if (!should_quote_(data, size, policy)) {
+      if (size != 0)
+        stream_->write(data, static_cast<std::streamsize>(size));
+      return;
+    }
+
+    *stream_ << '"';
+    size_t segment = 0;
+    for (size_t i = 0; i < size; ++i) {
+      if (data[i] != '"')
+        continue;
+      if (segment < i)
+        stream_->write(data + segment, static_cast<std::streamsize>(i - segment));
+      *stream_ << "\"\"";
+      segment = i + 1;
+    }
+    if (segment < size)
+      stream_->write(data + segment, static_cast<std::streamsize>(size - segment));
+    *stream_ << '"';
+  }
+
+  template <typename Field>
+  auto write_escaped_field_(const Field &field, int)
+      -> decltype(static_cast<const char *>(field.data()), field.size(), void()) {
+    write_escaped_chars_(static_cast<const char *>(field.data()), static_cast<size_t>(field.size()),
+                         QuotePolicy());
+  }
+
+  template <typename Field> void write_escaped_field_(const Field &field, long) {
+    std::ostringstream formatted;
+    formatted.copyfmt(*stream_);
+    formatted << field;
+    const std::string value = formatted.str();
+    write_escaped_chars_(value.data(), value.size(), QuotePolicy());
+  }
+
+  template <typename Field> void write_field_(const Field &field, std::true_type) {
+    write_raw_field_(field, 0);
+  }
+
+  template <typename Field> void write_field_(const Field &field, std::false_type) {
+    write_escaped_field_(field, 0);
+  }
 
 public:
   Writer(Stream &stream) noexcept : stream_(&stream), active_(true) {}
@@ -117,11 +181,11 @@ public:
     auto current = begin(strings);
     const auto last = end(strings);
     if (current != last) {
-      write_field_(*current, 0);
+      write_field_(*current, typename std::is_same<QuotePolicy, quote_policy::none>::type());
       const char separator = delimiter::value;
       while (++current != last) {
         *stream_ << separator;
-        write_field_(*current, 0);
+        write_field_(*current, typename std::is_same<QuotePolicy, quote_policy::none>::type());
       }
     }
     *stream_ << '\n';
@@ -141,5 +205,9 @@ public:
     }
   }
 };
+
+template <class delimiter = delimiter<','>, typename Stream = std::ofstream,
+          typename Ownership = stream_ownership::close_on_destroy>
+using EscapingWriter = Writer<delimiter, Stream, Ownership, quote_policy::minimal>;
 
 } // namespace csv2

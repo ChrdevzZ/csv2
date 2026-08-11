@@ -19,6 +19,7 @@
 #include <system_error>
 #include <type_traits>
 #include <utility>
+#include <vector>
 #if CSV2_HAS_STRING_VIEW
 #include <string_view>
 #endif
@@ -256,6 +257,129 @@ public:
   CellIterator end() const { return CellIterator(buffer_, end_, end_); }
 };
 
+template <class delimiter_type, class quote_character_type, class trim_policy_type>
+class RowIndex {
+public:
+  using Row = basic_row<delimiter_type, quote_character_type, trim_policy_type>;
+
+private:
+  const char *buffer_{nullptr};
+  size_t buffer_size_{0};
+  std::vector<size_t> offsets_;
+
+  Row row_at_(size_t position) const noexcept {
+    const size_t start = offsets_[position];
+    const detail::record_bounds bounds =
+        detail::find_record_bounds<quote_character_type>(buffer_, buffer_size_, start);
+    return Row(buffer_, start, bounds.content_end);
+  }
+
+public:
+  RowIndex() = default;
+
+  RowIndex(const char *buffer, size_t buffer_size, size_t start, bool ignore_empty_lines)
+      : buffer_(buffer), buffer_size_(buffer_size) {
+    while (start < buffer_size_) {
+      const detail::record_bounds bounds =
+          detail::find_record_bounds<quote_character_type>(buffer_, buffer_size_, start);
+      if (!ignore_empty_lines || bounds.content_end != start)
+        offsets_.push_back(start);
+      start = bounds.next_start;
+    }
+  }
+
+  size_t size() const noexcept { return offsets_.size(); }
+  bool empty() const noexcept { return offsets_.empty(); }
+  Row operator[](size_t position) const noexcept { return row_at_(position); }
+
+  class iterator {
+    const RowIndex *index_{nullptr};
+    size_t position_{0};
+
+  public:
+    using value_type = Row;
+    using difference_type = std::ptrdiff_t;
+    using reference = Row;
+    using pointer = void;
+    using iterator_category = std::random_access_iterator_tag;
+#if CSV2_HAS_RANGES
+    using iterator_concept = std::random_access_iterator_tag;
+#endif
+
+    iterator() = default;
+    iterator(const RowIndex *index, size_t position) noexcept
+        : index_(index), position_(position) {}
+
+    Row operator*() const noexcept { return (*index_)[position_]; }
+    Row operator[](difference_type offset) const noexcept {
+      return (*index_)[static_cast<size_t>(static_cast<difference_type>(position_) + offset)];
+    }
+
+    iterator &operator++() noexcept {
+      ++position_;
+      return *this;
+    }
+    iterator operator++(int) noexcept {
+      iterator previous(*this);
+      ++(*this);
+      return previous;
+    }
+    iterator &operator--() noexcept {
+      --position_;
+      return *this;
+    }
+    iterator operator--(int) noexcept {
+      iterator previous(*this);
+      --(*this);
+      return previous;
+    }
+    iterator &operator+=(difference_type offset) noexcept {
+      position_ = static_cast<size_t>(static_cast<difference_type>(position_) + offset);
+      return *this;
+    }
+    iterator &operator-=(difference_type offset) noexcept { return *this += -offset; }
+
+    friend iterator operator+(iterator value, difference_type offset) noexcept {
+      value += offset;
+      return value;
+    }
+    friend iterator operator+(difference_type offset, iterator value) noexcept {
+      value += offset;
+      return value;
+    }
+    friend iterator operator-(iterator value, difference_type offset) noexcept {
+      value -= offset;
+      return value;
+    }
+    friend difference_type operator-(const iterator &left, const iterator &right) noexcept {
+      return static_cast<difference_type>(left.position_) -
+             static_cast<difference_type>(right.position_);
+    }
+
+    friend bool operator==(const iterator &left, const iterator &right) noexcept {
+      return left.index_ == right.index_ && left.position_ == right.position_;
+    }
+    friend bool operator!=(const iterator &left, const iterator &right) noexcept {
+      return !(left == right);
+    }
+    friend bool operator<(const iterator &left, const iterator &right) noexcept {
+      return left.position_ < right.position_;
+    }
+    friend bool operator>(const iterator &left, const iterator &right) noexcept {
+      return right < left;
+    }
+    friend bool operator<=(const iterator &left, const iterator &right) noexcept {
+      return !(right < left);
+    }
+    friend bool operator>=(const iterator &left, const iterator &right) noexcept {
+      return !(left < right);
+    }
+  };
+
+  iterator begin() const noexcept { return iterator(this, 0); }
+  iterator end() const noexcept { return iterator(this, size()); }
+};
+
 #if CSV2_HAS_RANGES
 } // namespace csv2
 namespace std {
@@ -486,6 +610,7 @@ public:
 
   using Cell = basic_cell<quote_character, trim_policy>;
   using Row = basic_row<delimiter, quote_character, trim_policy>;
+  using RowIndex = csv2::RowIndex<delimiter, quote_character, trim_policy>;
   class RowIterator;
 
   class RowIterator {
@@ -599,6 +724,13 @@ public:
       ++result;
     }
     return result;
+  }
+
+  RowIndex index(bool ignore_empty_lines = false) const {
+    size_t start = 0;
+    if (buffer_ && first_row_is_header::value)
+      start = detail::find_record_bounds<quote_character>(buffer_, buffer_size_, 0).next_start;
+    return RowIndex(buffer_, buffer_size_, start, ignore_empty_lines);
   }
 };
 

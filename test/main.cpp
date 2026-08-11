@@ -646,6 +646,15 @@ public:
   std::size_t write_calls{0};
 };
 
+struct CommaFormattedValue {
+  int left;
+  int right;
+};
+
+std::ostream &operator<<(std::ostream &stream, const CommaFormattedValue &value) {
+  return stream << value.left << ',' << value.right;
+}
+
 #if !defined(CSV2_TEST_NO_EXCEPTIONS)
 struct CloseError {};
 
@@ -1536,6 +1545,32 @@ TEST_CASE("Use default and post-incremented iterators with classic algorithms" *
   REQUIRE(value == "a");
 }
 
+TEST_CASE("Build an explicit random-access row index from logical record offsets" *
+          test_suite("Reader")) {
+  ReaderWithHeader reader;
+  std::string input("h1,h2\n\n\"a\nb\",c\nx,y\n");
+  REQUIRE(reader.parse(input));
+
+  const auto all_rows = reader.index();
+  REQUIRE(all_rows.size() == 3);
+  REQUIRE(read_cells(all_rows[0]).empty());
+  REQUIRE(read_cells(all_rows[1]) == std::vector<std::string>({"\"a\nb\"", "c"}));
+  REQUIRE(read_cells(all_rows[2]) == std::vector<std::string>({"x", "y"}));
+  REQUIRE(all_rows[1].raw_data() == input.data() + 7);
+
+  const auto non_empty_rows = reader.index(true);
+  REQUIRE(non_empty_rows.size() == 2);
+  REQUIRE(non_empty_rows.end() - non_empty_rows.begin() == 2);
+  REQUIRE(read_cells(*(non_empty_rows.begin() + 1)) == std::vector<std::string>({"x", "y"}));
+  REQUIRE(read_cells(non_empty_rows.begin()[0]) ==
+          std::vector<std::string>({"\"a\nb\"", "c"}));
+
+#if CSV2_HAS_RANGES
+  static_assert(std::ranges::random_access_range<ReaderWithHeader::RowIndex>);
+  static_assert(std::ranges::sized_range<ReaderWithHeader::RowIndex>);
+#endif
+}
+
 TEST_CASE("Write to streams with and without close" * test_suite("Writer")) {
   std::ostringstream memory_stream;
   {
@@ -1594,6 +1629,34 @@ TEST_CASE("Write ADL ranges and contiguous character fields directly" * test_sui
   csv2::Writer<csv2::delimiter<','>, std::ostringstream> number_writer(numbers);
   number_writer.write_row(std::vector<int>({1, 2}));
   REQUIRE(numbers.str() == "1,2\n");
+}
+
+TEST_CASE("Escape CSV fields with explicit minimal and always quote policies" *
+          test_suite("Writer")) {
+  std::ostringstream minimal_output;
+  csv2::EscapingWriter<csv2::delimiter<','>, std::ostringstream,
+                       csv2::stream_ownership::leave_open>
+      minimal(minimal_output);
+  minimal.write_row(std::vector<std::string>(
+      {"plain", "a,b", "a\"b", "line\nbreak", "car\rriage", ""}));
+  REQUIRE(minimal_output.str() ==
+          "plain,\"a,b\",\"a\"\"b\",\"line\nbreak\",\"car\rriage\",\n");
+
+  std::ostringstream always_output;
+  csv2::Writer<csv2::delimiter<','>, std::ostringstream,
+               csv2::stream_ownership::leave_open, csv2::quote_policy::always>
+      always(always_output);
+  always.write_row(std::vector<std::string>({"a", "\"b\"", ""}));
+  REQUIRE(always_output.str() == "\"a\",\"\"\"b\"\"\",\"\"\n");
+
+  std::ostringstream formatted_output;
+  formatted_output << std::hex;
+  csv2::EscapingWriter<csv2::delimiter<','>, std::ostringstream,
+                       csv2::stream_ownership::leave_open>
+      formatted(formatted_output);
+  const std::vector<CommaFormattedValue> values = {{15, 16}};
+  formatted.write_row(values);
+  REQUIRE(formatted_output.str() == "\"f,10\"\n");
 }
 
 TEST_CASE("Leave borrowed streams open unless close is explicit" * test_suite("Writer")) {

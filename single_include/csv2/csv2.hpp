@@ -2304,6 +2304,7 @@ template <bool flag> struct first_row_is_header {
 #include <system_error>
 #include <type_traits>
 #include <utility>
+#include <vector>
 #if CSV2_HAS_STRING_VIEW
 #include <string_view>
 #endif
@@ -2541,6 +2542,129 @@ public:
   CellIterator end() const { return CellIterator(buffer_, end_, end_); }
 };
 
+template <class delimiter_type, class quote_character_type, class trim_policy_type>
+class RowIndex {
+public:
+  using Row = basic_row<delimiter_type, quote_character_type, trim_policy_type>;
+
+private:
+  const char *buffer_{nullptr};
+  size_t buffer_size_{0};
+  std::vector<size_t> offsets_;
+
+  Row row_at_(size_t position) const noexcept {
+    const size_t start = offsets_[position];
+    const detail::record_bounds bounds =
+        detail::find_record_bounds<quote_character_type>(buffer_, buffer_size_, start);
+    return Row(buffer_, start, bounds.content_end);
+  }
+
+public:
+  RowIndex() = default;
+
+  RowIndex(const char *buffer, size_t buffer_size, size_t start, bool ignore_empty_lines)
+      : buffer_(buffer), buffer_size_(buffer_size) {
+    while (start < buffer_size_) {
+      const detail::record_bounds bounds =
+          detail::find_record_bounds<quote_character_type>(buffer_, buffer_size_, start);
+      if (!ignore_empty_lines || bounds.content_end != start)
+        offsets_.push_back(start);
+      start = bounds.next_start;
+    }
+  }
+
+  size_t size() const noexcept { return offsets_.size(); }
+  bool empty() const noexcept { return offsets_.empty(); }
+  Row operator[](size_t position) const noexcept { return row_at_(position); }
+
+  class iterator {
+    const RowIndex *index_{nullptr};
+    size_t position_{0};
+
+  public:
+    using value_type = Row;
+    using difference_type = std::ptrdiff_t;
+    using reference = Row;
+    using pointer = void;
+    using iterator_category = std::random_access_iterator_tag;
+#if CSV2_HAS_RANGES
+    using iterator_concept = std::random_access_iterator_tag;
+#endif
+
+    iterator() = default;
+    iterator(const RowIndex *index, size_t position) noexcept
+        : index_(index), position_(position) {}
+
+    Row operator*() const noexcept { return (*index_)[position_]; }
+    Row operator[](difference_type offset) const noexcept {
+      return (*index_)[static_cast<size_t>(static_cast<difference_type>(position_) + offset)];
+    }
+
+    iterator &operator++() noexcept {
+      ++position_;
+      return *this;
+    }
+    iterator operator++(int) noexcept {
+      iterator previous(*this);
+      ++(*this);
+      return previous;
+    }
+    iterator &operator--() noexcept {
+      --position_;
+      return *this;
+    }
+    iterator operator--(int) noexcept {
+      iterator previous(*this);
+      --(*this);
+      return previous;
+    }
+    iterator &operator+=(difference_type offset) noexcept {
+      position_ = static_cast<size_t>(static_cast<difference_type>(position_) + offset);
+      return *this;
+    }
+    iterator &operator-=(difference_type offset) noexcept { return *this += -offset; }
+
+    friend iterator operator+(iterator value, difference_type offset) noexcept {
+      value += offset;
+      return value;
+    }
+    friend iterator operator+(difference_type offset, iterator value) noexcept {
+      value += offset;
+      return value;
+    }
+    friend iterator operator-(iterator value, difference_type offset) noexcept {
+      value -= offset;
+      return value;
+    }
+    friend difference_type operator-(const iterator &left, const iterator &right) noexcept {
+      return static_cast<difference_type>(left.position_) -
+             static_cast<difference_type>(right.position_);
+    }
+
+    friend bool operator==(const iterator &left, const iterator &right) noexcept {
+      return left.index_ == right.index_ && left.position_ == right.position_;
+    }
+    friend bool operator!=(const iterator &left, const iterator &right) noexcept {
+      return !(left == right);
+    }
+    friend bool operator<(const iterator &left, const iterator &right) noexcept {
+      return left.position_ < right.position_;
+    }
+    friend bool operator>(const iterator &left, const iterator &right) noexcept {
+      return right < left;
+    }
+    friend bool operator<=(const iterator &left, const iterator &right) noexcept {
+      return !(right < left);
+    }
+    friend bool operator>=(const iterator &left, const iterator &right) noexcept {
+      return !(left < right);
+    }
+  };
+
+  iterator begin() const noexcept { return iterator(this, 0); }
+  iterator end() const noexcept { return iterator(this, size()); }
+};
+
 #if CSV2_HAS_RANGES
 } // namespace csv2
 namespace std {
@@ -2771,6 +2895,7 @@ public:
 
   using Cell = basic_cell<quote_character, trim_policy>;
   using Row = basic_row<delimiter, quote_character, trim_policy>;
+  using RowIndex = csv2::RowIndex<delimiter, quote_character, trim_policy>;
   class RowIterator;
 
   class RowIterator {
@@ -2885,6 +3010,13 @@ public:
     }
     return result;
   }
+
+  RowIndex index(bool ignore_empty_lines = false) const {
+    size_t start = 0;
+    if (buffer_ && first_row_is_header::value)
+      start = detail::find_record_bounds<quote_character>(buffer_, buffer_size_, 0).next_start;
+    return RowIndex(buffer_, buffer_size_, start, ignore_empty_lines);
+  }
 };
 
 } // namespace csv2
@@ -2896,6 +3028,7 @@ public:
 #include <fstream>
 #include <iostream>
 #include <iterator>
+#include <sstream>
 #include <string>
 #include <type_traits>
 #include <utility>
@@ -2906,6 +3039,12 @@ namespace stream_ownership {
 struct close_on_destroy {};
 struct leave_open {};
 } // namespace stream_ownership
+
+namespace quote_policy {
+struct none {};
+struct minimal {};
+struct always {};
+} // namespace quote_policy
 
 template <typename, typename T> struct has_close : std::false_type {};
 
@@ -2923,7 +3062,8 @@ public:
 };
 
 template <class delimiter = delimiter<','>, typename Stream = std::ofstream,
-          typename Ownership = stream_ownership::close_on_destroy>
+          typename Ownership = stream_ownership::close_on_destroy,
+          typename QuotePolicy = quote_policy::none>
 class Writer {
   Stream *stream_; // output stream for the writer
   bool active_;
@@ -2956,7 +3096,7 @@ class Writer {
   }
 
   template <typename Field>
-  auto write_field_(const Field &field, int)
+  auto write_raw_field_(const Field &field, int)
       -> decltype(static_cast<const char *>(field.data()), field.size(),
                   stream_->write(static_cast<const char *>(field.data()),
                                  static_cast<std::streamsize>(field.size())),
@@ -2965,7 +3105,63 @@ class Writer {
                    static_cast<std::streamsize>(field.size()));
   }
 
-  template <typename Field> void write_field_(const Field &field, long) { *stream_ << field; }
+  template <typename Field> void write_raw_field_(const Field &field, long) { *stream_ << field; }
+
+  static bool should_quote_(const char *, size_t, quote_policy::always) noexcept { return true; }
+
+  static bool should_quote_(const char *data, size_t size, quote_policy::minimal) noexcept {
+    for (size_t i = 0; i < size; ++i) {
+      if (data[i] == delimiter::value || data[i] == '"' || data[i] == '\r' || data[i] == '\n')
+        return true;
+    }
+    return false;
+  }
+
+  template <class Policy>
+  void write_escaped_chars_(const char *data, size_t size, Policy policy) {
+    if (!should_quote_(data, size, policy)) {
+      if (size != 0)
+        stream_->write(data, static_cast<std::streamsize>(size));
+      return;
+    }
+
+    *stream_ << '"';
+    size_t segment = 0;
+    for (size_t i = 0; i < size; ++i) {
+      if (data[i] != '"')
+        continue;
+      if (segment < i)
+        stream_->write(data + segment, static_cast<std::streamsize>(i - segment));
+      *stream_ << "\"\"";
+      segment = i + 1;
+    }
+    if (segment < size)
+      stream_->write(data + segment, static_cast<std::streamsize>(size - segment));
+    *stream_ << '"';
+  }
+
+  template <typename Field>
+  auto write_escaped_field_(const Field &field, int)
+      -> decltype(static_cast<const char *>(field.data()), field.size(), void()) {
+    write_escaped_chars_(static_cast<const char *>(field.data()), static_cast<size_t>(field.size()),
+                         QuotePolicy());
+  }
+
+  template <typename Field> void write_escaped_field_(const Field &field, long) {
+    std::ostringstream formatted;
+    formatted.copyfmt(*stream_);
+    formatted << field;
+    const std::string value = formatted.str();
+    write_escaped_chars_(value.data(), value.size(), QuotePolicy());
+  }
+
+  template <typename Field> void write_field_(const Field &field, std::true_type) {
+    write_raw_field_(field, 0);
+  }
+
+  template <typename Field> void write_field_(const Field &field, std::false_type) {
+    write_escaped_field_(field, 0);
+  }
 
 public:
   Writer(Stream &stream) noexcept : stream_(&stream), active_(true) {}
@@ -3007,11 +3203,11 @@ public:
     auto current = begin(strings);
     const auto last = end(strings);
     if (current != last) {
-      write_field_(*current, 0);
+      write_field_(*current, typename std::is_same<QuotePolicy, quote_policy::none>::type());
       const char separator = delimiter::value;
       while (++current != last) {
         *stream_ << separator;
-        write_field_(*current, 0);
+        write_field_(*current, typename std::is_same<QuotePolicy, quote_policy::none>::type());
       }
     }
     *stream_ << '\n';
@@ -3031,5 +3227,9 @@ public:
     }
   }
 };
+
+template <class delimiter = delimiter<','>, typename Stream = std::ofstream,
+          typename Ownership = stream_ownership::close_on_destroy>
+using EscapingWriter = Writer<delimiter, Stream, Ownership, quote_policy::minimal>;
 
 } // namespace csv2
