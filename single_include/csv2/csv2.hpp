@@ -2520,6 +2520,11 @@ public:
 
 namespace csv2 {
 
+namespace stream_ownership {
+struct close_on_destroy {};
+struct leave_open {};
+} // namespace stream_ownership
+
 template <typename, typename T> struct has_close : std::false_type {};
 
 template <typename C, typename Ret, typename... Args> struct has_close<C, Ret(Args...)> {
@@ -2535,7 +2540,9 @@ public:
   static constexpr bool value = decltype(check<C>(0))::value;
 };
 
-template <class delimiter = delimiter<','>, typename Stream = std::ofstream> class Writer {
+template <class delimiter = delimiter<','>, typename Stream = std::ofstream,
+          typename Ownership = stream_ownership::close_on_destroy>
+class Writer {
   Stream *stream_; // output stream for the writer
   bool active_;
 
@@ -2557,6 +2564,27 @@ template <class delimiter = delimiter<','>, typename Stream = std::ofstream> cla
 #endif
   }
 
+  void release_noexcept_(std::true_type) noexcept { close_noexcept_(); }
+
+  void release_noexcept_(std::false_type) noexcept { active_ = false; }
+
+  void release_noexcept_() noexcept {
+    release_noexcept_(typename std::is_same<Ownership,
+                                            stream_ownership::close_on_destroy>::type());
+  }
+
+  template <typename Field>
+  auto write_field_(const Field &field, int)
+      -> decltype(static_cast<const char *>(field.data()), field.size(),
+                  stream_->write(static_cast<const char *>(field.data()),
+                                 static_cast<std::streamsize>(field.size())),
+                  void()) {
+    stream_->write(static_cast<const char *>(field.data()),
+                   static_cast<std::streamsize>(field.size()));
+  }
+
+  template <typename Field> void write_field_(const Field &field, long) { *stream_ << field; }
+
 public:
   Writer(Stream &stream) noexcept : stream_(&stream), active_(true) {}
 
@@ -2570,7 +2598,7 @@ public:
 
   Writer &operator=(Writer &&other) noexcept {
     if (this != &other) {
-      close_noexcept_();
+      release_noexcept_();
       stream_ = other.stream_;
       active_ = other.active_;
       other.stream_ = nullptr;
@@ -2579,7 +2607,7 @@ public:
     return *this;
   }
 
-  ~Writer() noexcept { close_noexcept_(); }
+  ~Writer() noexcept { release_noexcept_(); }
 
   void close() {
     if (!active_)
@@ -2591,14 +2619,18 @@ public:
   template <typename Container> void write_row(Container &&row) {
     if (!active_)
       return;
-    const auto &strings = std::forward<Container>(row);
-    auto current = strings.begin();
-    const auto end = strings.end();
-    if (current != end) {
-      *stream_ << *current;
+    auto &&strings = std::forward<Container>(row);
+    using std::begin;
+    using std::end;
+    auto current = begin(strings);
+    const auto last = end(strings);
+    if (current != last) {
+      write_field_(*current, 0);
       const char separator = delimiter::value;
-      while (++current != end)
-        *stream_ << separator << *current;
+      while (++current != last) {
+        *stream_ << separator;
+        write_field_(*current, 0);
+      }
     }
     *stream_ << '\n';
   }
@@ -2606,9 +2638,14 @@ public:
   template <typename Container> void write_rows(Container &&rows) {
     if (!active_)
       return;
-    const auto &container_of_rows = std::forward<Container>(rows);
-    for (const auto &row : container_of_rows) {
-      write_row(row);
+    auto &&container_of_rows = std::forward<Container>(rows);
+    using std::begin;
+    using std::end;
+    auto current = begin(container_of_rows);
+    const auto last = end(container_of_rows);
+    while (current != last) {
+      write_row(*current);
+      ++current;
     }
   }
 };
