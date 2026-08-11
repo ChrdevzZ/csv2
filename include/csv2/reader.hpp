@@ -22,8 +22,240 @@
 #if CSV2_HAS_SPAN
 #include <span>
 #endif
+#if CSV2_HAS_RANGES
+#include <ranges>
+#endif
 
 namespace csv2 {
+
+template <class quote_character, class trim_policy>
+class basic_cell {
+  const char *buffer_{nullptr};
+  size_t start_{0};
+  size_t end_{0};
+  bool escaped_{false};
+public:
+  basic_cell() = default;
+  basic_cell(const char *buffer, size_t start, size_t end, bool escaped) noexcept
+      : buffer_(buffer), start_(start), end_(end), escaped_(escaped) {}
+
+  const char *raw_data() const noexcept { return buffer_ ? buffer_ + start_ : nullptr; }
+  size_t raw_size() const noexcept { return end_ - start_; }
+  bool has_escaped_quotes() const noexcept { return escaped_; }
+
+#if CSV2_HAS_STRING_VIEW
+  std::string_view raw_trimmed_view() const noexcept {
+    const auto bounds = trim_policy::trim(buffer_, start_, end_);
+    return std::string_view(buffer_ + bounds.first, bounds.second - bounds.first);
+  }
+
+  std::string_view read_view() const noexcept { return raw_trimmed_view(); }
+#endif
+
+  template <typename Container> void read_raw_value(Container &result) const {
+    detail::reserve_for_append(result, raw_size());
+    if (start_ < end_)
+      detail::append_range(result, buffer_ + start_, buffer_ + end_);
+  }
+
+  template <typename Container> void read_value(Container &result) const {
+    if (start_ >= end_)
+      return;
+    const auto bounds = trim_policy::trim(buffer_, start_, end_);
+    detail::reserve_for_append(result, bounds.second - bounds.first);
+    if (!escaped_) {
+      if (bounds.first < bounds.second)
+        detail::append_range(result, buffer_ + bounds.first, buffer_ + bounds.second);
+      return;
+    }
+
+    size_t segment_start = bounds.first;
+    for (size_t i = bounds.first; i < bounds.second; ++i) {
+      if (buffer_[i] == quote_character::value && i + 1 < bounds.second &&
+          buffer_[i + 1] == quote_character::value) {
+        detail::append_range(result, buffer_ + segment_start, buffer_ + i + 1);
+        ++i;
+        segment_start = i + 1;
+      }
+    }
+    if (segment_start < bounds.second)
+      detail::append_range(result, buffer_ + segment_start, buffer_ + bounds.second);
+  }
+
+  template <typename OutputIt> OutputIt copy_raw_to(OutputIt output) const {
+    if (start_ >= end_)
+      return output;
+    return detail::copy_chars(buffer_ + start_, buffer_ + end_, output);
+  }
+
+  template <typename OutputIt> OutputIt decode_to(OutputIt output) const {
+    if (start_ >= end_)
+      return output;
+    const auto bounds = trim_policy::trim(buffer_, start_, end_);
+    for (size_t i = bounds.first; i < bounds.second; ++i) {
+      *output = buffer_[i];
+      ++output;
+      if (buffer_[i] == quote_character::value && i + 1 < bounds.second &&
+          buffer_[i + 1] == quote_character::value)
+        ++i;
+    }
+    return output;
+  }
+
+  template <typename OutputIt> OutputIt copy_content_to(OutputIt output) const {
+    if (start_ >= end_)
+      return output;
+    auto bounds = trim_policy::trim(buffer_, start_, end_);
+    if (bounds.second - bounds.first >= 2 && buffer_[bounds.first] == quote_character::value &&
+        buffer_[bounds.second - 1] == quote_character::value) {
+      ++bounds.first;
+      --bounds.second;
+    }
+    for (size_t i = bounds.first; i < bounds.second; ++i) {
+      *output = buffer_[i];
+      ++output;
+      if (buffer_[i] == quote_character::value && i + 1 < bounds.second &&
+          buffer_[i + 1] == quote_character::value)
+        ++i;
+    }
+    return output;
+  }
+};
+
+template <class delimiter, class quote_character, class trim_policy>
+class basic_row {
+  const char *buffer_{nullptr};
+  size_t start_{0};
+  size_t end_{0};
+public:
+  using Cell = basic_cell<quote_character, trim_policy>;
+
+  basic_row() = default;
+  basic_row(const char *buffer, size_t start, size_t end) noexcept
+      : buffer_(buffer), start_(start), end_(end) {}
+
+  const char *raw_data() const noexcept { return buffer_ ? buffer_ + start_ : nullptr; }
+  size_t raw_size() const noexcept { return end_ - start_; }
+  const char *address() const noexcept { return raw_data(); }
+  size_t length() const noexcept { return raw_size(); }
+
+  template <typename Container> void read_raw_value(Container &result) const {
+    detail::reserve_for_append(result, raw_size());
+    if (start_ < end_)
+      detail::append_range(result, buffer_ + start_, buffer_ + end_);
+  }
+
+  class CellIterator {
+    struct CellBounds {
+      size_t content_end;
+      bool escaped;
+    };
+
+    const char *buffer_{nullptr};
+    size_t range_size_{0};
+    size_t current_{0};
+    size_t end_{0};
+    size_t content_end_{0};
+    bool escaped_{false};
+    bool at_end_{true};
+
+    CellBounds find_cell_bounds_() const noexcept {
+      bool quote_opened = false;
+      bool escaped = false;
+      for (size_t i = current_; i < end_; ++i) {
+        if (buffer_[i] == quote_character::value) {
+          const bool adjacent_quote = i + 1 < end_ && buffer_[i + 1] == quote_character::value;
+          if (adjacent_quote)
+            escaped = true;
+          if (quote_opened && adjacent_quote) {
+            ++i;
+            continue;
+          }
+          quote_opened = !quote_opened;
+        } else if (buffer_[i] == delimiter::value && !quote_opened) {
+          return {i, escaped};
+        }
+      }
+      return {end_, escaped};
+    }
+
+    void update_bounds_() noexcept {
+      if (!at_end_) {
+        const CellBounds bounds = find_cell_bounds_();
+        content_end_ = bounds.content_end;
+        escaped_ = bounds.escaped;
+      } else {
+        content_end_ = end_;
+        escaped_ = false;
+      }
+    }
+
+  public:
+    using value_type = Cell;
+    using difference_type = std::ptrdiff_t;
+    using reference = Cell;
+    using pointer = void;
+    using iterator_category = std::input_iterator_tag;
+#if CSV2_HAS_RANGES
+    using iterator_concept = std::forward_iterator_tag;
+#endif
+
+    CellIterator() = default;
+
+    CellIterator(const char *buffer, size_t buffer_size, size_t start, size_t end)
+        : buffer_(buffer), range_size_(buffer_size), current_(start), end_(end),
+          content_end_(end), escaped_(false), at_end_(start >= end) {
+      update_bounds_();
+    }
+
+    CellIterator &operator++() {
+      if (!at_end_) {
+        if (content_end_ < end_) {
+          current_ = content_end_ + 1;
+        } else {
+          current_ = end_;
+          at_end_ = true;
+        }
+        update_bounds_();
+      }
+      return *this;
+    }
+
+    CellIterator operator++(int) {
+      CellIterator previous(*this);
+      ++(*this);
+      return previous;
+    }
+
+    Cell operator*() const { return Cell(buffer_, current_, content_end_, escaped_); }
+
+    bool operator==(const CellIterator &rhs) const noexcept {
+      return buffer_ == rhs.buffer_ && range_size_ == rhs.range_size_ &&
+             current_ == rhs.current_ && end_ == rhs.end_ && at_end_ == rhs.at_end_;
+    }
+
+    bool operator!=(const CellIterator &rhs) const noexcept { return !(*this == rhs); }
+  };
+
+  CellIterator begin() const { return CellIterator(buffer_, end_ - start_, start_, end_); }
+  CellIterator end() const { return CellIterator(buffer_, end_ - start_, end_, end_); }
+};
+
+#if CSV2_HAS_RANGES
+} // namespace csv2
+namespace std {
+namespace ranges {
+template <class delimiter, class quote_character, class trim_policy>
+inline constexpr bool
+    enable_view<csv2::basic_row<delimiter, quote_character, trim_policy>> = true;
+template <class delimiter, class quote_character, class trim_policy>
+inline constexpr bool
+    enable_borrowed_range<csv2::basic_row<delimiter, quote_character, trim_policy>> = true;
+} // namespace ranges
+} // namespace std
+
+namespace csv2 {
+#endif
 
 template <class delimiter = delimiter<','>, class quote_character = quote_character<'"'>,
           class first_row_is_header = first_row_is_header<true>,
@@ -259,223 +491,9 @@ public:
   }
 #endif
 
+  using Cell = basic_cell<quote_character, trim_policy>;
+  using Row = basic_row<delimiter, quote_character, trim_policy>;
   class RowIterator;
-  class Row;
-
-  class Cell {
-    const char *buffer_{nullptr};
-    size_t start_{0};
-    size_t end_{0};
-    bool escaped_{false};
-    friend class Row;
-
-  public:
-    const char *raw_data() const noexcept { return buffer_ ? buffer_ + start_ : nullptr; }
-    size_t raw_size() const noexcept { return end_ - start_; }
-    bool has_escaped_quotes() const noexcept { return escaped_; }
-
-#if CSV2_HAS_STRING_VIEW
-    std::string_view raw_trimmed_view() const noexcept {
-      const auto bounds = trim_policy::trim(buffer_, start_, end_);
-      return std::string_view(buffer_ + bounds.first, bounds.second - bounds.first);
-    }
-
-    std::string_view read_view() const noexcept { return raw_trimmed_view(); }
-#endif
-
-    template <typename Container> void read_raw_value(Container &result) const {
-      detail::reserve_for_append(result, raw_size());
-      if (start_ < end_)
-        detail::append_range(result, buffer_ + start_, buffer_ + end_);
-    }
-
-    template <typename Container> void read_value(Container &result) const {
-      if (start_ >= end_)
-        return;
-      const auto bounds = trim_policy::trim(buffer_, start_, end_);
-      detail::reserve_for_append(result, bounds.second - bounds.first);
-      if (!escaped_) {
-        if (bounds.first < bounds.second)
-          detail::append_range(result, buffer_ + bounds.first, buffer_ + bounds.second);
-        return;
-      }
-
-      size_t segment_start = bounds.first;
-      for (size_t i = bounds.first; i < bounds.second; ++i) {
-        if (buffer_[i] == quote_character::value && i + 1 < bounds.second &&
-            buffer_[i + 1] == quote_character::value) {
-          detail::append_range(result, buffer_ + segment_start, buffer_ + i + 1);
-          ++i;
-          segment_start = i + 1;
-        }
-      }
-      if (segment_start < bounds.second)
-        detail::append_range(result, buffer_ + segment_start, buffer_ + bounds.second);
-    }
-
-    template <typename OutputIt> OutputIt copy_raw_to(OutputIt output) const {
-      if (start_ >= end_)
-        return output;
-      return detail::copy_chars(buffer_ + start_, buffer_ + end_, output);
-    }
-
-    template <typename OutputIt> OutputIt decode_to(OutputIt output) const {
-      if (start_ >= end_)
-        return output;
-      const auto bounds = trim_policy::trim(buffer_, start_, end_);
-      for (size_t i = bounds.first; i < bounds.second; ++i) {
-        *output = buffer_[i];
-        ++output;
-        if (buffer_[i] == quote_character::value && i + 1 < bounds.second &&
-            buffer_[i + 1] == quote_character::value)
-          ++i;
-      }
-      return output;
-    }
-
-    template <typename OutputIt> OutputIt copy_content_to(OutputIt output) const {
-      if (start_ >= end_)
-        return output;
-      auto bounds = trim_policy::trim(buffer_, start_, end_);
-      if (bounds.second - bounds.first >= 2 && buffer_[bounds.first] == quote_character::value &&
-          buffer_[bounds.second - 1] == quote_character::value) {
-        ++bounds.first;
-        --bounds.second;
-      }
-      for (size_t i = bounds.first; i < bounds.second; ++i) {
-        *output = buffer_[i];
-        ++output;
-        if (buffer_[i] == quote_character::value && i + 1 < bounds.second &&
-            buffer_[i + 1] == quote_character::value)
-          ++i;
-      }
-      return output;
-    }
-  };
-
-  class Row {
-    const char *buffer_{nullptr};
-    size_t start_{0};
-    size_t end_{0};
-    friend class RowIterator;
-    friend class Reader;
-
-  public:
-    const char *raw_data() const noexcept { return buffer_ ? buffer_ + start_ : nullptr; }
-    size_t raw_size() const noexcept { return end_ - start_; }
-    const char *address() const noexcept { return raw_data(); }
-    size_t length() const noexcept { return raw_size(); }
-
-    template <typename Container> void read_raw_value(Container &result) const {
-      detail::reserve_for_append(result, raw_size());
-      if (start_ < end_)
-        detail::append_range(result, buffer_ + start_, buffer_ + end_);
-    }
-
-    class CellIterator {
-      struct CellBounds {
-        size_t content_end;
-        bool escaped;
-      };
-
-      const char *buffer_{nullptr};
-      size_t range_size_{0};
-      size_t current_{0};
-      size_t end_{0};
-      size_t content_end_{0};
-      bool escaped_{false};
-      bool at_end_{true};
-
-      CellBounds find_cell_bounds_() const noexcept {
-        bool quote_opened = false;
-        bool escaped = false;
-        for (size_t i = current_; i < end_; ++i) {
-          if (buffer_[i] == quote_character::value) {
-            const bool adjacent_quote = i + 1 < end_ && buffer_[i + 1] == quote_character::value;
-            if (adjacent_quote)
-              escaped = true;
-            if (quote_opened && adjacent_quote) {
-              ++i;
-              continue;
-            }
-            quote_opened = !quote_opened;
-          } else if (buffer_[i] == delimiter::value && !quote_opened) {
-            return {i, escaped};
-          }
-        }
-        return {end_, escaped};
-      }
-
-      void update_bounds_() noexcept {
-        if (!at_end_) {
-          const CellBounds bounds = find_cell_bounds_();
-          content_end_ = bounds.content_end;
-          escaped_ = bounds.escaped;
-        } else {
-          content_end_ = end_;
-          escaped_ = false;
-        }
-      }
-
-      friend class Row;
-
-    public:
-      using value_type = Cell;
-      using difference_type = std::ptrdiff_t;
-      using reference = Cell;
-      using pointer = void;
-      using iterator_category = std::input_iterator_tag;
-#if CSV2_HAS_RANGES
-      using iterator_concept = std::forward_iterator_tag;
-#endif
-
-      CellIterator() = default;
-
-      CellIterator(const char *buffer, size_t buffer_size, size_t start, size_t end)
-          : buffer_(buffer), range_size_(buffer_size), current_(start), end_(end),
-            content_end_(end), escaped_(false), at_end_(start >= end) {
-        update_bounds_();
-      }
-
-      CellIterator &operator++() {
-        if (!at_end_) {
-          if (content_end_ < end_) {
-            current_ = content_end_ + 1;
-          } else {
-            current_ = end_;
-            at_end_ = true;
-          }
-          update_bounds_();
-        }
-        return *this;
-      }
-
-      CellIterator operator++(int) {
-        CellIterator previous(*this);
-        ++(*this);
-        return previous;
-      }
-
-      Cell operator*() const {
-        Cell cell;
-        cell.buffer_ = buffer_;
-        cell.start_ = current_;
-        cell.end_ = content_end_;
-        cell.escaped_ = escaped_;
-        return cell;
-      }
-
-      bool operator==(const CellIterator &rhs) const noexcept {
-        return buffer_ == rhs.buffer_ && range_size_ == rhs.range_size_ &&
-               current_ == rhs.current_ && end_ == rhs.end_ && at_end_ == rhs.at_end_;
-      }
-
-      bool operator!=(const CellIterator &rhs) const noexcept { return !(*this == rhs); }
-    };
-
-    CellIterator begin() const { return CellIterator(buffer_, end_ - start_, start_, end_); }
-    CellIterator end() const { return CellIterator(buffer_, end_ - start_, end_, end_); }
-  };
 
   class RowIterator {
     const char *buffer_{nullptr};
@@ -528,13 +546,7 @@ public:
       return previous;
     }
 
-    Row operator*() const {
-      Row result;
-      result.buffer_ = buffer_;
-      result.start_ = start_;
-      result.end_ = content_end_;
-      return result;
-    }
+    Row operator*() const { return Row(buffer_, start_, content_end_); }
 
     bool operator==(const RowIterator &rhs) const noexcept {
       return buffer_ == rhs.buffer_ && buffer_size_ == rhs.buffer_size_ && start_ == rhs.start_ &&
@@ -557,13 +569,10 @@ public:
   RowIterator end() const { return RowIterator(buffer_, buffer_size_, buffer_size_); }
 
   Row header() const {
-    Row result;
-    result.buffer_ = buffer_;
     if (!buffer_ || buffer_size_ == 0)
-      return result;
+      return Row();
     const RecordBounds bounds = find_record_bounds_(buffer_, buffer_size_, 0);
-    result.end_ = bounds.content_end;
-    return result;
+    return Row(buffer_, 0, bounds.content_end);
   }
 
   /** Returns the number of records, excluding the header when configured. */

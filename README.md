@@ -213,6 +213,14 @@ quote pairs were observed during boundary scanning. In C++17,
 `Cell::raw_trimmed_view()` returns the trim-policy-adjusted raw view; the older
 `read_view()` name remains available.
 
+The concrete row and cell types are also available as namespace-scope
+`csv2::basic_row` and `csv2::basic_cell`; `Reader::Row` and `Reader::Cell`
+remain exact aliases for source compatibility. In C++20, Row models a view,
+borrowed range, and forward range, so a temporary Row can enter a views
+pipeline. Reader itself is deliberately not a borrowed range: every Row and
+Cell continues to require the Reader's selected source storage to remain
+alive.
+
 Here's the `Row` class:
 
 ```cpp
