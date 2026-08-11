@@ -805,10 +805,11 @@ TEST_CASE("Honor delimiter, quote, and trim policies" * test_suite("Reader")) {
 
 TEST_CASE("Scan cell boundaries through the shared fast path" * test_suite("Reader")) {
   ReaderWithoutHeader reader;
-  std::string input("plain,\"quoted,field\",\"a\"\"b\",tail,");
+  const std::string wide_field(160, 'x');
+  const std::string input = wide_field + ",\"quoted,field\",\"a\"\"b\",tail,";
   REQUIRE(reader.parse(input));
   REQUIRE(read_cells(*reader.begin()) ==
-          std::vector<std::string>({"plain", "\"quoted,field\"", "\"a\"b\"", "tail", ""}));
+          std::vector<std::string>({wide_field, "\"quoted,field\"", "\"a\"b\"", "tail", ""}));
 }
 
 TEST_CASE("Validate strict CSV syntax without changing permissive traversal" *

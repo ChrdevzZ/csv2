@@ -75,7 +75,7 @@ public:
   template <typename Container> void read_raw_value(Container &result) const {
     detail::reserve_for_append(result, raw_size());
     if (start_ < end_)
-      detail::append_range(result, buffer_ + start_, buffer_ + end_);
+      detail::append_optimized_range(result, buffer_ + start_, buffer_ + end_);
   }
 
   template <typename Container> void read_value(Container &result) const {
@@ -85,21 +85,10 @@ public:
     detail::reserve_for_append(result, bounds.second - bounds.first);
     if (!escaped_) {
       if (bounds.first < bounds.second)
-        detail::append_range(result, buffer_ + bounds.first, buffer_ + bounds.second);
+        detail::append_optimized_range(result, buffer_ + bounds.first, buffer_ + bounds.second);
       return;
     }
-
-    size_t segment_start = bounds.first;
-    for (size_t i = bounds.first; i < bounds.second; ++i) {
-      if (buffer_[i] == quote_character::value && i + 1 < bounds.second &&
-          buffer_[i + 1] == quote_character::value) {
-        detail::append_range(result, buffer_ + segment_start, buffer_ + i + 1);
-        ++i;
-        segment_start = i + 1;
-      }
-    }
-    if (segment_start < bounds.second)
-      detail::append_range(result, buffer_ + segment_start, buffer_ + bounds.second);
+    detail::append_decoded(result, buffer_, bounds.first, bounds.second, quote_character::value);
   }
 
   template <typename OutputIt> OutputIt copy_raw_to(OutputIt output) const {
@@ -185,7 +174,7 @@ public:
   template <typename Container> void read_raw_value(Container &result) const {
     detail::reserve_for_append(result, raw_size());
     if (start_ < end_)
-      detail::append_range(result, buffer_ + start_, buffer_ + end_);
+      detail::append_optimized_range(result, buffer_ + start_, buffer_ + end_);
   }
 
   class CellIterator {
