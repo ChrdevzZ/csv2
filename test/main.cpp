@@ -669,6 +669,17 @@ public:
   std::string value;
 };
 
+class AppendCountingBuffer {
+public:
+  void append(const char *data, std::size_t size) {
+    ++append_calls;
+    value.append(data, size);
+  }
+
+  std::string value;
+  std::size_t append_calls{0};
+};
+
 #if CSV2_HAS_MMAP && (defined(__linux__) || defined(_WIN32))
 std::size_t process_handle_count() {
 #if defined(_WIN32)
@@ -922,6 +933,30 @@ TEST_CASE("Copy fields to generic containers and output iterators" * test_suite(
   cell.read_value(pmr_value);
   REQUIRE(pmr_value == "\"a\"b\"");
 #endif
+}
+
+TEST_CASE("Batch contiguous raw and decoded field segments" * test_suite("Reader")) {
+  ReaderWithoutHeader reader;
+  std::string input("plain,\"a\"\"b\"\"c\"");
+  REQUIRE(reader.parse(input));
+  const auto row = *reader.begin();
+
+  AppendCountingBuffer raw_row;
+  row.read_raw_value(raw_row);
+  REQUIRE(raw_row.value == input);
+  REQUIRE(raw_row.append_calls == 1);
+
+  auto cell = row.begin();
+  AppendCountingBuffer plain;
+  (*cell).read_value(plain);
+  REQUIRE(plain.value == "plain");
+  REQUIRE(plain.append_calls == 1);
+
+  ++cell;
+  AppendCountingBuffer escaped;
+  (*cell).read_value(escaped);
+  REQUIRE(escaped.value == "\"a\"b\"c\"");
+  REQUIRE(escaped.append_calls == 3);
 }
 
 TEST_CASE("Expose stable raw byte views and explicit source ownership" * test_suite("Reader")) {
