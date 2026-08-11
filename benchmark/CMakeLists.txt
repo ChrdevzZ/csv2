@@ -12,6 +12,11 @@ endforeach()
 
 if(CSV2_BUILD_TESTS)
   set(csv2_benchmark_fixture ${csv2_SOURCE_DIR}/test/inputs/test_01.csv)
+  set(csv2_benchmark_mmap_fixture
+      ${CMAKE_CURRENT_BINARY_DIR}/csv2_benchmark_fixture.csv)
+  # Generate a byte-for-byte stable mmap fixture. Source-tree checkouts can
+  # retain historical CRLF contents even though .gitattributes now requests LF.
+  file(WRITE ${csv2_benchmark_mmap_fixture} "a,b,c")
   function(csv2_add_benchmark_checksum operation source checksum)
     add_test(NAME csv2.benchmark.checksum.${operation}
       COMMAND csv2_benchmark --operation ${operation}
@@ -37,11 +42,16 @@ if(CSV2_BUILD_TESTS)
   set_tests_properties(csv2.benchmark.allocations.rows_cells PROPERTIES
     LABELS benchmark-checksum)
   if(CSV2_HAS_MMAP OR NOT DEFINED CSV2_HAS_MMAP)
-    csv2_add_benchmark_checksum(map_only mmap 8674000034234589096)
+    add_test(NAME csv2.benchmark.checksum.map_only
+      COMMAND csv2_benchmark --operation map_only
+        --input ${csv2_benchmark_mmap_fixture} --source mmap --iterations 1
+        --expect-checksum 8674000034234391210)
+    set_tests_properties(csv2.benchmark.checksum.map_only PROPERTIES
+      LABELS benchmark-checksum)
     add_test(NAME csv2.benchmark.checksum.rows_cells_mmap
       COMMAND csv2_benchmark --operation rows_cells
-        --input ${csv2_benchmark_fixture} --source mmap --iterations 1
-        --expect-checksum 6437334155717714538)
+        --input ${csv2_benchmark_mmap_fixture} --source mmap --iterations 1
+        --expect-checksum 8674000034234409885)
     set_tests_properties(csv2.benchmark.checksum.rows_cells_mmap PROPERTIES
       LABELS benchmark-checksum)
   endif()
