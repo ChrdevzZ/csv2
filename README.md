@@ -200,6 +200,10 @@ public:
   size_t rows(bool ignore_empty_lines = false) const;
   size_t cols() const;
 
+  // Explicitly allocate one starting offset per selected logical record.
+  // The returned index borrows this Reader's active source.
+  RowIndex index(bool ignore_empty_lines = false) const;
+
   // Optional strict, zero-allocation validation. Existing iteration remains
   // permissive. byte_offset is zero-based; row/column are one-based logical
   // record and field numbers.
@@ -238,6 +242,12 @@ rejects quotes in unquoted fields, unclosed quotes, invalid doubled quotes,
 non-trim content after a closing quote, and bare carriage returns. CR and LF
 remain valid inside quoted fields, and rows may contain different numbers of
 fields. Calling it never changes the permissive behavior of iteration.
+
+`Reader::index()` explicitly builds a random-access, sized `RowIndex`. It
+stores one starting offset per selected logical record, skips the configured
+header, and optionally excludes empty records. The index borrows the Reader's
+active bytes: replacing the Reader source or destroying the Reader invalidates
+the index. Reader never creates or retains an index implicitly.
 
 Here's the `Row` class:
 
@@ -333,17 +343,24 @@ lets a close exception escape. Do not close the underlying stream directly
 while an active `Writer` still owns that responsibility. After a Writer is
 closed or moved from, further write calls have no effect.
 
-This is intentionally a basic writer: values are emitted exactly as supplied.
-It does not quote or escape delimiters, quote characters, or newlines. A row
-with zero values writes one newline, as does a row containing one empty string,
-so those two shapes are not reversibly distinguishable.
+The default `quote_policy::none` preserves the original raw behavior: values
+are emitted exactly as supplied. `EscapingWriter` selects
+`quote_policy::minimal`, quoting fields containing the delimiter, a quote, CR,
+or LF and doubling embedded quotes. `quote_policy::always` quotes every field.
+Contiguous character fields are scanned and written in segments; other
+streamable values are first formatted with a copy of the destination stream's
+locale, flags, precision, and fill state, then escaped. A row with zero values
+writes one newline, as does a raw row containing one empty string, so those two
+raw shapes are not reversibly distinguishable.
 
 ### Writer API
 
 Here is the public API available to you:
 
 ```cpp
-template <class delimiter = delimiter<','>, typename Stream = std::ofstream>
+template <class delimiter = delimiter<','>, typename Stream = std::ofstream,
+          typename Ownership = stream_ownership::close_on_destroy,
+          typename QuotePolicy = quote_policy::none>
 class Writer {
 public:
   Writer(Stream& stream) noexcept;
@@ -361,6 +378,11 @@ public:
   // Use this to write a list of rows to file
   void write_rows(container_of_rows rows);
 };
+
+template <class delimiter = delimiter<','>, typename Stream = std::ofstream,
+          typename Ownership = stream_ownership::close_on_destroy>
+using EscapingWriter =
+    Writer<delimiter, Stream, Ownership, quote_policy::minimal>;
 ```
 
 ## Compiling Tests
