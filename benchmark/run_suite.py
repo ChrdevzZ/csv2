@@ -94,6 +94,8 @@ def main() -> None:
         parser.error("--runs must be at least 20 for regression decisions")
 
     dataset_paths = sorted(args.datasets.glob("*.csv"))
+    if not dataset_paths:
+        parser.error(f"no CSV datasets found in {args.datasets}")
     datasets = selected(args.files, (path.name for path in dataset_paths))
     by_name = {path.name: path for path in dataset_paths}
     operations = selected(args.operations, OPERATIONS)
@@ -128,6 +130,7 @@ def main() -> None:
                 noise = 2.0 * base_mad / base_median if base_median else float("inf")
                 threshold = max(0.05, noise)
                 regression = candidate_median < base_median * (1.0 - threshold) and high < 1.0
+                improvement = candidate_median > base_median * (1.0 + threshold) and low > 1.0
                 report["cases"].append(
                     {
                         "dataset": dataset_name,
@@ -139,6 +142,7 @@ def main() -> None:
                         "candidate_over_baseline_95pct": [low, high],
                         "regression_threshold": threshold,
                         "regression": regression,
+                        "improvement": improvement,
                     }
                 )
 
