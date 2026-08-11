@@ -310,9 +310,9 @@ CSV2_FORCE_INLINE auto reserve_for_append_impl(Container &output, std::size_t ad
 }
 
 template <typename Container>
-CSV2_FORCE_INLINE auto reserve_for_append_impl(Container &output, std::size_t additional,
-                                               output_priority<1>)
-    -> decltype(output.reserve(additional), void()) {
+CSV2_FORCE_INLINE auto
+reserve_for_append_impl(Container &output, std::size_t additional,
+                        output_priority<1>) -> decltype(output.reserve(additional), void()) {
   output.reserve(additional);
 }
 
@@ -340,8 +340,8 @@ CSV2_FORCE_INLINE auto append_range_impl(Container &output, const char *first, c
 
 template <typename Container>
 CSV2_FORCE_INLINE auto append_range_impl(Container &output, const char *first, const char *last,
-                                         output_priority<1>)
-    -> decltype(output.push_back(*first), void()) {
+                                         output_priority<1>) -> decltype(output.push_back(*first),
+                                                                         void()) {
   while (first != last) {
     output.push_back(*first);
     ++first;
@@ -3275,11 +3275,11 @@ class Writer {
   }
 
   template <typename Field>
-  auto write_raw_field_(const Field &field, int)
-      -> decltype(static_cast<const char *>(field.data()), field.size(),
-                  stream_->write(static_cast<const char *>(field.data()),
-                                 static_cast<std::streamsize>(field.size())),
-                  void()) {
+  auto write_raw_field_(const Field &field,
+                        int) -> decltype(static_cast<const char *>(field.data()), field.size(),
+                                         stream_->write(static_cast<const char *>(field.data()),
+                                                        static_cast<std::streamsize>(field.size())),
+                                         void()) {
     stream_->write(static_cast<const char *>(field.data()),
                    static_cast<std::streamsize>(field.size()));
   }
@@ -3319,8 +3319,9 @@ class Writer {
   }
 
   template <typename Field>
-  auto write_escaped_field_(const Field &field, int)
-      -> decltype(static_cast<const char *>(field.data()), field.size(), void()) {
+  auto write_escaped_field_(const Field &field,
+                            int) -> decltype(static_cast<const char *>(field.data()), field.size(),
+                                             void()) {
     write_escaped_chars_(static_cast<const char *>(field.data()), static_cast<size_t>(field.size()),
                          QuotePolicy());
   }

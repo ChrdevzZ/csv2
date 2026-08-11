@@ -21,9 +21,9 @@ CSV2_FORCE_INLINE auto reserve_for_append_impl(Container &output, std::size_t ad
 }
 
 template <typename Container>
-CSV2_FORCE_INLINE auto reserve_for_append_impl(Container &output, std::size_t additional,
-                                               output_priority<1>)
-    -> decltype(output.reserve(additional), void()) {
+CSV2_FORCE_INLINE auto
+reserve_for_append_impl(Container &output, std::size_t additional,
+                        output_priority<1>) -> decltype(output.reserve(additional), void()) {
   output.reserve(additional);
 }
 
@@ -51,8 +51,8 @@ CSV2_FORCE_INLINE auto append_range_impl(Container &output, const char *first, c
 
 template <typename Container>
 CSV2_FORCE_INLINE auto append_range_impl(Container &output, const char *first, const char *last,
-                                         output_priority<1>)
-    -> decltype(output.push_back(*first), void()) {
+                                         output_priority<1>) -> decltype(output.push_back(*first),
+                                                                         void()) {
   while (first != last) {
     output.push_back(*first);
     ++first;
