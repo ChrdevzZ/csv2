@@ -44,7 +44,8 @@ jobs:
       - name: Build smoke targets
         run: >-
           cmake --build build --parallel
-          --target csv2_fuzz csv2_fuzz_smoke csv2_benchmark
+          --target csv2_fuzz csv2_fuzz_smoke
+          csv2_benchmark csv2_benchmark_allocations
 
       - name: Run deterministic fuzz smoke
         run: ctest --test-dir build -L fuzz-smoke --no-tests=error --output-on-failure

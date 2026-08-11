@@ -1,11 +1,19 @@
 # CSV2 benchmark suite
 
-`csv2_benchmark` measures one operation at a time and prints a deterministic
-checksum plus GiB/s, rows/s, and cells/s. Supported operations are `map_only`,
+`csv2_benchmark` prepares buffer or mmap sources before starting the operation
+timer, then prints a deterministic checksum plus GiB/s, rows/s, cells/s, and
+optional allocation counts. Supported operations are `map_only`,
 `rows_only`, `rows_cells`, `raw_to_string`, `decoded_to_string`,
 `decoded_to_vector`, `ranges_pipeline`, `integer_conversion`, `writer_raw`,
 and `writer_escaped`. All operations except `map_only` accept both `buffer` and
 `mmap` sources.
+
+The separate `csv2_benchmark_allocations` executable replaces C++ `new`/`new[]`
+to count calls and requested bytes inside the timed operation. Pass it
+`--track-allocations`; `--expect-allocations N` additionally turns that count
+into a deterministic assertion. CI uses this instrumented binary to prove
+structural row/cell traversal remains allocation-free, while normal throughput
+runs use the uninstrumented `csv2_benchmark` executable.
 
 Generate the deterministic corpora in an ignored build directory:
 
@@ -32,10 +40,19 @@ interval is below parity. Retain an optimization only when its target case
 improves under the same rule and short unquoted, quote-heavy, multiline, and
 CRLF cases show no significant regression.
 
-On Linux, collect hardware counters around an individual fixed case with
-`perf stat -r 20 -e cycles,instructions,branches,branch-misses`; divide cycles
-and instructions by the reported processed bytes. Record peak RSS with
-`/usr/bin/time -v`, allocations with the platform allocator profiler, text/code
-size with `size`, and clean compilation time with `/usr/bin/time`. Hosted CI
-only compiles this suite and verifies the small-fixture checksums; it never
-enforces timing thresholds.
+On Linux, `collect_metrics.py` records `perf stat` counters, cycles/byte,
+instructions/byte, branch misses, peak RSS, allocation counts, and executable
+text/data/BSS sizes in one JSON report. It can also time a quoted clean build
+command:
+
+```bash
+python3 benchmark/collect_metrics.py \
+  --executable build/benchmark/csv2_benchmark \
+  --operation rows_cells --input build/benchmark-data/short_unquoted.csv \
+  --source buffer --iterations 20 --runs 20 \
+  --build-command 'cmake --build build --clean-first --parallel' \
+  --output build/fixed-machine-metrics.json
+```
+
+Hosted CI only compiles this suite and verifies the small-fixture checksums; it
+never enforces timing thresholds.

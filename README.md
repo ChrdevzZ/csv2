@@ -110,8 +110,10 @@ already present in the output container.
 
 The benchmark executable measures one operation at a time: mapping, row and
 cell traversal, raw/decoded extraction, C++20 ranges, integer conversion, and
-raw/escaped writing. It supports buffer and mmap sources and emits a checksum,
-GiB/s, rows/s, and cells/s. Hosted CI verifies deterministic checksums only.
+raw/escaped writing. Source preparation is outside each operation timer. It
+supports buffer and mmap sources and emits a checksum, GiB/s, rows/s, cells/s,
+and optional allocation counts. Hosted CI verifies deterministic checksums and
+zero-allocation structural traversal only.
 
 ```bash
 cmake -S . -B build-benchmark \

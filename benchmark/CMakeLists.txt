@@ -1,9 +1,14 @@
 add_executable(csv2_benchmark main.cpp)
-target_link_libraries(csv2_benchmark PRIVATE csv2::csv2)
-set_target_properties(csv2_benchmark PROPERTIES
-  CXX_STANDARD 20
-  CXX_STANDARD_REQUIRED ON
-  CXX_EXTENSIONS OFF)
+add_executable(csv2_benchmark_allocations main.cpp)
+target_compile_definitions(csv2_benchmark_allocations PRIVATE
+  CSV2_BENCHMARK_ENABLE_ALLOCATION_TRACKING=1)
+foreach(target IN ITEMS csv2_benchmark csv2_benchmark_allocations)
+  target_link_libraries(${target} PRIVATE csv2::csv2)
+  set_target_properties(${target} PROPERTIES
+    CXX_STANDARD 20
+    CXX_STANDARD_REQUIRED ON
+    CXX_EXTENSIONS OFF)
+endforeach()
 
 if(CSV2_BUILD_TESTS)
   set(csv2_benchmark_fixture ${csv2_SOURCE_DIR}/test/inputs/test_01.csv)
@@ -25,6 +30,12 @@ if(CSV2_BUILD_TESTS)
   csv2_add_benchmark_checksum(integer_conversion buffer 6437334155733299317)
   csv2_add_benchmark_checksum(writer_raw buffer 9730279101474490404)
   csv2_add_benchmark_checksum(writer_escaped buffer 9730279101474490404)
+  add_test(NAME csv2.benchmark.allocations.rows_cells
+    COMMAND csv2_benchmark_allocations --operation rows_cells
+      --input ${csv2_benchmark_fixture} --source buffer --iterations 1
+      --track-allocations --expect-allocations 0)
+  set_tests_properties(csv2.benchmark.allocations.rows_cells PROPERTIES
+    LABELS benchmark-checksum)
   if(CSV2_HAS_MMAP OR NOT DEFINED CSV2_HAS_MMAP)
     csv2_add_benchmark_checksum(map_only mmap 8674000034234589096)
     add_test(NAME csv2.benchmark.checksum.rows_cells_mmap
