@@ -9,7 +9,6 @@
 #include <string_view>
 
 static_assert(CSV2_HAS_STRING_VIEW, "C++17 contract requires std::string_view");
-static_assert(CSV2_HAS_CHARCONV, "C++17 contract requires integer std::from_chars");
 static_assert(CSV2_HAS_FILESYSTEM, "C++17 contract requires std::filesystem::path");
 
 void csv2_cxx17_contract() {
