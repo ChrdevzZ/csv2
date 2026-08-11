@@ -1,0 +1,116 @@
+name: Windows
+
+on:
+  push:
+    branches:
+      - main
+      - master
+  pull_request:
+    branches:
+      - main
+      - master
+  merge_group:
+    types:
+      - checks_requested
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Windows / ${{ matrix.compiler }}
+    runs-on: windows-2025-vs2026
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - compiler: MSVC
+            configuration: Debug
+            toolset: ""
+            benchmarks: "ON"
+            sanitizers: "OFF"
+          - compiler: MSVC ASan
+            configuration: Release
+            toolset: ""
+            benchmarks: "OFF"
+            sanitizers: "ON"
+          - compiler: Clang-CL
+            configuration: Release
+            toolset: -T ClangCL
+            benchmarks: "OFF"
+            sanitizers: "OFF"
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Configure
+        run: >-
+          cmake -S . -B build
+          -G "Visual Studio 18 2026" -A x64
+          ${{ matrix.toolset }}
+          -DCMAKE_COMPILE_WARNING_AS_ERROR=ON
+          -DCSV2_BUILD_TESTS=ON
+          -DCSV2_BUILD_BENCHMARKS=${{ matrix.benchmarks }}
+          -DCSV2_ENABLE_SANITIZERS=${{ matrix.sanitizers }}
+
+      - name: Build
+        run: cmake --build build --config ${{ matrix.configuration }} --parallel
+
+      - name: Test
+        if: matrix.sanitizers == 'OFF'
+        run: >-
+          ctest --test-dir build
+          -C ${{ matrix.configuration }}
+          --output-on-failure
+
+      - name: Test with AddressSanitizer
+        if: matrix.sanitizers == 'ON'
+        env:
+          ASAN_OPTIONS: halt_on_error=1:detect_leaks=0
+        shell: pwsh
+        run: |
+          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          $installationPath = & $vswhere -latest -products * -property installationPath
+          if (-not $installationPath) {
+            throw "Visual Studio installation was not found"
+          }
+
+          $vsDevCmd = Join-Path $installationPath "Common7\Tools\VsDevCmd.bat"
+          $testDirectory = (Resolve-Path "build/test").Path
+          $testExecutables = Get-ChildItem `
+            (Join-Path $testDirectory "${{ matrix.configuration }}") `
+            -Filter "csv2*.exe" |
+            Where-Object { $_.Name -ne "csv2_benchmark_without_mmap.exe" } |
+            Sort-Object Name
+          if ($testExecutables.Count -eq 0) {
+            throw "No AddressSanitizer test executables were found"
+          }
+
+          $commands = @(
+            "call `"$vsDevCmd`" -arch=x64 -host_arch=x64 >nul"
+            "cd /d `"$testDirectory`""
+          )
+          $commands += $testExecutables | ForEach-Object {
+            "`"$($_.FullName)`" --no-version --no-intro --no-colors"
+          }
+
+          cmd.exe /d /s /c ($commands -join " && ")
+          if ($LASTEXITCODE -ne 0) {
+            throw "AddressSanitizer test execution failed with exit code $LASTEXITCODE"
+          }
+
+      - name: Install package
+        if: matrix.compiler == 'MSVC'
+        run: >-
+          cmake --install build
+          --config ${{ matrix.configuration }}
+          --prefix build/install

@@ -1,3 +1,16 @@
+include(CheckCXXCompilerFlag)
+
+if(MSVC OR CMAKE_CXX_COMPILER_FRONTEND_VARIANT STREQUAL "MSVC")
+  string(REGEX REPLACE "(^| )[/-]EHsc( |$)" " "
+    CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS}")
+endif()
+
+if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|AppleClang" AND
+   NOT CMAKE_CXX_COMPILER_FRONTEND_VARIANT STREQUAL "MSVC")
+  check_cxx_compiler_flag("-Wno-c2y-extensions"
+    CSV2_HAS_NO_C2Y_EXTENSIONS_WARNING)
+endif()
+
 function(csv2_set_test_standard target standard)
   set_target_properties(${target} PROPERTIES
     CXX_STANDARD ${standard}
@@ -6,17 +19,50 @@ function(csv2_set_test_standard target standard)
 endfunction()
 
 function(csv2_enable_test_options target)
+  set(csv2_uses_doctest FALSE)
+  set(csv2_disables_exceptions FALSE)
+  foreach(option IN LISTS ARGN)
+    if(option STREQUAL "DOCTEST")
+      set(csv2_uses_doctest TRUE)
+    elseif(option STREQUAL "NO_EXCEPTIONS")
+      set(csv2_disables_exceptions TRUE)
+    else()
+      message(FATAL_ERROR "Unknown csv2 test option: ${option}")
+    endif()
+  endforeach()
+
   if(MSVC OR CMAKE_CXX_COMPILER_FRONTEND_VARIANT STREQUAL "MSVC")
     target_compile_options(${target} PRIVATE /W4)
-    if(CMAKE_CXX_COMPILER_ID STREQUAL "MSVC")
+    if(CMAKE_CXX_COMPILER_ID STREQUAL "MSVC" AND csv2_uses_doctest)
       target_compile_options(${target} PRIVATE /wd5285)
+    endif()
+    if(csv2_disables_exceptions)
+      target_compile_options(${target} PRIVATE /EHs-c-)
+    else()
+      target_compile_options(${target} PRIVATE /EHsc)
     endif()
   else()
     target_compile_options(${target} PRIVATE -Wall -Wextra -Wpedantic)
+    if(csv2_uses_doctest AND CSV2_HAS_NO_C2Y_EXTENSIONS_WARNING)
+      target_compile_options(${target} PRIVATE -Wno-c2y-extensions)
+    endif()
+    if(csv2_disables_exceptions)
+      target_compile_options(${target} PRIVATE -fno-exceptions)
+    endif()
   endif()
 
   if(CSV2_ENABLE_SANITIZERS)
-    if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang|AppleClang")
+    if(CMAKE_CXX_COMPILER_ID STREQUAL "MSVC")
+      target_compile_options(${target} PRIVATE /fsanitize=address /Zi)
+      get_target_property(target_type ${target} TYPE)
+      if(NOT target_type STREQUAL "OBJECT_LIBRARY")
+        set_property(TARGET ${target} APPEND_STRING PROPERTY LINK_FLAGS " /DEBUG")
+      endif()
+    elseif(CMAKE_CXX_COMPILER_FRONTEND_VARIANT STREQUAL "MSVC")
+      message(FATAL_ERROR
+        "CSV2_ENABLE_SANITIZERS supports MSVC AddressSanitizer on Windows, "
+        "but not ${CMAKE_CXX_COMPILER_ID} with the MSVC frontend")
+    elseif(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang|AppleClang")
       target_compile_options(${target} PRIVATE
         -fsanitize=address,undefined
         -fno-omit-frame-pointer
@@ -27,7 +73,7 @@ function(csv2_enable_test_options target)
       endif()
     else()
       message(FATAL_ERROR
-        "CSV2_ENABLE_SANITIZERS requires GCC, Clang, or AppleClang")
+        "CSV2_ENABLE_SANITIZERS requires MSVC, GCC, Clang, or AppleClang")
     endif()
   endif()
 endfunction()
@@ -44,16 +90,49 @@ function(csv2_add_test_variant target test_name standard single_header)
     target_link_libraries(${target} PRIVATE csv2::csv2)
   endif()
   csv2_set_test_standard(${target} ${standard})
-  csv2_enable_test_options(${target})
+  csv2_enable_test_options(${target} DOCTEST)
   add_test(NAME ${test_name} COMMAND ${target})
   set_tests_properties(${test_name} PROPERTIES
     WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
 endfunction()
 
-csv2_add_test_variant(csv2_test csv2.module.cxx11 11 FALSE)
-csv2_add_test_variant(csv2_single_header_test csv2.single_header.cxx11 11 TRUE)
-csv2_add_test_variant(csv2_test_cxx17 csv2.module.cxx17 17 FALSE)
-csv2_add_test_variant(csv2_single_header_test_cxx17 csv2.single_header.cxx17 17 TRUE)
+set(csv2_runtime_standards 11 14 17)
+if(CMAKE_VERSION VERSION_GREATER_EQUAL 3.12 AND
+   cxx_std_20 IN_LIST CMAKE_CXX_COMPILE_FEATURES)
+  list(APPEND csv2_runtime_standards 20)
+endif()
+if(CMAKE_VERSION VERSION_GREATER_EQUAL 3.20 AND
+   cxx_std_23 IN_LIST CMAKE_CXX_COMPILE_FEATURES)
+  list(APPEND csv2_runtime_standards 23)
+endif()
+
+foreach(standard IN LISTS csv2_runtime_standards)
+  set(suffix "_cxx${standard}")
+  if(standard EQUAL 11)
+    set(suffix "")
+  endif()
+
+  csv2_add_test_variant(csv2_test${suffix}
+    csv2.module.cxx${standard} ${standard} FALSE)
+  csv2_add_test_variant(csv2_single_header_test${suffix}
+    csv2.single_header.cxx${standard} ${standard} TRUE)
+endforeach()
+
+option(CSV2_REQUIRE_MODERN_STANDARD_TESTS
+  "Fail configuration unless the C++20 and C++23 CTest variants are registered" OFF)
+if(CSV2_REQUIRE_MODERN_STANDARD_TESTS)
+  set(csv2_required_modern_tests
+    csv2.module.cxx20
+    csv2.single_header.cxx20
+    csv2.module.cxx23
+    csv2.single_header.cxx23)
+  foreach(required_test IN LISTS csv2_required_modern_tests)
+    if(NOT TEST ${required_test})
+      message(FATAL_ERROR
+        "Required modern-standard CTest test is not registered: ${required_test}")
+    endif()
+  endforeach()
+endif()
 
 csv2_add_test_variant(csv2_test_without_mmap csv2.module.no_mmap.cxx11 11 FALSE)
 target_compile_definitions(csv2_test_without_mmap PRIVATE CSV2_HAS_MMAP=0 CSV2_TEST_NO_MMAP)
@@ -135,12 +214,9 @@ function(csv2_add_no_exceptions_test target test_name single_header)
   endif()
   if(MSVC OR CMAKE_CXX_COMPILER_FRONTEND_VARIANT STREQUAL "MSVC")
     target_compile_definitions(${target} PRIVATE _HAS_EXCEPTIONS=0)
-    target_compile_options(${target} PRIVATE /EHs-c-)
-  elseif(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang|AppleClang")
-    target_compile_options(${target} PRIVATE -fno-exceptions)
   endif()
   csv2_set_test_standard(${target} 11)
-  csv2_enable_test_options(${target})
+  csv2_enable_test_options(${target} DOCTEST NO_EXCEPTIONS)
   add_test(NAME ${test_name} COMMAND ${target})
   set_tests_properties(${test_name} PROPERTIES
     WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})

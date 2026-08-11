@@ -1,5 +1,9 @@
 cmake_minimum_required(VERSION 3.10)
 
+if(POLICY CMP0092)
+  cmake_policy(SET CMP0092 NEW)
+endif()
+
 project(csv2 VERSION 1.8.0 LANGUAGES CXX)
 
 if(POLICY CMP0077)
@@ -20,7 +24,7 @@ endif()
 option(CSV2_BUILD_TESTS "Build csv2 tests + enable CTest" OFF)
 option(CSV2_BUILD_BENCHMARKS "Build csv2 benchmarks" OFF)
 option(CSV2_ENABLE_SANITIZERS
-  "Enable AddressSanitizer and UndefinedBehaviorSanitizer for tests" OFF)
+  "Enable AddressSanitizer and, where supported, UndefinedBehaviorSanitizer for tests" OFF)
 
 include(GNUInstallDirs)
 

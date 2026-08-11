@@ -802,8 +802,7 @@ inline size_t query_file_size(file_handle_type handle, std::error_code &error) {
   const int64_t file_size_value = sbuf.st_size;
 #endif
   if (file_size_value < 0 ||
-      static_cast<std::uintmax_t>(file_size_value) >
-          (std::numeric_limits<size_t>::max)()) {
+      static_cast<std::uintmax_t>(file_size_value) > (std::numeric_limits<size_t>::max)()) {
     error = std::make_error_code(std::errc::value_too_large);
     return 0;
   }

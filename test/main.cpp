@@ -48,11 +48,10 @@ HANDLE CreateFileW(const wchar_t *path, DWORD desired_access, DWORD share_mode,
                    void *security_attributes, DWORD creation_disposition,
                    DWORD flags_and_attributes, HANDLE template_file);
 BOOL GetFileSizeEx(HANDLE file, LARGE_INTEGER *file_size);
-HANDLE CreateFileMapping(HANDLE file, void *attributes, DWORD protection,
-                         DWORD maximum_size_high, DWORD maximum_size_low,
-                         const char *name);
-void *MapViewOfFile(HANDLE mapping, DWORD desired_access, DWORD offset_high,
-                    DWORD offset_low, SIZE_T bytes_to_map);
+HANDLE CreateFileMapping(HANDLE file, void *attributes, DWORD protection, DWORD maximum_size_high,
+                         DWORD maximum_size_low, const char *name);
+void *MapViewOfFile(HANDLE mapping, DWORD desired_access, DWORD offset_high, DWORD offset_low,
+                    SIZE_T bytes_to_map);
 BOOL CloseHandle(HANDLE handle);
 BOOL FlushViewOfFile(const void *base_address, SIZE_T bytes_to_flush);
 BOOL FlushFileBuffers(HANDLE file);
@@ -128,13 +127,9 @@ void reset_scenario() {
     closed_handles[i] = nullptr;
 }
 
-HANDLE test_file_handle() {
-  return reinterpret_cast<HANDLE>(static_cast<std::intptr_t>(1));
-}
+HANDLE test_file_handle() { return reinterpret_cast<HANDLE>(static_cast<std::intptr_t>(1)); }
 
-HANDLE test_mapping_handle() {
-  return reinterpret_cast<HANDLE>(static_cast<std::intptr_t>(2));
-}
+HANDLE test_mapping_handle() { return reinterpret_cast<HANDLE>(static_cast<std::intptr_t>(2)); }
 
 HANDLE test_replacement_file_handle() {
   return reinterpret_cast<HANDLE>(static_cast<std::intptr_t>(3));
@@ -401,8 +396,8 @@ BOOL GetFileSizeEx(HANDLE, LARGE_INTEGER *file_size) {
   return query_size_result;
 }
 
-HANDLE CreateFileMapping(HANDLE, void *, DWORD, DWORD maximum_size_high,
-                         DWORD maximum_size_low, const char *) {
+HANDLE CreateFileMapping(HANDLE, void *, DWORD, DWORD maximum_size_high, DWORD maximum_size_low,
+                         const char *) {
   ++create_mapping_calls;
   create_mapping_size_high = maximum_size_high;
   create_mapping_size_low = maximum_size_low;
@@ -410,8 +405,7 @@ HANDLE CreateFileMapping(HANDLE, void *, DWORD, DWORD maximum_size_high,
   return create_mapping_result;
 }
 
-void *MapViewOfFile(HANDLE, DWORD, DWORD offset_high, DWORD offset_low,
-                    SIZE_T bytes_to_map) {
+void *MapViewOfFile(HANDLE, DWORD, DWORD offset_high, DWORD offset_low, SIZE_T bytes_to_map) {
   ++map_view_calls;
   map_view_offset_high = offset_high;
   map_view_offset_low = offset_low;
@@ -490,11 +484,11 @@ int main() {
 #error "mio must not be included when CSV2_HAS_MMAP is disabled"
 #endif
 
-void csv2_public_header_is_self_contained() {}
+static_assert(true, "compiling this translation unit is the assertion");
 
 #else
 
-#if defined(CSV2_TEST_NO_EXCEPTIONS) &&                                                \
+#if defined(CSV2_TEST_NO_EXCEPTIONS) &&                                                            \
     (defined(__cpp_exceptions) || defined(__EXCEPTIONS) || defined(_CPPUNWIND))
 #error "The no-exceptions test must be compiled with exception handling disabled"
 #endif
@@ -519,10 +513,10 @@ void csv2_public_header_is_self_contained() {}
 #include <cstddef>
 #include <cstdio>
 #include <exception>
-#include <fstream>
 #include <forward_list>
-#include <list>
+#include <fstream>
 #include <limits>
+#include <list>
 #include <sstream>
 #include <string>
 #include <system_error>
@@ -676,6 +670,15 @@ public:
 private:
   std::string path_;
 };
+
+#if CSV2_HAS_MMAP
+void write_binary_file(const std::string &path, const std::string &contents) {
+  std::ofstream output(path.c_str(), std::ios::binary | std::ios::trunc);
+  REQUIRE(output.is_open());
+  output.write(contents.data(), static_cast<std::streamsize>(contents.size()));
+  REQUIRE(output.good());
+}
+#endif
 
 } // namespace
 
@@ -993,9 +996,13 @@ TEST_CASE("Map a non-page-aligned offset beyond the first page" * test_suite("mi
 
 TEST_CASE("Preserve ownership when remapping through the mapping's own handle" *
           test_suite("mio")) {
+  const std::string path = std::string(writer_output_path()) + ".mmap-remap-source";
+  ScopedFileRemoval cleanup(path);
+  write_binary_file(path, "a,b,c\n1,2,3\n4,5,6");
+
   std::error_code error;
   mio::mmap_source mapping;
-  mapping.map("inputs/test_01.csv", error);
+  mapping.map(path, error);
   REQUIRE_FALSE(error);
 
   const mio::file_handle_type handle = mapping.file_handle();
@@ -1020,11 +1027,14 @@ TEST_CASE("Preserve ownership when remapping through the mapping's own handle" *
 #endif
 }
 
-TEST_CASE("Preserve ownership through shared and writable same-handle remaps" *
-          test_suite("mio")) {
+TEST_CASE("Preserve ownership through shared and writable same-handle remaps" * test_suite("mio")) {
+  const std::string source_path = std::string(writer_output_path()) + ".shared-mmap-remap-source";
+  ScopedFileRemoval source_cleanup(source_path);
+  write_binary_file(source_path, "a,b,c\n1,2,3\n4,5,6");
+
   std::error_code error;
   mio::shared_mmap_source shared;
-  shared.map("inputs/test_01.csv", error);
+  shared.map(source_path, error);
   REQUIRE_FALSE(error);
   const mio::file_handle_type shared_handle = shared.file_handle();
   shared.map(shared_handle, 6, 5, error);
@@ -1059,8 +1069,7 @@ TEST_CASE("Preserve ownership through shared and writable same-handle remaps" *
   sink.unmap();
 
   std::ifstream input(path.c_str(), std::ios::binary);
-  std::string persisted((std::istreambuf_iterator<char>(input)),
-                        std::istreambuf_iterator<char>());
+  std::string persisted((std::istreambuf_iterator<char>(input)), std::istreambuf_iterator<char>());
   REQUIRE(persisted == "aZcdef");
 }
 #endif
@@ -1071,6 +1080,62 @@ TEST_CASE("Borrow storage passed through parse_view" * test_suite("Reader")) {
   std::string input("view,data");
   REQUIRE(reader.parse_view(std::string_view(input)));
   REQUIRE((*reader.begin()).address() == input.data());
+}
+
+TEST_CASE("Preserve a complete owned source when parse_view aliases it" * test_suite("Reader")) {
+  ReaderWithoutHeader reader;
+  const std::string first_cell(512, 'f');
+  const std::string input = first_cell + ",second\nthird,fourth";
+  REQUIRE(reader.parse(std::string(input)));
+
+  const char *const source_address = (*reader.begin()).address();
+  REQUIRE(reader.parse_view(std::string_view(source_address, input.size())));
+  REQUIRE((*reader.begin()).address() == source_address);
+  REQUIRE(read_rows(reader) ==
+          std::vector<std::vector<std::string>>({{first_cell, "second"}, {"third", "fourth"}}));
+}
+
+TEST_CASE("Preserve owned storage when parse_view selects a cell subview" * test_suite("Reader")) {
+  ReaderWithoutHeader reader;
+  const std::string first_cell(512, 'a');
+  REQUIRE(reader.parse(std::string(first_cell + ",discarded")));
+
+  const std::string_view view = (*(*reader.begin()).begin()).read_view();
+  REQUIRE(reader.parse_view(view));
+  REQUIRE((*reader.begin()).address() == view.data());
+  REQUIRE(read_rows(reader) == std::vector<std::vector<std::string>>({{first_cell}}));
+}
+
+#if CSV2_HAS_MMAP
+TEST_CASE("Preserve mapped storage when parse_view selects a cell subview" * test_suite("Reader")) {
+  const std::string path = std::string(writer_output_path()) + ".parse-view-mmap-source";
+  ScopedFileRemoval cleanup(path);
+  const std::string first_cell(512, 'm');
+  write_binary_file(path, first_cell + ",discarded");
+
+  ReaderWithoutHeader reader;
+  REQUIRE(reader.mmap(path));
+  const std::string_view view = (*(*reader.begin()).begin()).read_view();
+  REQUIRE(reader.parse_view(view));
+  REQUIRE((*reader.begin()).address() == view.data());
+  REQUIRE(read_rows(reader) == std::vector<std::vector<std::string>>({{first_cell}}));
+}
+#endif
+
+TEST_CASE("Preserve destination-owned storage when move-assigning a view borrower" *
+          test_suite("Reader")) {
+  ReaderWithoutHeader owner;
+  const std::string first_cell(512, 'o');
+  REQUIRE(owner.parse(std::string(first_cell + ",discarded")));
+  const std::string_view view = (*(*owner.begin()).begin()).read_view();
+
+  ReaderWithoutHeader borrower;
+  REQUIRE(borrower.parse_view(view));
+  owner = std::move(borrower);
+
+  REQUIRE(borrower.rows() == 0);
+  REQUIRE((*owner.begin()).address() == view.data());
+  REQUIRE(read_rows(owner) == std::vector<std::vector<std::string>>({{first_cell}}));
 }
 #endif
 
@@ -1162,8 +1227,7 @@ TEST_CASE("Write empty and forward-iterable rows" * test_suite("Writer")) {
 TEST_CASE("Write a forward-iterable collection of rows" * test_suite("Writer")) {
   std::ostringstream output;
   csv2::Writer<csv2::delimiter<','>, std::ostringstream> writer(output);
-  const std::forward_list<std::vector<std::string>> rows = {
-      {"a", "b"}, {}, {"c", "d", "e"}};
+  const std::forward_list<std::vector<std::string>> rows = {{"a", "b"}, {}, {"c", "d", "e"}};
 
   writer.write_rows(rows);
 
