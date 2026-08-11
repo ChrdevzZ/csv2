@@ -688,6 +688,7 @@ bool empty(String path) {
 #endif // MIO_STRING_UTIL_HEADER
 
 #include <algorithm>
+#include <csv2/detail/config.hpp>
 
 #ifndef _WIN32
 #include <fcntl.h>

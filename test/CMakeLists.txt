@@ -241,10 +241,21 @@ function(csv2_add_header_self_containment target header_definition include_direc
   csv2_enable_test_options(${target})
 endfunction()
 
-foreach(standard IN ITEMS 11 17)
-  set(suffix "")
-  if(standard EQUAL 17)
-    set(suffix "_cxx17")
+function(csv2_add_config_contract target standard)
+  add_library(${target} OBJECT config.cpp)
+  target_link_libraries(${target} PRIVATE csv2::csv2)
+  csv2_set_test_standard(${target} ${standard})
+  csv2_enable_test_options(${target})
+endfunction()
+
+foreach(standard IN ITEMS 11 20 23)
+  csv2_add_config_contract(csv2_config_contract_cxx${standard} ${standard})
+endforeach()
+
+foreach(standard IN ITEMS 11 17 20 23)
+  set(suffix "_cxx${standard}")
+  if(standard EQUAL 11)
+    set(suffix "")
   endif()
 
   csv2_add_header_self_containment(csv2_header_mio${suffix}
@@ -259,10 +270,10 @@ foreach(standard IN ITEMS 11 17)
     CSV2_TEST_SINGLE_HEADER ${csv2_SOURCE_DIR}/single_include ${standard})
 endforeach()
 
-foreach(standard IN ITEMS 11 17)
-  set(suffix "")
-  if(standard EQUAL 17)
-    set(suffix "_cxx17")
+foreach(standard IN ITEMS 11 17 20 23)
+  set(suffix "_cxx${standard}")
+  if(standard EQUAL 11)
+    set(suffix "")
   endif()
 
   csv2_add_header_self_containment(csv2_header_single_without_mmap${suffix}
