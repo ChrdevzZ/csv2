@@ -206,6 +206,105 @@ OutputIt copy_chars(const char *first, const char *last, OutputIt output) {
 } // namespace detail
 } // namespace csv2
 
+// #include <csv2/detail/scanner.hpp>
+
+#include <cstddef>
+#include <cstring>
+
+namespace csv2 {
+namespace detail {
+
+struct record_bounds {
+  std::size_t content_end;
+  std::size_t next_start;
+};
+
+struct cell_bounds {
+  std::size_t content_end;
+  bool escaped;
+};
+
+template <class QuoteCharacter>
+record_bounds find_record_bounds(const char *buffer, std::size_t buffer_size,
+                                 std::size_t start) noexcept {
+  if (!buffer || start >= buffer_size)
+    return {buffer_size, buffer_size};
+
+  const char *const record_start = buffer + start;
+  const std::size_t remaining = buffer_size - start;
+  const char *const newline =
+      static_cast<const char *>(std::memchr(record_start, '\n', remaining));
+  const std::size_t candidate_length =
+      newline ? static_cast<std::size_t>(newline - record_start) : remaining;
+  const char *const quote = static_cast<const char *>(
+      std::memchr(record_start, QuoteCharacter::value, candidate_length));
+
+  if (!quote) {
+    if (!newline)
+      return {buffer_size, buffer_size};
+    const std::size_t newline_index =
+        start + static_cast<std::size_t>(newline - record_start);
+    const std::size_t content_end =
+        newline_index > start && buffer[newline_index - 1] == '\r' ? newline_index - 1
+                                                                    : newline_index;
+    return {content_end, newline_index + 1};
+  }
+
+  bool quote_opened = false;
+  for (std::size_t i = start; i < buffer_size; ++i) {
+    if (buffer[i] == QuoteCharacter::value) {
+      if (quote_opened && i + 1 < buffer_size && buffer[i + 1] == QuoteCharacter::value) {
+        ++i;
+        continue;
+      }
+      quote_opened = !quote_opened;
+    } else if (buffer[i] == '\n' && !quote_opened) {
+      const std::size_t content_end = i > start && buffer[i - 1] == '\r' ? i - 1 : i;
+      return {content_end, i + 1};
+    }
+  }
+
+  return {buffer_size, buffer_size};
+}
+
+template <class Delimiter, class QuoteCharacter>
+cell_bounds find_cell_bounds(const char *buffer, std::size_t current,
+                             std::size_t end) noexcept {
+  if (!buffer || current >= end)
+    return {end, false};
+
+  const char *const first = buffer + current;
+  const std::size_t remaining = end - current;
+  const char *const delimiter =
+      static_cast<const char *>(std::memchr(first, Delimiter::value, remaining));
+  const char *const quote =
+      static_cast<const char *>(std::memchr(first, QuoteCharacter::value, remaining));
+
+  if (!quote || (delimiter && delimiter < quote))
+    return {delimiter ? static_cast<std::size_t>(delimiter - buffer) : end, false};
+
+  bool quote_opened = false;
+  bool escaped = false;
+  for (std::size_t i = current; i < end; ++i) {
+    if (buffer[i] == QuoteCharacter::value) {
+      const bool adjacent_quote = i + 1 < end && buffer[i + 1] == QuoteCharacter::value;
+      if (adjacent_quote)
+        escaped = true;
+      if (quote_opened && adjacent_quote) {
+        ++i;
+        continue;
+      }
+      quote_opened = !quote_opened;
+    } else if (buffer[i] == Delimiter::value && !quote_opened) {
+      return {i, escaped};
+    }
+  }
+  return {end, escaped};
+}
+
+} // namespace detail
+} // namespace csv2
+
 
 #if CSV2_HAS_MMAP
 // #include <csv2/mio.hpp>
@@ -2056,42 +2155,17 @@ public:
   }
 
   class CellIterator {
-    struct CellBounds {
-      size_t content_end;
-      bool escaped;
-    };
-
     const char *buffer_{nullptr};
-    size_t range_size_{0};
     size_t current_{0};
     size_t end_{0};
     size_t content_end_{0};
     bool escaped_{false};
     bool at_end_{true};
 
-    CellBounds find_cell_bounds_() const noexcept {
-      bool quote_opened = false;
-      bool escaped = false;
-      for (size_t i = current_; i < end_; ++i) {
-        if (buffer_[i] == quote_character::value) {
-          const bool adjacent_quote = i + 1 < end_ && buffer_[i + 1] == quote_character::value;
-          if (adjacent_quote)
-            escaped = true;
-          if (quote_opened && adjacent_quote) {
-            ++i;
-            continue;
-          }
-          quote_opened = !quote_opened;
-        } else if (buffer_[i] == delimiter::value && !quote_opened) {
-          return {i, escaped};
-        }
-      }
-      return {end_, escaped};
-    }
-
     void update_bounds_() noexcept {
       if (!at_end_) {
-        const CellBounds bounds = find_cell_bounds_();
+        const detail::cell_bounds bounds =
+            detail::find_cell_bounds<delimiter, quote_character>(buffer_, current_, end_);
         content_end_ = bounds.content_end;
         escaped_ = bounds.escaped;
       } else {
@@ -2112,9 +2186,9 @@ public:
 
     CellIterator() = default;
 
-    CellIterator(const char *buffer, size_t buffer_size, size_t start, size_t end)
-        : buffer_(buffer), range_size_(buffer_size), current_(start), end_(end),
-          content_end_(end), escaped_(false), at_end_(start >= end) {
+    CellIterator(const char *buffer, size_t start, size_t end)
+        : buffer_(buffer), current_(start), end_(end), content_end_(end), escaped_(false),
+          at_end_(start >= end) {
       update_bounds_();
     }
 
@@ -2140,15 +2214,15 @@ public:
     Cell operator*() const { return Cell(buffer_, current_, content_end_, escaped_); }
 
     bool operator==(const CellIterator &rhs) const noexcept {
-      return buffer_ == rhs.buffer_ && range_size_ == rhs.range_size_ &&
-             current_ == rhs.current_ && end_ == rhs.end_ && at_end_ == rhs.at_end_;
+      return buffer_ == rhs.buffer_ && current_ == rhs.current_ && end_ == rhs.end_ &&
+             at_end_ == rhs.at_end_;
     }
 
     bool operator!=(const CellIterator &rhs) const noexcept { return !(*this == rhs); }
   };
 
-  CellIterator begin() const { return CellIterator(buffer_, end_ - start_, start_, end_); }
-  CellIterator end() const { return CellIterator(buffer_, end_ - start_, end_, end_); }
+  CellIterator begin() const { return CellIterator(buffer_, start_, end_); }
+  CellIterator end() const { return CellIterator(buffer_, end_, end_); }
 };
 
 #if CSV2_HAS_RANGES
@@ -2171,54 +2245,6 @@ template <class delimiter = delimiter<','>, class quote_character = quote_charac
           class first_row_is_header = first_row_is_header<true>,
           class trim_policy = trim_policy::trim_whitespace>
 class Reader {
-  struct RecordBounds {
-    size_t content_end;
-    size_t next_start;
-  };
-
-  static RecordBounds find_record_bounds_(const char *buffer, size_t buffer_size,
-                                          size_t start) noexcept {
-    if (!buffer || start >= buffer_size)
-      return {buffer_size, buffer_size};
-
-    const char *const record_start = buffer + start;
-    const size_t remaining = buffer_size - start;
-    const char *const newline =
-        static_cast<const char *>(std::memchr(record_start, '\n', remaining));
-    const size_t candidate_length =
-        newline ? static_cast<size_t>(newline - record_start) : remaining;
-    const char *const quote = static_cast<const char *>(
-        std::memchr(record_start, quote_character::value, candidate_length));
-
-    // The common unquoted case avoids the state machine entirely.
-    if (!quote) {
-      if (!newline)
-        return {buffer_size, buffer_size};
-      const size_t newline_index = start + static_cast<size_t>(newline - record_start);
-      const size_t content_end = newline_index > start && buffer[newline_index - 1] == '\r'
-                                     ? newline_index - 1
-                                     : newline_index;
-      return {content_end, newline_index + 1};
-    }
-
-    bool quote_opened = false;
-    for (size_t i = start; i < buffer_size; ++i) {
-      if (buffer[i] == quote_character::value) {
-        if (quote_opened && i + 1 < buffer_size && buffer[i + 1] == quote_character::value) {
-          ++i;
-          continue;
-        }
-        quote_opened = !quote_opened;
-      } else if (buffer[i] == '\n' && !quote_opened) {
-        const size_t content_end = i > start && buffer[i - 1] == '\r' ? i - 1 : i;
-        return {content_end, i + 1};
-      }
-    }
-
-    // An unclosed quoted field is treated as content through EOF.
-    return {buffer_size, buffer_size};
-  }
-
 #if CSV2_HAS_MMAP
   mio::mmap_source mmap_;
 #endif
@@ -2430,7 +2456,8 @@ public:
           start_(start < buffer_size ? start : buffer_size), content_end_(buffer_size),
           next_start_(buffer_size) {
       if (start_ < buffer_size_) {
-        const RecordBounds bounds = find_record_bounds_(buffer_, buffer_size_, start_);
+        const detail::record_bounds bounds =
+            detail::find_record_bounds<quote_character>(buffer_, buffer_size_, start_);
         content_end_ = bounds.content_end;
         next_start_ = bounds.next_start;
       }
@@ -2439,7 +2466,8 @@ public:
     RowIterator &operator++() {
       start_ = next_start_;
       if (start_ < buffer_size_) {
-        const RecordBounds bounds = find_record_bounds_(buffer_, buffer_size_, start_);
+        const detail::record_bounds bounds =
+            detail::find_record_bounds<quote_character>(buffer_, buffer_size_, start_);
         content_end_ = bounds.content_end;
         next_start_ = bounds.next_start;
       } else {
@@ -2470,7 +2498,8 @@ public:
     if (!buffer_ || buffer_size_ == 0)
       return end();
     if (first_row_is_header::value) {
-      const RecordBounds header = find_record_bounds_(buffer_, buffer_size_, 0);
+      const detail::record_bounds header =
+          detail::find_record_bounds<quote_character>(buffer_, buffer_size_, 0);
       return RowIterator(buffer_, buffer_size_, header.next_start);
     }
     return RowIterator(buffer_, buffer_size_, 0);
@@ -2481,7 +2510,8 @@ public:
   Row header() const {
     if (!buffer_ || buffer_size_ == 0)
       return Row();
-    const RecordBounds bounds = find_record_bounds_(buffer_, buffer_size_, 0);
+    const detail::record_bounds bounds =
+        detail::find_record_bounds<quote_character>(buffer_, buffer_size_, 0);
     return Row(buffer_, 0, bounds.content_end);
   }
 
@@ -2492,11 +2522,12 @@ public:
 
     size_t start = 0;
     if (first_row_is_header::value)
-      start = find_record_bounds_(buffer_, buffer_size_, 0).next_start;
+      start = detail::find_record_bounds<quote_character>(buffer_, buffer_size_, 0).next_start;
 
     size_t result = 0;
     while (start < buffer_size_) {
-      const RecordBounds bounds = find_record_bounds_(buffer_, buffer_size_, start);
+      const detail::record_bounds bounds =
+          detail::find_record_bounds<quote_character>(buffer_, buffer_size_, start);
       if (!ignore_empty_lines || bounds.content_end != start)
         ++result;
       start = bounds.next_start;
