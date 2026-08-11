@@ -1,6 +1,37 @@
 add_executable(csv2_benchmark main.cpp)
 target_link_libraries(csv2_benchmark PRIVATE csv2::csv2)
 set_target_properties(csv2_benchmark PROPERTIES
-  CXX_STANDARD 11
+  CXX_STANDARD 20
   CXX_STANDARD_REQUIRED ON
   CXX_EXTENSIONS OFF)
+
+if(CSV2_BUILD_TESTS)
+  set(csv2_benchmark_fixture ${csv2_SOURCE_DIR}/test/inputs/test_01.csv)
+  function(csv2_add_benchmark_checksum operation source checksum)
+    add_test(NAME csv2.benchmark.checksum.${operation}
+      COMMAND csv2_benchmark --operation ${operation}
+        --input ${csv2_benchmark_fixture} --source ${source} --iterations 1
+        --expect-checksum ${checksum})
+    set_tests_properties(csv2.benchmark.checksum.${operation} PROPERTIES
+      LABELS benchmark-checksum)
+  endfunction()
+
+  csv2_add_benchmark_checksum(rows_only buffer 8674000034234459039)
+  csv2_add_benchmark_checksum(rows_cells buffer 6437334155717714538)
+  csv2_add_benchmark_checksum(raw_to_string buffer 4405620607395608627)
+  csv2_add_benchmark_checksum(decoded_to_string buffer 4405620607395608627)
+  csv2_add_benchmark_checksum(decoded_to_vector buffer 4405620607395608627)
+  csv2_add_benchmark_checksum(ranges_pipeline buffer 6437334155717714538)
+  csv2_add_benchmark_checksum(integer_conversion buffer 6437334155733299317)
+  csv2_add_benchmark_checksum(writer_raw buffer 9730279101474490404)
+  csv2_add_benchmark_checksum(writer_escaped buffer 9730279101474490404)
+  if(CSV2_HAS_MMAP OR NOT DEFINED CSV2_HAS_MMAP)
+    csv2_add_benchmark_checksum(map_only mmap 8674000034234589096)
+    add_test(NAME csv2.benchmark.checksum.rows_cells_mmap
+      COMMAND csv2_benchmark --operation rows_cells
+        --input ${csv2_benchmark_fixture} --source mmap --iterations 1
+        --expect-checksum 6437334155717714538)
+    set_tests_properties(csv2.benchmark.checksum.rows_cells_mmap PROPERTIES
+      LABELS benchmark-checksum)
+  endif()
+endif()

@@ -19,8 +19,7 @@ inline bool validation_failure(parse_error &error, parse_errc code, std::size_t 
 
 template <class TrimPolicy>
 bool is_trim_character(const char *buffer, std::size_t offset) noexcept {
-  const std::pair<std::size_t, std::size_t> bounds =
-      TrimPolicy::trim(buffer, offset, offset + 1);
+  const std::pair<std::size_t, std::size_t> bounds = TrimPolicy::trim(buffer, offset, offset + 1);
   return bounds.first == bounds.second;
 }
 
@@ -95,8 +94,7 @@ bool validate_csv(const char *buffer, std::size_t size, parse_error &error) noex
     }
 
     if (current == after_quote)
-      return validation_failure(error, parse_errc::characters_after_closing_quote, i, row,
-                                column);
+      return validation_failure(error, parse_errc::characters_after_closing_quote, i, row, column);
     current = unquoted;
     ++i;
   }

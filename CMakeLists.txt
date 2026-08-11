@@ -57,8 +57,13 @@ endif()
 
 option(CSV2_BUILD_TESTS "Build csv2 tests + enable CTest" OFF)
 option(CSV2_BUILD_BENCHMARKS "Build csv2 benchmarks" OFF)
+option(CSV2_BUILD_FUZZERS "Build the Clang libFuzzer target" OFF)
 option(CSV2_ENABLE_SANITIZERS
   "Enable AddressSanitizer and, where supported, UndefinedBehaviorSanitizer for tests" OFF)
+
+if(CSV2_BUILD_FUZZERS AND NOT CSV2_BUILD_TESTS)
+  message(FATAL_ERROR "CSV2_BUILD_FUZZERS requires CSV2_BUILD_TESTS=ON")
+endif()
 
 include(GNUInstallDirs)
 

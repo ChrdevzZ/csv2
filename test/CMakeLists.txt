@@ -169,11 +169,6 @@ if(CMAKE_VERSION VERSION_GREATER_EQUAL 3.20 AND
    cxx_std_23 IN_LIST CMAKE_CXX_COMPILE_FEATURES)
   list(APPEND csv2_runtime_standards 23)
 endif()
-if(CMAKE_VERSION VERSION_GREATER_EQUAL 3.30 AND
-   cxx_std_26 IN_LIST CMAKE_CXX_COMPILE_FEATURES)
-  list(APPEND csv2_runtime_standards 26)
-endif()
-
 foreach(standard IN LISTS csv2_runtime_standards)
   set(suffix "_cxx${standard}")
   if(standard EQUAL 11)
@@ -203,33 +198,54 @@ if(CSV2_REQUIRE_MODERN_STANDARD_TESTS)
 endif()
 
 option(CSV2_REQUIRE_CXX26_TESTS
-  "Fail configuration unless the C++26 CTest variants are registered" OFF)
+  "Fail configuration unless the C++26 compile-only targets are registered" OFF)
+
+if(CMAKE_VERSION VERSION_GREATER_EQUAL 3.30 AND
+   cxx_std_26 IN_LIST CMAKE_CXX_COMPILE_FEATURES)
+  foreach(single_header IN ITEMS FALSE TRUE)
+    if(single_header)
+      set(target csv2_standard_contract_single_cxx26)
+    else()
+      set(target csv2_standard_contract_module_cxx26)
+    endif()
+    add_library(${target} OBJECT standard_cxx26.cpp)
+    if(single_header)
+      target_compile_definitions(${target} PRIVATE CSV2_TEST_SINGLE_HEADER)
+      target_include_directories(${target} PRIVATE ${csv2_SOURCE_DIR}/single_include)
+    else()
+      target_link_libraries(${target} PRIVATE csv2::csv2)
+    endif()
+    csv2_set_test_standard(${target} 26)
+    csv2_enable_test_options(${target})
+  endforeach()
+endif()
+
 if(CSV2_REQUIRE_CXX26_TESTS)
-  set(csv2_required_cxx26_tests
-    csv2.module.cxx26
-    csv2.single_header.cxx26)
-  foreach(required_test IN LISTS csv2_required_cxx26_tests)
-    if(NOT TEST ${required_test})
+  set(csv2_required_cxx26_targets
+    csv2_standard_contract_module_cxx26
+    csv2_standard_contract_single_cxx26)
+  foreach(required_target IN LISTS csv2_required_cxx26_targets)
+    if(NOT TARGET ${required_target})
       message(FATAL_ERROR
-        "Required C++26 CTest test is not registered: ${required_test}")
+        "Required C++26 compile-only target is not registered: ${required_target}")
     endif()
   endforeach()
 endif()
 
-csv2_add_test_variant(csv2_test_without_mmap csv2.module.no_mmap.cxx11 11 FALSE)
-target_compile_definitions(csv2_test_without_mmap PRIVATE CSV2_HAS_MMAP=0 CSV2_TEST_NO_MMAP)
-csv2_add_test_variant(csv2_single_header_test_without_mmap
-  csv2.single_header.no_mmap.cxx11 11 TRUE)
-target_compile_definitions(csv2_single_header_test_without_mmap PRIVATE
-  CSV2_HAS_MMAP=0 CSV2_TEST_NO_MMAP)
-csv2_add_test_variant(csv2_test_without_mmap_cxx17
-  csv2.module.no_mmap.cxx17 17 FALSE)
-target_compile_definitions(csv2_test_without_mmap_cxx17 PRIVATE
-  CSV2_HAS_MMAP=0 CSV2_TEST_NO_MMAP)
-csv2_add_test_variant(csv2_single_header_test_without_mmap_cxx17
-  csv2.single_header.no_mmap.cxx17 17 TRUE)
-target_compile_definitions(csv2_single_header_test_without_mmap_cxx17 PRIVATE
-  CSV2_HAS_MMAP=0 CSV2_TEST_NO_MMAP)
+foreach(standard IN ITEMS 11 17 20 23)
+  set(suffix "_cxx${standard}")
+  if(standard EQUAL 11)
+    set(suffix "")
+  endif()
+  csv2_add_test_variant(csv2_test_without_mmap${suffix}
+    csv2.module.no_mmap.cxx${standard} ${standard} FALSE)
+  target_compile_definitions(csv2_test_without_mmap${suffix} PRIVATE
+    CSV2_HAS_MMAP=0 CSV2_TEST_NO_MMAP)
+  csv2_add_test_variant(csv2_single_header_test_without_mmap${suffix}
+    csv2.single_header.no_mmap.cxx${standard} ${standard} TRUE)
+  target_compile_definitions(csv2_single_header_test_without_mmap${suffix} PRIVATE
+    CSV2_HAS_MMAP=0 CSV2_TEST_NO_MMAP)
+endforeach()
 
 function(csv2_add_header_self_containment target header_definition include_directory standard)
   add_library(${target} OBJECT main.cpp)
@@ -269,6 +285,8 @@ foreach(standard IN ITEMS 11 17 20 23)
     CSV2_TEST_HEADER_MIO ${csv2_SOURCE_DIR}/include ${standard})
   csv2_add_header_self_containment(csv2_header_parameters${suffix}
     CSV2_TEST_HEADER_PARAMETERS ${csv2_SOURCE_DIR}/include ${standard})
+  csv2_add_header_self_containment(csv2_header_errors${suffix}
+    CSV2_TEST_HEADER_ERRORS ${csv2_SOURCE_DIR}/include ${standard})
   csv2_add_header_self_containment(csv2_header_reader${suffix}
     CSV2_TEST_HEADER_READER ${csv2_SOURCE_DIR}/include ${standard})
   csv2_add_header_self_containment(csv2_header_writer${suffix}
@@ -294,7 +312,7 @@ foreach(standard IN ITEMS 11 17 20 23)
     CSV2_HAS_MMAP=0 CSV2_EXPECT_NO_MIO)
 endforeach()
 
-function(csv2_add_no_exceptions_test target test_name single_header)
+function(csv2_add_no_exceptions_test target test_name standard single_header)
   if(NOT (MSVC OR CMAKE_CXX_COMPILER_FRONTEND_VARIANT STREQUAL "MSVC" OR
           CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang|AppleClang"))
     return()
@@ -315,14 +333,78 @@ function(csv2_add_no_exceptions_test target test_name single_header)
   if(MSVC OR CMAKE_CXX_COMPILER_FRONTEND_VARIANT STREQUAL "MSVC")
     target_compile_definitions(${target} PRIVATE _HAS_EXCEPTIONS=0)
   endif()
-  csv2_set_test_standard(${target} 11)
+  csv2_set_test_standard(${target} ${standard})
   csv2_enable_test_options(${target} DOCTEST NO_EXCEPTIONS)
   csv2_register_runtime_test(${target} ${test_name})
 endfunction()
 
-csv2_add_no_exceptions_test(csv2_no_exceptions csv2.module.no_exceptions.cxx11 FALSE)
-csv2_add_no_exceptions_test(csv2_single_header_no_exceptions
-  csv2.single_header.no_exceptions.cxx11 TRUE)
+foreach(standard IN ITEMS 11 20 23)
+  set(suffix "_cxx${standard}")
+  if(standard EQUAL 11)
+    set(suffix "")
+  endif()
+  csv2_add_no_exceptions_test(csv2_no_exceptions${suffix}
+    csv2.module.no_exceptions.cxx${standard} ${standard} FALSE)
+  csv2_add_no_exceptions_test(csv2_single_header_no_exceptions${suffix}
+    csv2.single_header.no_exceptions.cxx${standard} ${standard} TRUE)
+endforeach()
+
+function(csv2_add_standard_contract standard)
+  foreach(single_header IN ITEMS FALSE TRUE)
+    if(single_header)
+      set(target csv2_standard_contract_single_cxx${standard})
+    else()
+      set(target csv2_standard_contract_module_cxx${standard})
+    endif()
+    add_library(${target} OBJECT standard_cxx${standard}.cpp)
+    if(single_header)
+      target_compile_definitions(${target} PRIVATE CSV2_TEST_SINGLE_HEADER)
+      target_include_directories(${target} PRIVATE ${csv2_SOURCE_DIR}/single_include)
+    else()
+      target_link_libraries(${target} PRIVATE csv2::csv2)
+    endif()
+    csv2_set_test_standard(${target} ${standard})
+    csv2_enable_test_options(${target})
+  endforeach()
+endfunction()
+
+foreach(standard IN ITEMS 11 14 17)
+  csv2_add_standard_contract(${standard})
+endforeach()
+if(CMAKE_VERSION VERSION_GREATER_EQUAL 3.12 AND
+   cxx_std_20 IN_LIST CMAKE_CXX_COMPILE_FEATURES)
+  csv2_add_standard_contract(20)
+endif()
+if(CMAKE_VERSION VERSION_GREATER_EQUAL 3.20 AND
+   cxx_std_23 IN_LIST CMAKE_CXX_COMPILE_FEATURES)
+  csv2_add_standard_contract(23)
+endif()
+
+add_executable(csv2_fuzz_smoke fuzz_reader.cpp)
+target_link_libraries(csv2_fuzz_smoke PRIVATE csv2::csv2)
+target_compile_definitions(csv2_fuzz_smoke PRIVATE CSV2_FUZZ_STANDALONE CSV2_HAS_MMAP=0)
+csv2_set_test_standard(csv2_fuzz_smoke 11)
+csv2_enable_test_options(csv2_fuzz_smoke)
+csv2_register_runtime_test(csv2_fuzz_smoke csv2.fuzz.smoke.cxx11)
+set_tests_properties(csv2.fuzz.smoke.cxx11 PROPERTIES LABELS "fuzz-smoke;sanitizer-runtime")
+
+if(CSV2_BUILD_FUZZERS)
+  if(NOT CMAKE_CXX_COMPILER_ID MATCHES "Clang" OR
+     CMAKE_CXX_COMPILER_FRONTEND_VARIANT STREQUAL "MSVC")
+    message(FATAL_ERROR "CSV2_BUILD_FUZZERS requires Clang with the GNU frontend")
+  endif()
+  add_executable(csv2_fuzz fuzz_reader.cpp)
+  target_link_libraries(csv2_fuzz PRIVATE csv2::csv2)
+  target_compile_definitions(csv2_fuzz PRIVATE CSV2_HAS_MMAP=0)
+  target_compile_options(csv2_fuzz PRIVATE
+    -fsanitize=fuzzer,address,undefined
+    -fno-omit-frame-pointer
+    -fno-sanitize-recover=all)
+  set_property(TARGET csv2_fuzz APPEND_STRING PROPERTY LINK_FLAGS
+    " -fsanitize=fuzzer,address,undefined")
+  csv2_set_test_standard(csv2_fuzz 20)
+  csv2_enable_test_options(csv2_fuzz)
+endif()
 
 add_executable(csv2_benchmark_without_mmap ../benchmark/main.cpp)
 target_link_libraries(csv2_benchmark_without_mmap PRIVATE csv2::csv2)
@@ -330,7 +412,8 @@ target_compile_definitions(csv2_benchmark_without_mmap PRIVATE CSV2_HAS_MMAP=0)
 csv2_set_test_standard(csv2_benchmark_without_mmap 11)
 csv2_enable_test_options(csv2_benchmark_without_mmap)
 add_test(NAME csv2.benchmark.no_mmap
-  COMMAND csv2_benchmark_without_mmap inputs/test_01.csv)
+  COMMAND csv2_benchmark_without_mmap --operation map_only
+    --input inputs/test_01.csv --source mmap --iterations 1)
 set_tests_properties(csv2.benchmark.no_mmap PROPERTIES
   WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
   WILL_FAIL TRUE)

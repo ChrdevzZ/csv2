@@ -108,24 +108,27 @@ already present in the output container.
 
 ### Performance Benchmark
 
-The benchmark executable performs one memory-map and full cell traversal per
-process. Use an external harness such as Hyperfine for isolated repetitions;
-the command below performs 3 warmup runs followed by 5 measured runs.
+The benchmark executable measures one operation at a time: mapping, row and
+cell traversal, raw/decoded extraction, C++20 ranges, integer conversion, and
+raw/escaped writing. It supports buffer and mmap sources and emits a checksum,
+GiB/s, rows/s, and cells/s. Hosted CI verifies deterministic checksums only.
 
 ```bash
 cmake -S . -B build-benchmark \
   -DCSV2_BUILD_BENCHMARKS=ON \
   -DCMAKE_BUILD_TYPE=Release
 cmake --build build-benchmark --target csv2_benchmark
-hyperfine --warmup 3 --runs 5 \
-  './build-benchmark/benchmark/csv2_benchmark /absolute/path/input.csv'
+./build-benchmark/benchmark/csv2_benchmark \
+  --operation rows_cells --input /absolute/path/input.csv \
+  --source mmap --iterations 20
 ```
 
-The table below is historical (23 September 2022). Compare new measurements
-only when the input, csv2 commit, compiler, flags, operating system, CPU, and
-storage are recorded consistently. CI currently verifies that the benchmark
-compiles with Linux GCC, Linux Clang with libc++, and Windows MSVC; it does not
-run performance measurements.
+See [`benchmark/README.md`](benchmark/README.md) for deterministic dataset
+generation, alternating A/A and baseline/candidate runs, the median/MAD and
+bootstrap regression rule, and fixed-hardware counter collection. The table
+below is historical (23 September 2022); compare new measurements only when
+the input, commit, compiler, flags, operating system, CPU, and storage are
+recorded consistently.
 
 #### System Details
 
@@ -395,15 +398,19 @@ ctest --test-dir build -C Debug --output-on-failure
 
 The test build runs the same behavioral suite against the modular and
 single-header forms in strict C++11, C++14, C++17, C++20, and C++23 modes. It
-also adds C++26 forward-compatibility variants when CMake and the compiler
+also adds C++26 forward-compatibility compile-only targets when CMake and the compiler
 advertise that mode. CMake 3.12 or newer is required to request C++20, CMake
 3.20 or newer is required to request C++23, and CMake 3.30 or newer is required
-to request C++26. These modes prove that csv2 builds and behaves correctly in
+to request C++26. C++11 through C++23 prove behavior; C++26 only proves that
+the public surface still compiles and does not enable any C++26-only feature.
+These modes prove that csv2 builds and behaves correctly in
 the selected language mode; they do not claim that a compiler or standard
 library completely implements every feature of that standard. Older supported
 toolchains register every mode they understand. The build also checks every
-public header independently in C++11 and C++17 modes and adds no-exceptions and
-platform-failure-path tests where supported.
+public header independently in C++11, C++17, C++20, and C++23 modes, runs
+no-mmap through C++23, runs no-exceptions in C++11/C++20/C++23, compiles
+standard-specific contract translation units, and includes deterministic fuzz
+and benchmark checksum smoke tests.
 
 `-DCSV2_ENABLE_SANITIZERS=ON` enables ASan and UBSan with GCC, Clang, and
 AppleClang. With the Microsoft compiler it enables MSVC AddressSanitizer only.
@@ -423,7 +430,7 @@ ASan; Windows disables it because LeakSanitizer is not supported there.
 | C++17 | `csv2.module.cxx17` | `csv2.single_header.cxx17` |
 | C++20 | `csv2.module.cxx20` | `csv2.single_header.cxx20` |
 | C++23 | `csv2.module.cxx23` | `csv2.single_header.cxx23` |
-| C++26 | `csv2.module.cxx26` | `csv2.single_header.cxx26` |
+| C++26 compile-only | `csv2_standard_contract_module_cxx26` | `csv2_standard_contract_single_cxx26` |
 
 The `CSV2_REQUIRE_MODERN_STANDARD_TESTS` option is an enforcement switch for
 modern CI: configuration fails unless all four exact C++20/C++23 CTest names
@@ -433,9 +440,9 @@ change cannot silently remove those four variants.
 
 `CSV2_REQUIRE_CXX26_TESTS` is a separate opt-in enforcement switch. CI enables
 it only for stable compiler lines whose CMake feature set advertises
-`cxx_std_26`; configuration then fails unless both exact C++26 names in the
-table are registered. Other compiler rows continue to enforce C++20 and C++23
-without making a false C++26 support claim.
+`cxx_std_26`; configuration then fails unless both exact C++26 compile-only
+targets in the table are registered. Other compiler rows continue to enforce
+C++20 and C++23 without making a false C++26 support claim.
 
 CI selects stable compiler lines already supplied by the stable hosted runner
 or its distribution. It deliberately avoids preview runner images, compiler
@@ -448,16 +455,18 @@ errors throughout:
 
 | Platform | Normal coverage | Sanitizer coverage |
 |:---------|:----------------|:-------------------|
-| Linux | GCC 14 and Clang 18 with libc++; full tests and benchmark compilation | Separate GCC 14 and Clang 18 ASan/UBSan jobs with leak detection |
-| Windows | MSVC 19.51 and Clang-CL 22.1; MSVC also compiles the benchmark and verifies installation | MSVC ASan and Clang-CL ASan/UBSan |
-| macOS | AppleClang 21 full tests | — |
+| Linux | GCC 14 and Clang 18 with libc++; full tests, benchmark checksums, installation consumer | Separate GCC 14 and Clang 18 ASan/UBSan jobs with leak detection |
+| Windows | MSVC 19.51 and Clang-CL 22.1; MSVC verifies benchmark checksums and installation consumer | MSVC ASan and Clang-CL ASan/UBSan |
+| macOS | AppleClang 21 full tests, benchmark checksums, installation consumer | — |
 
 The Linux GCC job also builds an independent
 `find_package(csv2 CONFIG REQUIRED)` consumer and verifies single-header
 regeneration. The non-sanitized Linux Clang job checks first-party formatting
 with Clang Format 18. Sanitizer jobs run the labeled runtime suite; Windows
 executes its generated CTest manifest directly to avoid CTest/ASan
-process-management problems.
+process-management problems. A separate manually dispatchable and weekly
+workflow runs the deterministic fuzz smoke, a 5,000-input libFuzzer corpus
+smoke, and all benchmark checksums.
 
 ## Installing and Consuming with CMake
 

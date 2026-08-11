@@ -71,13 +71,12 @@ bool parse_integer_fallback(const char *first, const char *last, Integer &output
     if (digit < 0 || digit >= base)
       break;
     const unsigned_type unsigned_digit = static_cast<unsigned_type>(digit);
-    if (!overflow &&
-        magnitude > static_cast<unsigned_type>((limit - unsigned_digit) /
-                                               static_cast<unsigned_type>(base))) {
+    if (!overflow && magnitude > static_cast<unsigned_type>((limit - unsigned_digit) /
+                                                            static_cast<unsigned_type>(base))) {
       overflow = true;
     } else if (!overflow) {
-      magnitude = static_cast<unsigned_type>(magnitude * static_cast<unsigned_type>(base) +
-                                             unsigned_digit);
+      magnitude =
+          static_cast<unsigned_type>(magnitude * static_cast<unsigned_type>(base) + unsigned_digit);
     }
   }
 
@@ -104,8 +103,8 @@ bool parse_integer_fallback(const char *first, const char *last, Integer &output
 }
 
 template <class Integer>
-bool parse_integer(const char *first, const char *last, Integer &output,
-                   conversion_error &error, int base) noexcept {
+bool parse_integer(const char *first, const char *last, Integer &output, conversion_error &error,
+                   int base) noexcept {
   if (base < 2 || base > 36)
     return conversion_failure(error, conversion_errc::invalid_base, 0);
 

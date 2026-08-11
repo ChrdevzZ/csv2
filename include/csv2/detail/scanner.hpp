@@ -24,21 +24,19 @@ record_bounds find_record_bounds(const char *buffer, std::size_t buffer_size,
 
   const char *const record_start = buffer + start;
   const std::size_t remaining = buffer_size - start;
-  const char *const newline =
-      static_cast<const char *>(std::memchr(record_start, '\n', remaining));
+  const char *const newline = static_cast<const char *>(std::memchr(record_start, '\n', remaining));
   const std::size_t candidate_length =
       newline ? static_cast<std::size_t>(newline - record_start) : remaining;
-  const char *const quote = static_cast<const char *>(
-      std::memchr(record_start, QuoteCharacter::value, candidate_length));
+  const char *const quote =
+      static_cast<const char *>(std::memchr(record_start, QuoteCharacter::value, candidate_length));
 
   if (!quote) {
     if (!newline)
       return {buffer_size, buffer_size};
-    const std::size_t newline_index =
-        start + static_cast<std::size_t>(newline - record_start);
-    const std::size_t content_end =
-        newline_index > start && buffer[newline_index - 1] == '\r' ? newline_index - 1
-                                                                    : newline_index;
+    const std::size_t newline_index = start + static_cast<std::size_t>(newline - record_start);
+    const std::size_t content_end = newline_index > start && buffer[newline_index - 1] == '\r'
+                                        ? newline_index - 1
+                                        : newline_index;
     return {content_end, newline_index + 1};
   }
 
@@ -60,8 +58,7 @@ record_bounds find_record_bounds(const char *buffer, std::size_t buffer_size,
 }
 
 template <class Delimiter, class QuoteCharacter>
-cell_bounds find_cell_bounds(const char *buffer, std::size_t current,
-                             std::size_t end) noexcept {
+cell_bounds find_cell_bounds(const char *buffer, std::size_t current, std::size_t end) noexcept {
   if (!buffer || current >= end)
     return {end, false};
 

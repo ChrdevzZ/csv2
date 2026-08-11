@@ -24,28 +24,25 @@ auto reserve_for_append_impl(Container &output, std::size_t additional, output_p
 template <typename Container>
 void reserve_for_append_impl(Container &, std::size_t, output_priority<0>) {}
 
-template <typename Container>
-void reserve_for_append(Container &output, std::size_t additional) {
+template <typename Container> void reserve_for_append(Container &output, std::size_t additional) {
   reserve_for_append_impl(output, additional, output_priority<2>());
 }
 
 template <typename Container>
-auto append_range_impl(Container &output, const char *first, const char *last,
-                       output_priority<3>)
+auto append_range_impl(Container &output, const char *first, const char *last, output_priority<3>)
     -> decltype(output.append(first, static_cast<std::size_t>(last - first)), void()) {
   output.append(first, static_cast<std::size_t>(last - first));
 }
 
 template <typename Container>
-auto append_range_impl(Container &output, const char *first, const char *last,
-                       output_priority<2>)
+auto append_range_impl(Container &output, const char *first, const char *last, output_priority<2>)
     -> decltype(output.insert(output.end(), first, last), void()) {
   output.insert(output.end(), first, last);
 }
 
 template <typename Container>
-auto append_range_impl(Container &output, const char *first, const char *last,
-                       output_priority<1>) -> decltype(output.push_back(*first), void()) {
+auto append_range_impl(Container &output, const char *first, const char *last, output_priority<1>)
+    -> decltype(output.push_back(*first), void()) {
   while (first != last) {
     output.push_back(*first);
     ++first;

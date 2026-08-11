@@ -216,13 +216,12 @@ bool parse_integer_fallback(const char *first, const char *last, Integer &output
     if (digit < 0 || digit >= base)
       break;
     const unsigned_type unsigned_digit = static_cast<unsigned_type>(digit);
-    if (!overflow &&
-        magnitude > static_cast<unsigned_type>((limit - unsigned_digit) /
-                                               static_cast<unsigned_type>(base))) {
+    if (!overflow && magnitude > static_cast<unsigned_type>((limit - unsigned_digit) /
+                                                            static_cast<unsigned_type>(base))) {
       overflow = true;
     } else if (!overflow) {
-      magnitude = static_cast<unsigned_type>(magnitude * static_cast<unsigned_type>(base) +
-                                             unsigned_digit);
+      magnitude =
+          static_cast<unsigned_type>(magnitude * static_cast<unsigned_type>(base) + unsigned_digit);
     }
   }
 
@@ -249,8 +248,8 @@ bool parse_integer_fallback(const char *first, const char *last, Integer &output
 }
 
 template <class Integer>
-bool parse_integer(const char *first, const char *last, Integer &output,
-                   conversion_error &error, int base) noexcept {
+bool parse_integer(const char *first, const char *last, Integer &output, conversion_error &error,
+                   int base) noexcept {
   if (base < 2 || base > 36)
     return conversion_failure(error, conversion_errc::invalid_base, 0);
 
@@ -301,28 +300,25 @@ auto reserve_for_append_impl(Container &output, std::size_t additional, output_p
 template <typename Container>
 void reserve_for_append_impl(Container &, std::size_t, output_priority<0>) {}
 
-template <typename Container>
-void reserve_for_append(Container &output, std::size_t additional) {
+template <typename Container> void reserve_for_append(Container &output, std::size_t additional) {
   reserve_for_append_impl(output, additional, output_priority<2>());
 }
 
 template <typename Container>
-auto append_range_impl(Container &output, const char *first, const char *last,
-                       output_priority<3>)
+auto append_range_impl(Container &output, const char *first, const char *last, output_priority<3>)
     -> decltype(output.append(first, static_cast<std::size_t>(last - first)), void()) {
   output.append(first, static_cast<std::size_t>(last - first));
 }
 
 template <typename Container>
-auto append_range_impl(Container &output, const char *first, const char *last,
-                       output_priority<2>)
+auto append_range_impl(Container &output, const char *first, const char *last, output_priority<2>)
     -> decltype(output.insert(output.end(), first, last), void()) {
   output.insert(output.end(), first, last);
 }
 
 template <typename Container>
-auto append_range_impl(Container &output, const char *first, const char *last,
-                       output_priority<1>) -> decltype(output.push_back(*first), void()) {
+auto append_range_impl(Container &output, const char *first, const char *last, output_priority<1>)
+    -> decltype(output.push_back(*first), void()) {
   while (first != last) {
     output.push_back(*first);
     ++first;
@@ -400,21 +396,19 @@ record_bounds find_record_bounds(const char *buffer, std::size_t buffer_size,
 
   const char *const record_start = buffer + start;
   const std::size_t remaining = buffer_size - start;
-  const char *const newline =
-      static_cast<const char *>(std::memchr(record_start, '\n', remaining));
+  const char *const newline = static_cast<const char *>(std::memchr(record_start, '\n', remaining));
   const std::size_t candidate_length =
       newline ? static_cast<std::size_t>(newline - record_start) : remaining;
-  const char *const quote = static_cast<const char *>(
-      std::memchr(record_start, QuoteCharacter::value, candidate_length));
+  const char *const quote =
+      static_cast<const char *>(std::memchr(record_start, QuoteCharacter::value, candidate_length));
 
   if (!quote) {
     if (!newline)
       return {buffer_size, buffer_size};
-    const std::size_t newline_index =
-        start + static_cast<std::size_t>(newline - record_start);
-    const std::size_t content_end =
-        newline_index > start && buffer[newline_index - 1] == '\r' ? newline_index - 1
-                                                                    : newline_index;
+    const std::size_t newline_index = start + static_cast<std::size_t>(newline - record_start);
+    const std::size_t content_end = newline_index > start && buffer[newline_index - 1] == '\r'
+                                        ? newline_index - 1
+                                        : newline_index;
     return {content_end, newline_index + 1};
   }
 
@@ -436,8 +430,7 @@ record_bounds find_record_bounds(const char *buffer, std::size_t buffer_size,
 }
 
 template <class Delimiter, class QuoteCharacter>
-cell_bounds find_cell_bounds(const char *buffer, std::size_t current,
-                             std::size_t end) noexcept {
+cell_bounds find_cell_bounds(const char *buffer, std::size_t current, std::size_t end) noexcept {
   if (!buffer || current >= end)
     return {end, false};
 
@@ -494,8 +487,7 @@ inline bool validation_failure(parse_error &error, parse_errc code, std::size_t 
 
 template <class TrimPolicy>
 bool is_trim_character(const char *buffer, std::size_t offset) noexcept {
-  const std::pair<std::size_t, std::size_t> bounds =
-      TrimPolicy::trim(buffer, offset, offset + 1);
+  const std::pair<std::size_t, std::size_t> bounds = TrimPolicy::trim(buffer, offset, offset + 1);
   return bounds.first == bounds.second;
 }
 
@@ -570,8 +562,7 @@ bool validate_csv(const char *buffer, std::size_t size, parse_error &error) noex
     }
 
     if (current == after_quote)
-      return validation_failure(error, parse_errc::characters_after_closing_quote, i, row,
-                                column);
+      return validation_failure(error, parse_errc::characters_after_closing_quote, i, row, column);
     current = unquoted;
     ++i;
   }
@@ -2320,8 +2311,7 @@ template <bool flag> struct first_row_is_header {
 
 namespace csv2 {
 
-template <class quote_character, class trim_policy>
-class basic_cell {
+template <class quote_character, class trim_policy> class basic_cell {
   const char *buffer_{nullptr};
   size_t start_{0};
   size_t end_{0};
@@ -2448,11 +2438,11 @@ public:
 #endif
 };
 
-template <class delimiter, class quote_character, class trim_policy>
-class basic_row {
+template <class delimiter, class quote_character, class trim_policy> class basic_row {
   const char *buffer_{nullptr};
   size_t start_{0};
   size_t end_{0};
+
 public:
   using Cell = basic_cell<quote_character, trim_policy>;
 
@@ -2542,8 +2532,7 @@ public:
   CellIterator end() const { return CellIterator(buffer_, end_, end_); }
 };
 
-template <class delimiter_type, class quote_character_type, class trim_policy_type>
-class RowIndex {
+template <class delimiter_type, class quote_character_type, class trim_policy_type> class RowIndex {
 public:
   using Row = basic_row<delimiter_type, quote_character_type, trim_policy_type>;
 
@@ -2670,8 +2659,7 @@ public:
 namespace std {
 namespace ranges {
 template <class delimiter, class quote_character, class trim_policy>
-inline constexpr bool
-    enable_view<csv2::basic_row<delimiter, quote_character, trim_policy>> = true;
+inline constexpr bool enable_view<csv2::basic_row<delimiter, quote_character, trim_policy>> = true;
 template <class delimiter, class quote_character, class trim_policy>
 inline constexpr bool
     enable_borrowed_range<csv2::basic_row<delimiter, quote_character, trim_policy>> = true;
@@ -3091,8 +3079,7 @@ class Writer {
   void release_noexcept_(std::false_type) noexcept { active_ = false; }
 
   void release_noexcept_() noexcept {
-    release_noexcept_(typename std::is_same<Ownership,
-                                            stream_ownership::close_on_destroy>::type());
+    release_noexcept_(typename std::is_same<Ownership, stream_ownership::close_on_destroy>::type());
   }
 
   template <typename Field>
@@ -3117,8 +3104,7 @@ class Writer {
     return false;
   }
 
-  template <class Policy>
-  void write_escaped_chars_(const char *data, size_t size, Policy policy) {
+  template <class Policy> void write_escaped_chars_(const char *data, size_t size, Policy policy) {
     if (!should_quote_(data, size, policy)) {
       if (size != 0)
         stream_->write(data, static_cast<std::streamsize>(size));

@@ -35,8 +35,7 @@
 
 namespace csv2 {
 
-template <class quote_character, class trim_policy>
-class basic_cell {
+template <class quote_character, class trim_policy> class basic_cell {
   const char *buffer_{nullptr};
   size_t start_{0};
   size_t end_{0};
@@ -163,11 +162,11 @@ public:
 #endif
 };
 
-template <class delimiter, class quote_character, class trim_policy>
-class basic_row {
+template <class delimiter, class quote_character, class trim_policy> class basic_row {
   const char *buffer_{nullptr};
   size_t start_{0};
   size_t end_{0};
+
 public:
   using Cell = basic_cell<quote_character, trim_policy>;
 
@@ -257,8 +256,7 @@ public:
   CellIterator end() const { return CellIterator(buffer_, end_, end_); }
 };
 
-template <class delimiter_type, class quote_character_type, class trim_policy_type>
-class RowIndex {
+template <class delimiter_type, class quote_character_type, class trim_policy_type> class RowIndex {
 public:
   using Row = basic_row<delimiter_type, quote_character_type, trim_policy_type>;
 
@@ -385,8 +383,7 @@ public:
 namespace std {
 namespace ranges {
 template <class delimiter, class quote_character, class trim_policy>
-inline constexpr bool
-    enable_view<csv2::basic_row<delimiter, quote_character, trim_policy>> = true;
+inline constexpr bool enable_view<csv2::basic_row<delimiter, quote_character, trim_policy>> = true;
 template <class delimiter, class quote_character, class trim_policy>
 inline constexpr bool
     enable_borrowed_range<csv2::basic_row<delimiter, quote_character, trim_policy>> = true;
