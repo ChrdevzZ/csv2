@@ -5,6 +5,20 @@ Origin: https://bitbucket.org/erikedlund/amalgamate
 
 Mirror: https://github.com/edlund/amalgamate
 
+## csv2 repository integration
+
+This directory is a vendored third-party utility. Its upstream documentation
+below is retained as supplied; csv2 uses it only to regenerate
+`single_include/csv2/csv2.hpp` from the modular headers selected by the root
+`single_include.json` file:
+
+    python3 utils/amalgamate/amalgamate.py -c single_include.json -s .
+
+Linux CI runs that command and fails if it changes the committed single header.
+The repository exercises the utility with Python 3. `CHANGES.md` records the
+vendored changes relative to the cited upstream revision, and `LICENSE.md`
+remains the utility's upstream license.
+
 `amalgamate.py` aims to make it easy to use SQLite-style C source and header
 amalgamation in projects.
 

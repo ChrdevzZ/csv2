@@ -37,6 +37,7 @@ int main(int argc, char **argv) {
     for (const auto row : csv) {
       rows += 1;
       for (const auto cell : row) {
+        (void)cell;
         cells += 1;
       }
     }

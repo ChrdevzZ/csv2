@@ -40,8 +40,7 @@ template <class delimiter = delimiter<','>, typename Stream = std::ofstream> cla
     active_ = false;
 #if defined(__cpp_exceptions) || defined(__EXCEPTIONS) || defined(_CPPUNWIND)
     try {
-      close_stream_(*stream_,
-                    std::integral_constant<bool, has_close<Stream, void()>::value>());
+      close_stream_(*stream_, std::integral_constant<bool, has_close<Stream, void()>::value>());
     } catch (...) {
     }
 #else

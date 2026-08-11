@@ -261,13 +261,46 @@ paket-files/
 __pycache__/
 *.pyc
 
-# CMake build directory
-build
+# Local CMake build trees. Keep the source directories test/ and benchmark/ tracked.
+/build/
+/build-*/
+/cmake-build-*/
+/out/
+/analysis-cppcheck-build-dir/
 
-# Cppcheck build directory
-analysis-cppcheck-build-dir
+# Accidental in-source CMake/Ninja output
+/CMakeCache.txt
+/CMakeFiles/
+/CTestTestfile.cmake
+/cmake_install.cmake
+/install_manifest.txt
+/build.ninja
+/rules.ninja
+/.ninja_deps
+/.ninja_log
+/_deps/
 
-# Ideas directory
-ideas
+# Generated test and coverage output. Do not ignore the source test/ directory.
+/Testing/
+/test-results/
+/test-output/
+/coverage/
+/coverage-*/
+*.gcda
+*.gcno
+*.profraw
+*-writer-output.csv
 
-desktop.iniimages/
+# Temporary files and directories
+/.temp/
+/.tmp/
+
+# Local, unsynchronized working documents
+/.codex_tmp/
+/doc/
+/docs/
+
+# Local idea scratch space and operating-system metadata
+/ideas/
+desktop.ini
+.DS_Store

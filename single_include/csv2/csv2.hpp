@@ -827,8 +827,7 @@ inline size_t query_file_size(file_handle_type handle, std::error_code &error) {
   const int64_t file_size_value = sbuf.st_size;
 #endif
   if (file_size_value < 0 ||
-      static_cast<std::uintmax_t>(file_size_value) >
-          (std::numeric_limits<size_t>::max)()) {
+      static_cast<std::uintmax_t>(file_size_value) > (std::numeric_limits<size_t>::max)()) {
     error = std::make_error_code(std::errc::value_too_large);
     return 0;
   }
@@ -1693,6 +1692,7 @@ template <bool flag> struct first_row_is_header {
 #include <type_traits>
 #include <utility>
 #if ((defined(_MSVC_LANG) && _MSVC_LANG >= 201703L) || __cplusplus >= 201703L)
+#include <functional>
 #include <string_view>
 #endif
 
@@ -1770,6 +1770,29 @@ class Reader {
 #endif
   }
 
+#if ((defined(_MSVC_LANG) && _MSVC_LANG >= 201703L) || __cplusplus >= 201703L)
+  static bool contains_range_(const char *source, size_t source_size, const char *data,
+                              size_t size) noexcept {
+    if (!source || !data || size > source_size)
+      return false;
+
+    const char *const source_end = source + source_size;
+    const char *const data_end = data + size;
+    const std::less<const char *> less;
+    return !less(data, source) && !less(source_end, data_end);
+  }
+
+  bool owns_range_(const char *data, size_t size) const noexcept {
+    if (owned_buffer_ && contains_range_(owned_buffer_->c_str(), owned_buffer_->size(), data, size))
+      return true;
+#if CSV2_HAS_MMAP
+    if (mmap_.is_mapped() && contains_range_(mmap_.data(), mmap_.size(), data, size))
+      return true;
+#endif
+    return false;
+  }
+#endif
+
   template <typename StringType> bool parse_dispatch_(StringType &&contents, std::true_type) {
     const char *const data = contents.c_str();
     const size_t size = contents.size();
@@ -1826,6 +1849,15 @@ public:
 
   Reader &operator=(Reader &&other) {
     if (this != &other) {
+#if ((defined(_MSVC_LANG) && _MSVC_LANG >= 201703L) || __cplusplus >= 201703L)
+      // The borrowed source may be a view into storage currently owned by this Reader.
+      if (owns_range_(other.buffer_, other.buffer_size_)) {
+        buffer_ = other.buffer_;
+        buffer_size_ = other.buffer_size_;
+        other.clear_buffer_();
+        return *this;
+      }
+#endif
       reset_source_();
 #if CSV2_HAS_MMAP
       mmap_ = std::move(other.mmap_);
@@ -1871,9 +1903,12 @@ public:
   bool parse_view(std::string_view sv) {
     const char *const data = sv.data();
     const size_t size = sv.size();
-    reset_source_();
-    if (size == 0)
+    if (size == 0) {
+      reset_source_();
       return false;
+    }
+    if (!owns_range_(data, size))
+      reset_source_();
     buffer_ = data;
     buffer_size_ = size;
     return true;
@@ -2188,8 +2223,7 @@ template <class delimiter = delimiter<','>, typename Stream = std::ofstream> cla
     active_ = false;
 #if defined(__cpp_exceptions) || defined(__EXCEPTIONS) || defined(_CPPUNWIND)
     try {
-      close_stream_(*stream_,
-                    std::integral_constant<bool, has_close<Stream, void()>::value>());
+      close_stream_(*stream_, std::integral_constant<bool, has_close<Stream, void()>::value>());
     } catch (...) {
     }
 #else

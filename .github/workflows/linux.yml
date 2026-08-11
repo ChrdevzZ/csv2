@@ -1,0 +1,124 @@
+name: Linux
+
+on:
+  push:
+    branches:
+      - main
+      - master
+  pull_request:
+    branches:
+      - main
+      - master
+  merge_group:
+    types:
+      - checks_requested
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  gcc:
+    name: Linux / GCC 13
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Configure
+        run: >-
+          cmake -S . -B build -G Ninja
+          -DCMAKE_BUILD_TYPE=Release
+          -DCMAKE_CXX_COMPILER=g++-13
+          -DCMAKE_COMPILE_WARNING_AS_ERROR=ON
+          -DCSV2_BUILD_TESTS=ON
+          -DCSV2_BUILD_BENCHMARKS=ON
+          -DCSV2_REQUIRE_MODERN_STANDARD_TESTS=ON
+
+      - name: Build
+        run: cmake --build build --parallel
+
+      - name: Test
+        run: ctest --test-dir build --output-on-failure
+
+      - name: Install package
+        run: cmake --install build --prefix build/install
+
+      - name: Verify installed package consumer
+        run: |
+          mkdir -p build/consumer
+          cat > build/consumer/CMakeLists.txt <<'EOF'
+          cmake_minimum_required(VERSION 3.10)
+          project(csv2_consumer LANGUAGES CXX)
+          find_package(csv2 CONFIG REQUIRED)
+          add_executable(csv2_consumer main.cpp)
+          target_link_libraries(csv2_consumer PRIVATE csv2::csv2)
+          EOF
+          cat > build/consumer/main.cpp <<'EOF'
+          #include <csv2/reader.hpp>
+          #include <string>
+
+          int main() {
+            csv2::Reader<> reader;
+            return reader.parse(std::string("a,b")) ? 0 : 1;
+          }
+          EOF
+          cmake -S build/consumer -B build/consumer-build -G Ninja \
+            -DCMAKE_PREFIX_PATH="$PWD/build/install"
+          cmake --build build/consumer-build --parallel
+          ./build/consumer-build/csv2_consumer
+
+      - name: Verify single-header regeneration
+        run: |
+          python3 utils/amalgamate/amalgamate.py -c single_include.json -s .
+          git diff --exit-code -- single_include/csv2/csv2.hpp
+
+  clang:
+    name: Linux / Clang 18 + libc++
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install libc++ and clang-format
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends libc++-18-dev libc++abi-18-dev clang-format-18
+
+      - name: Configure
+        run: >-
+          cmake -S . -B build -G Ninja
+          -DCMAKE_BUILD_TYPE=Debug
+          -DCMAKE_CXX_COMPILER=clang++-18
+          -DCMAKE_CXX_FLAGS=-stdlib=libc++
+          -DCMAKE_COMPILE_WARNING_AS_ERROR=ON
+          -DCSV2_BUILD_TESTS=ON
+          -DCSV2_ENABLE_SANITIZERS=ON
+
+      - name: Build
+        run: cmake --build build --parallel
+
+      - name: Test with ASan and UBSan
+        env:
+          ASAN_OPTIONS: detect_leaks=1:halt_on_error=1
+          UBSAN_OPTIONS: halt_on_error=1:print_stacktrace=1
+        run: ctest --test-dir build --output-on-failure
+
+      - name: Check first-party C++ formatting
+        run: >-
+          clang-format-18 --dry-run --Werror
+          include/csv2/parameters.hpp
+          include/csv2/reader.hpp
+          include/csv2/writer.hpp
+          benchmark/main.cpp
+          test/main.cpp

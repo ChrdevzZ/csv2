@@ -2,6 +2,21 @@
   <img height="75" src="img/logo.png" alt="csv2"/>
 </p>
 
+<p align="center">
+  <a href="https://github.com/ChrdevzZ/csv2/actions/workflows/linux.yml"><img src="https://github.com/ChrdevzZ/csv2/actions/workflows/linux.yml/badge.svg" alt="Linux"></a>
+  <a href="https://github.com/ChrdevzZ/csv2/actions/workflows/windows.yml"><img src="https://github.com/ChrdevzZ/csv2/actions/workflows/windows.yml/badge.svg" alt="Windows"></a>
+  <a href="https://github.com/ChrdevzZ/csv2/actions/workflows/macos.yml"><img src="https://github.com/ChrdevzZ/csv2/actions/workflows/macos.yml/badge.svg" alt="macOS"></a>
+  <img src="https://img.shields.io/badge/C%2B%2B-11-blue.svg" alt="C++11">
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="License: MIT"></a>
+</p>
+
+Fast, header-only C++11 CSV reader and writer with zero-copy iteration and
+single-header distribution.
+
+The modular headers under `include/csv2/` are the maintained source of truth.
+`single_include/csv2/csv2.hpp` is generated from them and is verified for exact
+synchronization in Linux CI.
+
 ## Table of Contents
 
 *    [CSV Reader](#csv-reader)
@@ -10,6 +25,7 @@
 *    [CSV Writer](#csv-writer)
      *    [Writer API](#writer-api)
 *    [Compiling Tests](#compiling-tests)
+*    [Installing and Consuming with CMake](#installing-and-consuming-with-cmake)
 *    [Generating Single Header](#generating-single-header)
 *    [Contributing](#contributing)
 *    [License](#license)
@@ -46,7 +62,9 @@ keep that string alive and must not perform an operation that invalidates its
 the contents to storage owned by the reader, so parsing a temporary is safe.
 When C++17 is available, `parse_view()` remains a borrowed API and the
 `std::string_view` storage must outlive reader access. Calling `mmap()`,
-`parse()`, or `parse_view()` replaces the previous input source.
+`parse()`, or `parse_view()` replaces the previous input source. Passing a
+view of the same reader's owned or mapped source back to `parse_view()` keeps
+that backing storage alive and selects the view without copying.
 
 `Reader::mmap()` returns `false` for ordinary open or mapping failures and
 clears the previous source; it does not translate those failures into
@@ -74,19 +92,19 @@ process. Use an external harness such as Hyperfine for isolated repetitions;
 the command below performs 3 warmup runs followed by 5 measured runs.
 
 ```bash
-mkdir build-benchmark
-cd build-benchmark
-cmake .. \
+cmake -S . -B build-benchmark \
   -DCSV2_BUILD_BENCHMARKS=ON \
   -DCMAKE_BUILD_TYPE=Release
-cmake --build . --target csv2_benchmark
+cmake --build build-benchmark --target csv2_benchmark
 hyperfine --warmup 3 --runs 5 \
-  './benchmark/csv2_benchmark /absolute/path/input.csv'
+  './build-benchmark/benchmark/csv2_benchmark /absolute/path/input.csv'
 ```
 
 The table below is historical (23 September 2022). Compare new measurements
 only when the input, csv2 commit, compiler, flags, operating system, CPU, and
-storage are recorded consistently.
+storage are recorded consistently. CI currently verifies that the benchmark
+compiles in the Linux GCC and Windows MSVC jobs; it does not run performance
+measurements.
 
 #### System Details
 
@@ -125,8 +143,14 @@ template <class delimiter = delimiter<','>,
           class trim_policy = trim_policy::trim_whitespace>
 class Reader {
 public:
+  Reader() = default;
+  Reader(const Reader&) = delete;
+  Reader& operator=(const Reader&) = delete;
+  Reader(Reader&&);
+  Reader& operator=(Reader&&);
+
   
-  // Use this if you'd like to mmap and read from file
+  // Present when CSV2_HAS_MMAP is enabled
   template <typename StringType>
   bool mmap(StringType&& filename);
   template <typename StringType>
@@ -136,7 +160,8 @@ public:
   template <typename StringType>
   bool parse(StringType&& contents);
 
-  // C++17: borrowed view; its storage must outlive Reader access
+  // C++17: externally owned storage remains borrowed. A view into this
+  // Reader's current owned or mapped source retains that backing source.
   bool parse_view(std::string_view contents);
 
   // Shape
@@ -179,6 +204,9 @@ and here's the `Cell` class:
 // Cell class
 class Cell {
 public:
+  // C++17: trimmed, non-owning view into the Reader's active source
+  std::string_view read_view() const;
+
   // Get raw contents of the cell
   void read_raw_value(Container& value) const;
   
@@ -254,23 +282,95 @@ public:
 ## Compiling Tests
 
 ```bash
-mkdir build
-cd build
-cmake .. -DCSV2_BUILD_TESTS=ON
-cmake --build .
-ctest --output-on-failure
+cmake -S . -B build -DCSV2_BUILD_TESTS=ON
+cmake --build build --config Debug
+ctest --test-dir build -C Debug --output-on-failure
 ```
 
-The test build compiles the modular and single-header forms in strict C++11
-and C++17 modes, checks every public header independently, and adds
-no-exceptions and platform-failure-path tests where supported. With GCC,
-Clang, or AppleClang, add `-DCSV2_ENABLE_SANITIZERS=ON` to enable ASan and
-UBSan.
+The test build runs the same behavioral suite against the modular and
+single-header forms in strict C++11, C++14, C++17, C++20, and C++23 modes.
+CMake 3.12 or newer is required to request C++20, and CMake 3.20 or newer is
+required to request C++23. Those modes are registered only when the compiler
+advertises support through CMake; older supported toolchains register every
+mode they understand. The build also checks every public header independently
+in C++11 and C++17 modes and adds no-exceptions and platform-failure-path tests
+where supported.
+
+`-DCSV2_ENABLE_SANITIZERS=ON` enables ASan and UBSan with GCC, Clang, and
+AppleClang. With the Microsoft compiler it enables MSVC AddressSanitizer only.
+The option deliberately rejects Clang-CL because the repository does not
+currently define a supported sanitizer configuration for that frontend.
+
+| Standard | Modular runtime test | Single-header runtime test |
+|:---------|:---------------------|:---------------------------|
+| C++11 | `csv2.module.cxx11` | `csv2.single_header.cxx11` |
+| C++14 | `csv2.module.cxx14` | `csv2.single_header.cxx14` |
+| C++17 | `csv2.module.cxx17` | `csv2.single_header.cxx17` |
+| C++20 | `csv2.module.cxx20` | `csv2.single_header.cxx20` |
+| C++23 | `csv2.module.cxx23` | `csv2.single_header.cxx23` |
+
+The `CSV2_REQUIRE_MODERN_STANDARD_TESTS` option is an enforcement switch for
+modern CI: configuration fails unless all four exact C++20/C++23 CTest names
+in the table are registered. Local compatibility remains conditional, while
+the Linux GCC 13 job enables this switch so that CI cannot silently lose those
+four variants.
+
+CI is split into Linux, Windows, and macOS workflows, with warnings treated as
+errors throughout:
+
+- Linux GCC 13 builds the benchmark, runs the full test suite, requires the
+  C++20/C++23 variants, installs the package, builds and runs an independent
+  `find_package(csv2 CONFIG REQUIRED)` consumer, and checks single-header
+  regeneration.
+- Linux Clang 18 with libc++ runs the tests under ASan and UBSan and checks
+  first-party C++ formatting.
+- Windows runs MSVC Debug (including benchmark compilation and installation),
+  a separate MSVC Release AddressSanitizer configuration, and Clang-CL Release.
+  The sanitizer job directly runs every test executable except the deliberately
+  expected-to-fail no-mmap benchmark probe.
+- macOS builds and tests with AppleClang.
+
+The workflows run for pushes and pull requests targeting `main` or `master`,
+merge queues, and manual dispatch. Repository-side workflow files cannot by
+themselves configure GitHub branch-protection or ruleset policy.
+
+## Installing and Consuming with CMake
+
+csv2 installs an exported CMake package, its modular headers, pkg-config
+metadata, and licenses. A minimal installation is:
+
+```bash
+cmake -S . -B build-install -DCMAKE_BUILD_TYPE=Release
+cmake --build build-install
+cmake --install build-install --prefix /absolute/path/to/csv2-prefix
+```
+
+An independent consumer can then use the namespaced interface target:
+
+```cmake
+cmake_minimum_required(VERSION 3.10)
+project(csv2_consumer LANGUAGES CXX)
+
+find_package(csv2 CONFIG REQUIRED)
+add_executable(csv2_consumer main.cpp)
+target_link_libraries(csv2_consumer PRIVATE csv2::csv2)
+```
+
+Configure that consumer with
+`-DCMAKE_PREFIX_PATH=/absolute/path/to/csv2-prefix`. Linux GCC CI performs this
+configure/build/run check against the freshly installed package.
 
 ## Generating Single Header
 
 ```bash
 python3 utils/amalgamate/amalgamate.py -c single_include.json -s .
+```
+
+Commit modular-header and generated single-header changes together. To verify
+that generation is reproducible, run the command above and then:
+
+```bash
+git diff --exit-code -- single_include/csv2/csv2.hpp
 ```
 
 ## Contributing
