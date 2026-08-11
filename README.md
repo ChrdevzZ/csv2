@@ -298,8 +298,14 @@ where supported.
 
 `-DCSV2_ENABLE_SANITIZERS=ON` enables ASan and UBSan with GCC, Clang, and
 AppleClang. With the Microsoft compiler it enables MSVC AddressSanitizer only.
-The option deliberately rejects Clang-CL because the repository does not
-currently define a supported sanitizer configuration for that frontend.
+With x64 Clang-CL it enables ASan and UBSan, discovers and validates the
+compiler-rt libraries installed beside the selected compiler, and links the
+required dynamic ASan and standalone UBSan runtimes. Clang-CL sanitizer builds
+must use a non-Debug CRT configuration; CI uses Release because Clang-CL ASan
+does not support the Debug CRT. The Clang-CL configuration disables only the
+UBSan `object-size` check because it diagnoses the MSVC standard library's
+`forward_list` pseudo-node implementation. Linux enables leak detection through
+ASan; Windows disables it because LeakSanitizer is not supported there.
 
 | Standard | Modular runtime test | Single-header runtime test |
 |:---------|:---------------------|:---------------------------|
@@ -312,8 +318,8 @@ currently define a supported sanitizer configuration for that frontend.
 The `CSV2_REQUIRE_MODERN_STANDARD_TESTS` option is an enforcement switch for
 modern CI: configuration fails unless all four exact C++20/C++23 CTest names
 in the table are registered. Local compatibility remains conditional, while
-the Linux GCC 13 job enables this switch so that CI cannot silently lose those
-four variants.
+all Linux and Windows CI jobs enable this switch so that a toolchain change
+cannot silently remove those four variants.
 
 CI is split into Linux, Windows, and macOS workflows, with warnings treated as
 errors throughout:
@@ -322,12 +328,19 @@ errors throughout:
   C++20/C++23 variants, installs the package, builds and runs an independent
   `find_package(csv2 CONFIG REQUIRED)` consumer, and checks single-header
   regeneration.
-- Linux Clang 18 with libc++ runs the tests under ASan and UBSan and checks
-  first-party C++ formatting.
+- A separate Linux GCC 13 Debug job runs the labeled runtime suite under ASan,
+  UBSan, and leak detection.
+- Linux Clang 18 with libc++ runs the same labeled runtime suite under ASan,
+  UBSan, and leak detection, and checks first-party C++ formatting with Clang
+  Format 18.
 - Windows runs MSVC Debug (including benchmark compilation and installation),
-  a separate MSVC Release AddressSanitizer configuration, and Clang-CL Release.
-  The sanitizer job directly runs every test executable except the deliberately
-  expected-to-fail no-mmap benchmark probe.
+  MSVC Release AddressSanitizer, Clang-CL Release, and Clang-CL Release with
+  ASan plus UBSan. The Windows sanitizer jobs read the `sanitizer-runtime`
+  CTest manifest and directly execute exactly 16 registered tests, avoiding
+  Windows CTest/ASan process-management problems and excluding the deliberately
+  expected-to-fail no-mmap benchmark probe. Linux sanitizer jobs run the same
+  label through CTest and execute 18 tests, including two Linux-only WinAPI
+  injection variants.
 - macOS builds and tests with AppleClang.
 
 The workflows run for pushes and pull requests targeting `main` or `master`,

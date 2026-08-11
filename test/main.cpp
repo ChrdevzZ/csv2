@@ -1285,9 +1285,7 @@ TEST_CASE("Report explicit Writer close errors and suppress destructor close err
   REQUIRE(explicit_stream.close_count == 1);
 
   ThrowingCloseStream destructor_stream;
-  {
-    ThrowingWriter writer(destructor_stream);
-  }
+  { ThrowingWriter writer(destructor_stream); }
   REQUIRE(destructor_stream.close_count == 1);
 }
 #endif

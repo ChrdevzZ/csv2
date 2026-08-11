@@ -22,8 +22,14 @@ current toolchain, configure with
 `-DCSV2_REQUIRE_MODERN_STANDARD_TESTS=ON` as well.
 
 Sanitizer behavior is compiler-specific. `CSV2_ENABLE_SANITIZERS=ON` selects
-ASan and UBSan for GCC/Clang/AppleClang and AddressSanitizer for MSVC; it is not
-supported with Clang-CL. See the root README for the exact CI matrix.
+ASan and UBSan for GCC, GNU-style Clang, and AppleClang, AddressSanitizer for
+MSVC, and ASan plus UBSan for x64 Clang-CL. Clang-CL sanitizer builds require a
+non-Debug CRT configuration and the compiler-rt libraries distributed with the
+selected compiler; CI uses Release. Its UBSan configuration excludes only the
+`object-size` check because that check diagnoses the MSVC standard library's
+`forward_list` pseudo-node implementation. Linux enables leak detection through
+ASan, while Windows disables it because LeakSanitizer is not supported there.
+See the root README for the exact CI matrix.
 
 ## Source and generated header
 

@@ -35,16 +35,25 @@ jobs:
             toolset: ""
             benchmarks: "ON"
             sanitizers: "OFF"
+            sanitizer_runtime: none
           - compiler: MSVC ASan
             configuration: Release
             toolset: ""
             benchmarks: "OFF"
             sanitizers: "ON"
+            sanitizer_runtime: msvc
           - compiler: Clang-CL
             configuration: Release
             toolset: -T ClangCL
             benchmarks: "OFF"
             sanitizers: "OFF"
+            sanitizer_runtime: none
+          - compiler: Clang-CL ASan + UBSan
+            configuration: Release
+            toolset: -T ClangCL
+            benchmarks: "OFF"
+            sanitizers: "ON"
+            sanitizer_runtime: clang
 
     steps:
       - name: Check out repository
@@ -61,6 +70,7 @@ jobs:
           -DCSV2_BUILD_TESTS=ON
           -DCSV2_BUILD_BENCHMARKS=${{ matrix.benchmarks }}
           -DCSV2_ENABLE_SANITIZERS=${{ matrix.sanitizers }}
+          -DCSV2_REQUIRE_MODERN_STANDARD_TESTS=ON
 
       - name: Build
         run: cmake --build build --config ${{ matrix.configuration }} --parallel
@@ -72,7 +82,7 @@ jobs:
           -C ${{ matrix.configuration }}
           --output-on-failure
 
-      - name: Test with AddressSanitizer
+      - name: Test with sanitizers
         if: matrix.sanitizers == 'ON'
         env:
           ASAN_OPTIONS: halt_on_error=1:detect_leaks=0
@@ -85,27 +95,71 @@ jobs:
           }
 
           $vsDevCmd = Join-Path $installationPath "Common7\Tools\VsDevCmd.bat"
-          $testDirectory = (Resolve-Path "build/test").Path
-          $testExecutables = Get-ChildItem `
-            (Join-Path $testDirectory "${{ matrix.configuration }}") `
-            -Filter "csv2*.exe" |
-            Where-Object { $_.Name -ne "csv2_benchmark_without_mmap.exe" } |
-            Sort-Object Name
-          if ($testExecutables.Count -eq 0) {
-            throw "No AddressSanitizer test executables were found"
+          $testManifest = ctest --test-dir build `
+            -C ${{ matrix.configuration }} `
+            -L sanitizer-runtime `
+            --show-only=json-v1 | ConvertFrom-Json
+          $tests = @($testManifest.tests)
+          if ($tests.Count -ne 16) {
+            throw "Expected 16 sanitizer runtime tests, found $($tests.Count)"
           }
 
           $commands = @(
             "call `"$vsDevCmd`" -arch=x64 -host_arch=x64 >nul"
-            "cd /d `"$testDirectory`""
           )
-          $commands += $testExecutables | ForEach-Object {
-            "`"$($_.FullName)`" --no-version --no-intro --no-colors"
+
+          if ("${{ matrix.sanitizer_runtime }}" -eq "clang") {
+            $clangCl = Join-Path $installationPath `
+              "VC\Tools\Llvm\x64\bin\clang-cl.exe"
+            if (-not (Test-Path -LiteralPath $clangCl)) {
+              throw "Clang-CL was not found: $clangCl"
+            }
+
+            $resourceDirectory = & $clangCl --print-resource-dir
+            if ($LASTEXITCODE -ne 0 -or -not $resourceDirectory) {
+              throw "Clang-CL resource directory could not be determined"
+            }
+            $runtimeDirectory = Join-Path $resourceDirectory "lib\windows"
+            $asanDll = Join-Path $runtimeDirectory `
+              "clang_rt.asan_dynamic-x86_64.dll"
+            if (-not (Test-Path -LiteralPath $asanDll)) {
+              throw "Clang-CL AddressSanitizer runtime was not found: $asanDll"
+            }
+
+            $commands += "set `"PATH=$runtimeDirectory;%PATH%`""
+            $commands += `
+              "set UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1"
+          }
+
+          foreach ($test in $tests) {
+            $command = @($test.command)
+            if ($command.Count -eq 0 -or `
+                -not (Test-Path -LiteralPath $command[0])) {
+              throw "Sanitizer test has no executable: $($test.name)"
+            }
+
+            $workingDirectory = ($test.properties |
+              Where-Object name -eq "WORKING_DIRECTORY").value
+            if (-not $workingDirectory -or `
+                -not (Test-Path -LiteralPath $workingDirectory)) {
+              throw "Sanitizer test has no working directory: $($test.name)"
+            }
+
+            $quotedCommand = ($command | ForEach-Object {
+              if ($_ -match '"') {
+                throw "Sanitizer test argument contains an unsupported quote: $_"
+              }
+              "`"$_`""
+            }) -join " "
+            $commands += "echo [sanitizer] $($test.name)"
+            $commands += "cd /d `"$workingDirectory`""
+            $commands += `
+              "$quotedCommand --no-version --no-intro --no-colors"
           }
 
           cmd.exe /d /s /c ($commands -join " && ")
           if ($LASTEXITCODE -ne 0) {
-            throw "AddressSanitizer test execution failed with exit code $LASTEXITCODE"
+            throw "Sanitizer test execution failed with exit code $LASTEXITCODE"
           }
 
       - name: Install package

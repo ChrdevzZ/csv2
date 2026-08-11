@@ -310,8 +310,9 @@ public:
     friend class Reader;
 
     template <typename Container>
-    static auto reserve_for_append_(Container &result, size_t additional, int)
-        -> decltype(result.reserve(result.size() + additional), void()) {
+    static auto reserve_for_append_(Container &result, size_t additional,
+                                    int) -> decltype(result.reserve(result.size() + additional),
+                                                     void()) {
       result.reserve(result.size() + additional);
     }
 
