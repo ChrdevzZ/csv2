@@ -30,7 +30,9 @@ def parse_output(output: str) -> dict[str, str]:
     return dict(part.split("=", 1) for part in output.strip().split())
 
 
-def invoke(executable: Path, operation: str, dataset: Path, source: str) -> dict[str, str]:
+def invoke(
+    executable: Path, operation: str, dataset: Path, source: str, iterations: int
+) -> dict[str, str]:
     completed = subprocess.run(
         [
             str(executable),
@@ -41,7 +43,7 @@ def invoke(executable: Path, operation: str, dataset: Path, source: str) -> dict
             "--source",
             source,
             "--iterations",
-            "1",
+            str(iterations),
         ],
         check=True,
         capture_output=True,
@@ -85,6 +87,7 @@ def main() -> None:
     parser.add_argument("--candidate", type=Path, required=True)
     parser.add_argument("--datasets", type=Path, required=True)
     parser.add_argument("--runs", type=int, default=20)
+    parser.add_argument("--iterations", type=int, default=1)
     parser.add_argument("--operations", default="all")
     parser.add_argument("--sources", default="buffer,mmap")
     parser.add_argument("--files", default="all")
@@ -92,6 +95,8 @@ def main() -> None:
     args = parser.parse_args()
     if args.runs < 20:
         parser.error("--runs must be at least 20 for regression decisions")
+    if args.iterations < 1:
+        parser.error("--iterations must be positive")
 
     dataset_paths = sorted(args.datasets.glob("*.csv"))
     if not dataset_paths:
@@ -100,7 +105,11 @@ def main() -> None:
     by_name = {path.name: path for path in dataset_paths}
     operations = selected(args.operations, OPERATIONS)
     sources = selected(args.sources, ("buffer", "mmap"))
-    report: dict[str, object] = {"runs": args.runs, "cases": []}
+    report: dict[str, object] = {
+        "runs": args.runs,
+        "iterations_per_run": args.iterations,
+        "cases": [],
+    }
 
     for dataset_name in datasets:
         for operation in operations:
@@ -114,7 +123,13 @@ def main() -> None:
                     if run % 2:
                         order = tuple(reversed(order))
                     for executable, values in order:
-                        result = invoke(executable, operation, by_name[dataset_name], source)
+                        result = invoke(
+                            executable,
+                            operation,
+                            by_name[dataset_name],
+                            source,
+                            args.iterations,
+                        )
                         current_checksum = result["checksum"]
                         if checksum is None:
                             checksum = current_checksum

@@ -36,6 +36,14 @@
 #define CSV2_CONSTEXPR17
 #endif
 
+#if defined(_MSC_VER)
+#define CSV2_FORCE_INLINE __forceinline
+#elif (defined(__GNUC__) || defined(__clang__)) && defined(__OPTIMIZE__)
+#define CSV2_FORCE_INLINE inline __attribute__((always_inline))
+#else
+#define CSV2_FORCE_INLINE inline
+#endif
+
 #if defined(__cpp_lib_string_view) && __cpp_lib_string_view >= 201606L
 #define CSV2_HAS_STRING_VIEW 1
 #else
