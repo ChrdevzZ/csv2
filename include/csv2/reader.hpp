@@ -539,14 +539,18 @@ public:
   template <typename StringType>
   typename std::enable_if<mio::detail::is_path<StringType>::value, bool>::type
   mmap(StringType &&filename, std::error_code &error) {
+    // Map through a temporary so a C-string path may safely point into this
+    // Reader's current owned or mapped source until the OS consumes it.
+    mio::mmap_source new_mapping;
+    new_mapping.map(std::forward<StringType>(filename), error);
     reset_source_();
-    mmap_.map(std::forward<StringType>(filename), error);
-    if (error || !mmap_.is_open() || !mmap_.is_mapped() || mmap_.size() == 0) {
+    if (error || !new_mapping.is_open() || !new_mapping.is_mapped() || new_mapping.size() == 0) {
       if (!error)
         error = std::make_error_code(std::errc::invalid_argument);
-      mmap_.unmap();
+      new_mapping.unmap();
       return false;
     }
+    mmap_ = std::move(new_mapping);
     buffer_ = mmap_.data();
     buffer_size_ = mmap_.size();
     return true;

@@ -1433,6 +1433,33 @@ TEST_CASE("Reject mapped paths containing an embedded NUL" * test_suite("Reader"
   REQUIRE(error == std::make_error_code(std::errc::invalid_argument));
 }
 
+TEST_CASE("Map a path stored in the Reader's current owned source" * test_suite("Reader")) {
+  const std::string path = std::string(writer_output_path()) + ".owned-mmap-path-source";
+  ScopedFileRemoval cleanup(path);
+  write_binary_file(path, "mapped,data");
+
+  ReaderWithoutHeader reader;
+  REQUIRE(reader.parse_owned(path));
+  const char *const borrowed_path = reader.header().raw_data();
+  REQUIRE(reader.mmap(borrowed_path));
+  REQUIRE(read_rows(reader) == std::vector<std::vector<std::string>>({{"mapped", "data"}}));
+}
+
+TEST_CASE("Map a path stored in the Reader's current mapped source" * test_suite("Reader")) {
+  const std::string target_path = std::string(writer_output_path()) + ".mapped-path-target";
+  const std::string source_path = std::string(writer_output_path()) + ".mapped-path-source";
+  ScopedFileRemoval target_cleanup(target_path);
+  ScopedFileRemoval source_cleanup(source_path);
+  write_binary_file(target_path, "target,data");
+  write_binary_file(source_path, target_path + std::string(1, '\0'));
+
+  ReaderWithoutHeader reader;
+  REQUIRE(reader.mmap(source_path));
+  const char *const borrowed_path = reader.header().raw_data();
+  REQUIRE(reader.mmap(borrowed_path));
+  REQUIRE(read_rows(reader) == std::vector<std::vector<std::string>>({{"target", "data"}}));
+}
+
 #if CSV2_HAS_FILESYSTEM
 TEST_CASE("Map a filesystem path" * test_suite("Reader")) {
   ReaderWithoutHeader reader;
