@@ -1,6 +1,91 @@
 #pragma once
 
 #include <cstring>
+// #include <csv2/detail/config.hpp>
+
+// Normalize the language mode. MSVC reports its selected standard through
+// _MSVC_LANG unless /Zc:__cplusplus is enabled.
+#if defined(_MSVC_LANG)
+#define CSV2_CPLUSPLUS _MSVC_LANG
+#else
+#define CSV2_CPLUSPLUS __cplusplus
+#endif
+
+#if defined(__has_include)
+#if __has_include(<version>)
+#include <version>
+#endif
+#endif
+
+#if defined(__has_cpp_attribute)
+#if CSV2_CPLUSPLUS >= 201703L && __has_cpp_attribute(nodiscard)
+#define CSV2_NODISCARD [[nodiscard]]
+#else
+#define CSV2_NODISCARD
+#endif
+#else
+#define CSV2_NODISCARD
+#endif
+
+#if CSV2_CPLUSPLUS >= 201402L
+#define CSV2_CONSTEXPR14 constexpr
+#else
+#define CSV2_CONSTEXPR14
+#endif
+
+#if CSV2_CPLUSPLUS >= 201703L
+#define CSV2_CONSTEXPR17 constexpr
+#else
+#define CSV2_CONSTEXPR17
+#endif
+
+#if defined(__cpp_lib_string_view) && __cpp_lib_string_view >= 201606L
+#define CSV2_HAS_STRING_VIEW 1
+#else
+#define CSV2_HAS_STRING_VIEW 0
+#endif
+
+#if defined(__cpp_lib_filesystem) && __cpp_lib_filesystem >= 201703L
+#define CSV2_HAS_FILESYSTEM 1
+#else
+#define CSV2_HAS_FILESYSTEM 0
+#endif
+
+#if defined(__cpp_lib_to_chars) && __cpp_lib_to_chars >= 201611L
+#define CSV2_HAS_CHARCONV 1
+#else
+#define CSV2_HAS_CHARCONV 0
+#endif
+
+#if defined(__cpp_lib_memory_resource) && __cpp_lib_memory_resource >= 201603L
+#define CSV2_HAS_MEMORY_RESOURCE 1
+#else
+#define CSV2_HAS_MEMORY_RESOURCE 0
+#endif
+
+#if defined(__cpp_lib_span) && __cpp_lib_span >= 202002L
+#define CSV2_HAS_SPAN 1
+#else
+#define CSV2_HAS_SPAN 0
+#endif
+
+#if defined(__cpp_lib_ranges) && __cpp_lib_ranges >= 201911L
+#define CSV2_HAS_RANGES 1
+#else
+#define CSV2_HAS_RANGES 0
+#endif
+
+#if defined(__cpp_lib_expected) && __cpp_lib_expected >= 202202L
+#define CSV2_HAS_EXPECTED 1
+#else
+#define CSV2_HAS_EXPECTED 0
+#endif
+
+#if defined(__cpp_lib_ranges_to_container) && __cpp_lib_ranges_to_container >= 202202L
+#define CSV2_HAS_RANGES_TO_CONTAINER 1
+#else
+#define CSV2_HAS_RANGES_TO_CONTAINER 0
+#endif
 
 #ifndef CSV2_HAS_MMAP
 #if defined(__has_include)
@@ -21,6 +106,7 @@
 #define CSV2_HAS_MMAP 0
 #endif
 #endif
+
 
 #if CSV2_HAS_MMAP
 // #include <csv2/mio.hpp>
@@ -713,6 +799,7 @@ bool empty(String path) {
 #endif // MIO_STRING_UTIL_HEADER
 
 #include <algorithm>
+// #include <csv2/detail/config.hpp>
 
 #ifndef _WIN32
 #include <fcntl.h>
@@ -1633,6 +1720,8 @@ using shared_ummap_sink = basic_shared_mmap_sink<unsigned char>;
 #endif
 // #include <csv2/parameters.hpp>
 
+// #include <csv2/detail/config.hpp>
+
 #include <cstddef>
 #include <utility>
 
@@ -1691,7 +1780,7 @@ template <bool flag> struct first_row_is_header {
 #include <system_error>
 #include <type_traits>
 #include <utility>
-#if ((defined(_MSVC_LANG) && _MSVC_LANG >= 201703L) || __cplusplus >= 201703L)
+#if CSV2_HAS_STRING_VIEW
 #include <functional>
 #include <string_view>
 #endif
@@ -1770,7 +1859,7 @@ class Reader {
 #endif
   }
 
-#if ((defined(_MSVC_LANG) && _MSVC_LANG >= 201703L) || __cplusplus >= 201703L)
+#if CSV2_HAS_STRING_VIEW
   static bool contains_range_(const char *source, size_t source_size, const char *data,
                               size_t size) noexcept {
     if (!source || !data || size > source_size)
@@ -1849,7 +1938,7 @@ public:
 
   Reader &operator=(Reader &&other) {
     if (this != &other) {
-#if ((defined(_MSVC_LANG) && _MSVC_LANG >= 201703L) || __cplusplus >= 201703L)
+#if CSV2_HAS_STRING_VIEW
       // The borrowed source may be a view into storage currently owned by this Reader.
       if (owns_range_(other.buffer_, other.buffer_size_)) {
         buffer_ = other.buffer_;
@@ -1898,7 +1987,7 @@ public:
                            typename std::is_lvalue_reference<StringType &&>::type());
   }
 
-#if ((defined(_MSVC_LANG) && _MSVC_LANG >= 201703L) || __cplusplus >= 201703L)
+#if CSV2_HAS_STRING_VIEW
   // Borrow a string_view. The view's storage must outlive Reader access.
   bool parse_view(std::string_view sv) {
     const char *const data = sv.data();
@@ -1926,7 +2015,7 @@ public:
     friend class Row;
 
   public:
-#if ((defined(_MSVC_LANG) && _MSVC_LANG >= 201703L) || __cplusplus >= 201703L)
+#if CSV2_HAS_STRING_VIEW
     std::string_view read_view() const {
       const auto bounds = trim_policy::trim(buffer_, start_, end_);
       return std::string_view(buffer_ + bounds.first, bounds.second - bounds.first);
@@ -2185,6 +2274,7 @@ public:
 #pragma once
 
 #include <cstring>
+// #include <csv2/detail/config.hpp>
 // #include <csv2/parameters.hpp>
 #include <fstream>
 #include <iostream>

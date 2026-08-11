@@ -1,26 +1,7 @@
 #pragma once
 
 #include <cstring>
-
-#ifndef CSV2_HAS_MMAP
-#if defined(__has_include)
-#if defined(_WIN32)
-#if __has_include(<windows.h>)
-#define CSV2_HAS_MMAP 1
-#else
-#define CSV2_HAS_MMAP 0
-#endif
-#elif __has_include(<sys/mman.h>)
-#define CSV2_HAS_MMAP 1
-#else
-#define CSV2_HAS_MMAP 0
-#endif
-#elif defined(_WIN32) || defined(__unix__) || defined(__unix) || defined(__APPLE__)
-#define CSV2_HAS_MMAP 1
-#else
-#define CSV2_HAS_MMAP 0
-#endif
-#endif
+#include <csv2/detail/config.hpp>
 
 #if CSV2_HAS_MMAP
 #include <csv2/mio.hpp>
@@ -32,7 +13,7 @@
 #include <system_error>
 #include <type_traits>
 #include <utility>
-#if ((defined(_MSVC_LANG) && _MSVC_LANG >= 201703L) || __cplusplus >= 201703L)
+#if CSV2_HAS_STRING_VIEW
 #include <functional>
 #include <string_view>
 #endif
@@ -111,7 +92,7 @@ class Reader {
 #endif
   }
 
-#if ((defined(_MSVC_LANG) && _MSVC_LANG >= 201703L) || __cplusplus >= 201703L)
+#if CSV2_HAS_STRING_VIEW
   static bool contains_range_(const char *source, size_t source_size, const char *data,
                               size_t size) noexcept {
     if (!source || !data || size > source_size)
@@ -190,7 +171,7 @@ public:
 
   Reader &operator=(Reader &&other) {
     if (this != &other) {
-#if ((defined(_MSVC_LANG) && _MSVC_LANG >= 201703L) || __cplusplus >= 201703L)
+#if CSV2_HAS_STRING_VIEW
       // The borrowed source may be a view into storage currently owned by this Reader.
       if (owns_range_(other.buffer_, other.buffer_size_)) {
         buffer_ = other.buffer_;
@@ -239,7 +220,7 @@ public:
                            typename std::is_lvalue_reference<StringType &&>::type());
   }
 
-#if ((defined(_MSVC_LANG) && _MSVC_LANG >= 201703L) || __cplusplus >= 201703L)
+#if CSV2_HAS_STRING_VIEW
   // Borrow a string_view. The view's storage must outlive Reader access.
   bool parse_view(std::string_view sv) {
     const char *const data = sv.data();
@@ -267,7 +248,7 @@ public:
     friend class Row;
 
   public:
-#if ((defined(_MSVC_LANG) && _MSVC_LANG >= 201703L) || __cplusplus >= 201703L)
+#if CSV2_HAS_STRING_VIEW
     std::string_view read_view() const {
       const auto bounds = trim_policy::trim(buffer_, start_, end_);
       return std::string_view(buffer_ + bounds.first, bounds.second - bounds.first);

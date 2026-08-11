@@ -1,5 +1,7 @@
 #pragma once
 
+#include <csv2/detail/config.hpp>
+
 #include <cstddef>
 #include <utility>
 

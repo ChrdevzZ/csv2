@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstring>
+#include <csv2/detail/config.hpp>
 #include <csv2/parameters.hpp>
 #include <fstream>
 #include <iostream>
