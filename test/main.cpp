@@ -62,15 +62,12 @@ BOOL UnmapViewOfFile(const void *base_address);
 #define CSV2_TEST_UNDEFINE_WIN32
 #endif
 
-#define max(left, right) ((left) > (right) ? (left) : (right))
-
 #if defined(CSV2_TEST_SINGLE_HEADER)
 #include <csv2/csv2.hpp>
 #else
 #include <csv2/mio.hpp>
 #endif
 
-#undef max
 #if defined(CSV2_TEST_UNDEFINE_WIN32)
 #undef _WIN32
 #undef CSV2_TEST_UNDEFINE_WIN32
