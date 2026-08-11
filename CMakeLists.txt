@@ -6,6 +6,40 @@ endif()
 
 project(csv2 VERSION 1.8.0 LANGUAGES CXX)
 
+set(CSV2_CI_EXPECTED_COMPILER_ID "" CACHE STRING
+  "Expected CMake compiler ID for CI toolchain verification")
+set(CSV2_CI_EXPECTED_COMPILER_VERSION_PREFIX "" CACHE STRING
+  "Expected compiler version prefix for CI toolchain verification")
+
+if(CSV2_CI_EXPECTED_COMPILER_ID AND
+   NOT CMAKE_CXX_COMPILER_ID STREQUAL CSV2_CI_EXPECTED_COMPILER_ID)
+  message(FATAL_ERROR
+    "CI expected compiler ID ${CSV2_CI_EXPECTED_COMPILER_ID}, but CMake "
+    "detected ${CMAKE_CXX_COMPILER_ID} ${CMAKE_CXX_COMPILER_VERSION}")
+endif()
+
+if(CSV2_CI_EXPECTED_COMPILER_VERSION_PREFIX)
+  set(csv2_expected_compiler_version
+    "${CSV2_CI_EXPECTED_COMPILER_VERSION_PREFIX}.")
+  string(FIND "${CMAKE_CXX_COMPILER_VERSION}"
+    "${csv2_expected_compiler_version}" csv2_compiler_version_position)
+  if(NOT CMAKE_CXX_COMPILER_VERSION STREQUAL
+       CSV2_CI_EXPECTED_COMPILER_VERSION_PREFIX AND
+     NOT csv2_compiler_version_position EQUAL 0)
+    message(FATAL_ERROR
+      "CI expected compiler version prefix "
+      "${CSV2_CI_EXPECTED_COMPILER_VERSION_PREFIX}, but CMake detected "
+      "${CMAKE_CXX_COMPILER_ID} ${CMAKE_CXX_COMPILER_VERSION}")
+  endif()
+endif()
+
+if(CSV2_CI_EXPECTED_COMPILER_ID OR
+   CSV2_CI_EXPECTED_COMPILER_VERSION_PREFIX)
+  message(STATUS
+    "Verified CI compiler: ${CMAKE_CXX_COMPILER_ID} "
+    "${CMAKE_CXX_COMPILER_VERSION}")
+endif()
+
 if(POLICY CMP0077)
   cmake_policy(SET CMP0077 NEW)
 endif()

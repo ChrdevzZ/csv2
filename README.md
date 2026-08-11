@@ -6,7 +6,7 @@
   <a href="https://github.com/ChrdevzZ/csv2/actions/workflows/linux.yml"><img src="https://github.com/ChrdevzZ/csv2/actions/workflows/linux.yml/badge.svg" alt="Linux"></a>
   <a href="https://github.com/ChrdevzZ/csv2/actions/workflows/windows.yml"><img src="https://github.com/ChrdevzZ/csv2/actions/workflows/windows.yml/badge.svg" alt="Windows"></a>
   <a href="https://github.com/ChrdevzZ/csv2/actions/workflows/macos.yml"><img src="https://github.com/ChrdevzZ/csv2/actions/workflows/macos.yml/badge.svg" alt="macOS"></a>
-  <img src="https://img.shields.io/badge/C%2B%2B-11-blue.svg" alt="C++11">
+  <a href="#compiling-tests"><img src="https://img.shields.io/badge/C%2B%2B-11-00599C.svg?logo=cplusplus&amp;logoColor=white" alt="C++11 minimum"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="License: MIT"></a>
 </p>
 
@@ -103,8 +103,8 @@ hyperfine --warmup 3 --runs 5 \
 The table below is historical (23 September 2022). Compare new measurements
 only when the input, csv2 commit, compiler, flags, operating system, CPU, and
 storage are recorded consistently. CI currently verifies that the benchmark
-compiles in the Linux GCC and Windows MSVC jobs; it does not run performance
-measurements.
+compiles with Linux GCC, Linux Clang with libc++, and Windows MSVC; it does not
+run performance measurements.
 
 #### System Details
 
@@ -288,13 +288,16 @@ ctest --test-dir build -C Debug --output-on-failure
 ```
 
 The test build runs the same behavioral suite against the modular and
-single-header forms in strict C++11, C++14, C++17, C++20, and C++23 modes.
-CMake 3.12 or newer is required to request C++20, and CMake 3.20 or newer is
-required to request C++23. Those modes are registered only when the compiler
-advertises support through CMake; older supported toolchains register every
-mode they understand. The build also checks every public header independently
-in C++11 and C++17 modes and adds no-exceptions and platform-failure-path tests
-where supported.
+single-header forms in strict C++11, C++14, C++17, C++20, and C++23 modes. It
+also adds C++26 forward-compatibility variants when CMake and the compiler
+advertise that mode. CMake 3.12 or newer is required to request C++20, CMake
+3.20 or newer is required to request C++23, and CMake 3.30 or newer is required
+to request C++26. These modes prove that csv2 builds and behaves correctly in
+the selected language mode; they do not claim that a compiler or standard
+library completely implements every feature of that standard. Older supported
+toolchains register every mode they understand. The build also checks every
+public header independently in C++11 and C++17 modes and adds no-exceptions and
+platform-failure-path tests where supported.
 
 `-DCSV2_ENABLE_SANITIZERS=ON` enables ASan and UBSan with GCC, Clang, and
 AppleClang. With the Microsoft compiler it enables MSVC AddressSanitizer only.
@@ -314,38 +317,41 @@ ASan; Windows disables it because LeakSanitizer is not supported there.
 | C++17 | `csv2.module.cxx17` | `csv2.single_header.cxx17` |
 | C++20 | `csv2.module.cxx20` | `csv2.single_header.cxx20` |
 | C++23 | `csv2.module.cxx23` | `csv2.single_header.cxx23` |
+| C++26 | `csv2.module.cxx26` | `csv2.single_header.cxx26` |
 
 The `CSV2_REQUIRE_MODERN_STANDARD_TESTS` option is an enforcement switch for
 modern CI: configuration fails unless all four exact C++20/C++23 CTest names
 in the table are registered. Local compatibility remains conditional, while
-all Linux and Windows CI jobs enable this switch so that a toolchain change
-cannot silently remove those four variants.
+all Linux, Windows, and macOS CI jobs enable this switch so that a toolchain
+change cannot silently remove those four variants.
+
+`CSV2_REQUIRE_CXX26_TESTS` is a separate opt-in enforcement switch. CI enables
+it only for stable compiler lines whose CMake feature set advertises
+`cxx_std_26`; configuration then fails unless both exact C++26 names in the
+table are registered. Other compiler rows continue to enforce C++20 and C++23
+without making a false C++26 support claim.
+
+CI selects stable compiler lines already supplied by the stable hosted runner
+or its distribution. It deliberately avoids preview runner images, compiler
+snapshots, PPAs, and nightly LLVM repositories. The compiler ID and version
+line are verified by CMake during configuration; stable runner servicing may
+advance the patch component without silently changing the enforced line.
 
 CI is split into Linux, Windows, and macOS workflows, with warnings treated as
 errors throughout:
 
-- Linux GCC 13 builds the benchmark, runs the full test suite, requires the
-  C++20/C++23 variants, installs the package, builds and runs an independent
-  `find_package(csv2 CONFIG REQUIRED)` consumer, and checks single-header
-  regeneration.
-- A separate Linux GCC 13 Debug job runs the labeled runtime suite under ASan,
-  UBSan, and leak detection.
-- Linux Clang 18 with libc++ runs the same labeled runtime suite under ASan,
-  UBSan, and leak detection, and checks first-party C++ formatting with Clang
-  Format 18.
-- Windows runs MSVC Debug (including benchmark compilation and installation),
-  MSVC Release AddressSanitizer, Clang-CL Release, and Clang-CL Release with
-  ASan plus UBSan. The Windows sanitizer jobs read the `sanitizer-runtime`
-  CTest manifest and directly execute exactly 16 registered tests, avoiding
-  Windows CTest/ASan process-management problems and excluding the deliberately
-  expected-to-fail no-mmap benchmark probe. Linux sanitizer jobs run the same
-  label through CTest and execute 18 tests, including two Linux-only WinAPI
-  injection variants.
-- macOS builds and tests with AppleClang.
+| Platform | Normal coverage | Sanitizer coverage |
+|:---------|:----------------|:-------------------|
+| Linux | GCC 14 and Clang 18 with libc++; full tests and benchmark compilation | Separate GCC 14 and Clang 18 ASan/UBSan jobs with leak detection |
+| Windows | MSVC 19.51 and Clang-CL 22.1; MSVC also compiles the benchmark and verifies installation | MSVC ASan and Clang-CL ASan/UBSan |
+| macOS | AppleClang 21 full tests | — |
 
-The workflows run for pushes and pull requests targeting `main` or `master`,
-merge queues, and manual dispatch. Repository-side workflow files cannot by
-themselves configure GitHub branch-protection or ruleset policy.
+The Linux GCC job also builds an independent
+`find_package(csv2 CONFIG REQUIRED)` consumer and verifies single-header
+regeneration. The non-sanitized Linux Clang job checks first-party formatting
+with Clang Format 18. Sanitizer jobs run the labeled runtime suite; Windows
+executes its generated CTest manifest directly to avoid CTest/ASan
+process-management problems.
 
 ## Installing and Consuming with CMake
 

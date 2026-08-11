@@ -169,6 +169,10 @@ if(CMAKE_VERSION VERSION_GREATER_EQUAL 3.20 AND
    cxx_std_23 IN_LIST CMAKE_CXX_COMPILE_FEATURES)
   list(APPEND csv2_runtime_standards 23)
 endif()
+if(CMAKE_VERSION VERSION_GREATER_EQUAL 3.30 AND
+   cxx_std_26 IN_LIST CMAKE_CXX_COMPILE_FEATURES)
+  list(APPEND csv2_runtime_standards 26)
+endif()
 
 foreach(standard IN LISTS csv2_runtime_standards)
   set(suffix "_cxx${standard}")
@@ -194,6 +198,20 @@ if(CSV2_REQUIRE_MODERN_STANDARD_TESTS)
     if(NOT TEST ${required_test})
       message(FATAL_ERROR
         "Required modern-standard CTest test is not registered: ${required_test}")
+    endif()
+  endforeach()
+endif()
+
+option(CSV2_REQUIRE_CXX26_TESTS
+  "Fail configuration unless the C++26 CTest variants are registered" OFF)
+if(CSV2_REQUIRE_CXX26_TESTS)
+  set(csv2_required_cxx26_tests
+    csv2.module.cxx26
+    csv2.single_header.cxx26)
+  foreach(required_test IN LISTS csv2_required_cxx26_tests)
+    if(NOT TEST ${required_test})
+      message(FATAL_ERROR
+        "Required C++26 CTest test is not registered: ${required_test}")
     endif()
   endforeach()
 endif()
