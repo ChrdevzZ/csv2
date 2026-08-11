@@ -252,6 +252,13 @@ foreach(standard IN ITEMS 11 20 23)
   csv2_add_config_contract(csv2_config_contract_cxx${standard} ${standard})
 endforeach()
 
+foreach(standard IN ITEMS 11 17)
+  add_library(csv2_mmap_path_contract_cxx${standard} OBJECT mmap_path.cpp)
+  target_link_libraries(csv2_mmap_path_contract_cxx${standard} PRIVATE csv2::csv2)
+  csv2_set_test_standard(csv2_mmap_path_contract_cxx${standard} ${standard})
+  csv2_enable_test_options(csv2_mmap_path_contract_cxx${standard})
+endforeach()
+
 foreach(standard IN ITEMS 11 17 20 23)
   set(suffix "_cxx${standard}")
   if(standard EQUAL 11)
