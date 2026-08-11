@@ -30,9 +30,13 @@ bootstrap interval:
 python3 benchmark/run_suite.py \
   --baseline build-baseline/benchmark/csv2_benchmark \
   --candidate build-candidate/benchmark/csv2_benchmark \
-  --datasets build/benchmark-data --runs 20 \
+  --datasets build/benchmark-data --runs 20 --iterations 10 \
   --output build/benchmark-report.json
 ```
+
+`--runs` controls the number of independently launched, alternating samples.
+`--iterations` repeats the selected operation inside each timed sample; increase
+it until each sample is long enough to dominate timer and scheduler noise.
 
 A regression is reported only when candidate median throughput drops by more
 than `max(5%, 2 * baseline_MAD / baseline_median)` and the complete bootstrap

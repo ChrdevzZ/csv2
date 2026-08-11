@@ -3,6 +3,9 @@
 #ifndef CSV2_CPLUSPLUS
 #error "CSV2_CPLUSPLUS must report the active language mode"
 #endif
+#ifndef CSV2_FORCE_INLINE
+#error "CSV2_FORCE_INLINE must be available to internal hot paths"
+#endif
 
 static_assert(CSV2_CPLUSPLUS >= 201103L, "csv2 requires C++11 or newer");
 static_assert(CSV2_HAS_STRING_VIEW == 0 || CSV2_HAS_STRING_VIEW == 1,
