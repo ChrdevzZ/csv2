@@ -72,6 +72,21 @@ exceptions. Use the overload accepting `std::error_code&` when the reason is
 needed. Memory mapping can be disabled consistently for all translation units
 with `CSV2_HAS_MMAP=0`.
 
+Mapped paths must provide NUL-terminated storage. Supported path types are
+`const char*`/character arrays and `std::string`; Windows also accepts the
+corresponding wide forms. C++17 adds `std::filesystem::path`. A
+`std::string_view`, `std::vector<char>`, or other arbitrary `.data()` container
+is intentionally rejected because it cannot guarantee path termination.
+Sized path objects containing an embedded NUL fail with
+`std::errc::invalid_argument` rather than being silently truncated.
+
+`include/csv2/mio.hpp` vendors [mandreyel/mio](https://github.com/mandreyel/mio),
+first imported by csv2 commit `e51a8df` on 2020-04-23. Its MIT license remains
+in `LICENSE.mio`. Local csv2 patches preserve mapping ownership/error handling,
+support explicit no-mmap builds, and restrict file paths to the safe types
+listed above; no independent upstream version tag was recorded by the original
+import.
+
 Records may be terminated by LF or CRLF. LF and CRLF inside a quoted field are
 part of that field, and doubled quote characters (`""`) do not close it. A final
 record delimiter terminates the last record without creating another empty
@@ -151,6 +166,7 @@ public:
 
   
   // Present when CSV2_HAS_MMAP is enabled
+  // StringType is a supported NUL-terminated path type, not string_view.
   template <typename StringType>
   bool mmap(StringType&& filename);
   template <typename StringType>

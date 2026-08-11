@@ -194,7 +194,9 @@ public:
 
 #if CSV2_HAS_MMAP
   // Memory-map a file. A failed mapping clears any previous source.
-  template <typename StringType> bool mmap(StringType &&filename, std::error_code &error) {
+  template <typename StringType>
+  typename std::enable_if<mio::detail::is_path<StringType>::value, bool>::type
+  mmap(StringType &&filename, std::error_code &error) {
     reset_source_();
     mmap_.map(std::forward<StringType>(filename), error);
     if (error || !mmap_.is_open() || !mmap_.is_mapped() || mmap_.size() == 0) {
@@ -208,7 +210,9 @@ public:
     return true;
   }
 
-  template <typename StringType> bool mmap(StringType &&filename) {
+  template <typename StringType>
+  typename std::enable_if<mio::detail::is_path<StringType>::value, bool>::type
+  mmap(StringType &&filename) {
     std::error_code error;
     return mmap(std::forward<StringType>(filename), error);
   }

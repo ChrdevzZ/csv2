@@ -100,6 +100,10 @@ inline size_t make_offset_page_aligned(size_t offset) noexcept {
 #include <limits>
 #include <string>
 #include <system_error>
+#include <csv2/detail/config.hpp>
+#if CSV2_HAS_FILESYSTEM
+#include <filesystem>
+#endif
 
 #ifdef _WIN32
 #ifndef WIN32_LEAN_AND_MEAN
@@ -508,9 +512,8 @@ MMap make_mmap(const MappingToken &token, int64_t offset, int64_t length, std::e
 /**
  * Convenience factory method.
  *
- * MappingToken may be a String (`std::string`, `std::string_view`, `const char*`,
- * `std::filesystem::path`, `std::vector<char>`, or similar), or a
- * `mmap_source::handle_type`.
+ * MappingToken may be a supported NUL-terminated path (`std::string`, `const char*`,
+ * and, in C++17, `std::filesystem::path`) or a `mmap_source::handle_type`.
  */
 template <typename MappingToken>
 mmap_source make_mmap_source(const MappingToken &token, mmap_source::size_type offset,
@@ -526,9 +529,8 @@ mmap_source make_mmap_source(const MappingToken &token, std::error_code &error) 
 /**
  * Convenience factory method.
  *
- * MappingToken may be a String (`std::string`, `std::string_view`, `const char*`,
- * `std::filesystem::path`, `std::vector<char>`, or similar), or a
- * `mmap_sink::handle_type`.
+ * MappingToken may be a supported NUL-terminated path (`std::string`, `const char*`,
+ * and, in C++17, `std::filesystem::path`) or a `mmap_sink::handle_type`.
  */
 template <typename MappingToken>
 mmap_sink make_mmap_sink(const MappingToken &token, mmap_sink::size_type offset,
@@ -658,14 +660,36 @@ template <typename S> struct is_c_str_or_c_wstr {
       ;
 };
 
-template <typename String, typename = decltype(std::declval<String>().data()),
-          typename = typename std::enable_if<!is_c_str_or_c_wstr<String>::value>::type>
-const typename char_type<String>::type *c_str(const String &path) {
-  return path.data();
+template <typename S> struct is_object_path {
+  using type = typename std::decay<S>::type;
+  static constexpr bool value = std::is_same<type, std::string>::value
+#ifdef _WIN32
+                                || std::is_same<type, std::wstring>::value
+#endif
+#if CSV2_HAS_FILESYSTEM
+                                || std::is_same<type, std::filesystem::path>::value
+#endif
+      ;
+};
+
+template <typename S> struct is_path {
+  static constexpr bool value = is_c_str_or_c_wstr<S>::value || is_object_path<S>::value;
+};
+
+#if CSV2_HAS_FILESYSTEM
+template <> struct char_type<std::filesystem::path> {
+  using type = std::filesystem::path::value_type;
+};
+#endif
+
+template <typename String,
+          typename = typename std::enable_if<is_object_path<String>::value>::type>
+auto c_str(const String &path) -> decltype(path.c_str()) {
+  return path.c_str();
 }
 
-template <typename String, typename = decltype(std::declval<String>().empty()),
-          typename = typename std::enable_if<!is_c_str_or_c_wstr<String>::value>::type>
+template <typename String,
+          typename = typename std::enable_if<is_object_path<String>::value>::type>
 bool empty(const String &path) {
   return path.empty();
 }
@@ -682,13 +706,34 @@ bool empty(String path) {
   return !path || (*path == 0);
 }
 
+template <typename CharT, typename Traits, typename Allocator>
+size_t path_size(const std::basic_string<CharT, Traits, Allocator> &path) {
+  return path.size();
+}
+
+#if CSV2_HAS_FILESYSTEM
+inline size_t path_size(const std::filesystem::path &path) { return path.native().size(); }
+#endif
+
+template <typename String,
+          typename = typename std::enable_if<is_object_path<String>::value>::type>
+bool has_embedded_null(const String &path) {
+  typedef typename char_type<String>::type char_type;
+  return std::char_traits<char_type>::length(c_str(path)) != path_size(path);
+}
+
+template <typename String,
+          typename = typename std::enable_if<is_c_str_or_c_wstr<String>::value>::type>
+bool has_embedded_null(String) {
+  return false;
+}
+
 } // namespace detail
 } // namespace mio
 
 #endif // MIO_STRING_UTIL_HEADER
 
 #include <algorithm>
-#include <csv2/detail/config.hpp>
 
 #ifndef _WIN32
 #include <fcntl.h>
@@ -746,7 +791,7 @@ inline std::error_code last_error() noexcept {
 template <typename String>
 file_handle_type open_file(const String &path, const access_mode mode, std::error_code &error) {
   error.clear();
-  if (detail::empty(path)) {
+  if (detail::empty(path) || detail::has_embedded_null(path)) {
     error = std::make_error_code(std::errc::invalid_argument);
     return invalid_handle;
   }

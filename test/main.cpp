@@ -524,6 +524,10 @@ static_assert(true, "compiling this translation unit is the assertion");
 #include <utility>
 #include <vector>
 
+#if CSV2_HAS_FILESYSTEM
+#include <filesystem>
+#endif
+
 #if defined(__linux__)
 #include <dirent.h>
 #elif defined(_WIN32)
@@ -1072,6 +1076,27 @@ TEST_CASE("Preserve ownership through shared and writable same-handle remaps" * 
   std::string persisted((std::istreambuf_iterator<char>(input)), std::istreambuf_iterator<char>());
   REQUIRE(persisted == "aZcdef");
 }
+
+TEST_CASE("Reject mapped paths containing an embedded NUL" * test_suite("Reader")) {
+  csv2::Reader<> reader;
+  std::string path("inputs/test_01.csv");
+  path.push_back('\0');
+  path += "ignored-suffix";
+  std::error_code error;
+
+  REQUIRE_FALSE(reader.mmap(path, error));
+  REQUIRE(error == std::make_error_code(std::errc::invalid_argument));
+}
+
+#if CSV2_HAS_FILESYSTEM
+TEST_CASE("Map a filesystem path" * test_suite("Reader")) {
+  ReaderWithoutHeader reader;
+  std::error_code error;
+  REQUIRE(reader.mmap(std::filesystem::path("inputs/test_01.csv"), error));
+  REQUIRE_FALSE(error);
+  REQUIRE(reader.rows() > 0);
+}
+#endif
 #endif
 
 #if ((defined(_MSVC_LANG) && _MSVC_LANG >= 201703L) || __cplusplus >= 201703L)
