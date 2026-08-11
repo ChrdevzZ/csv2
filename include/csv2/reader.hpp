@@ -2,8 +2,10 @@
 
 #include <cstring>
 #include <csv2/detail/config.hpp>
+#include <csv2/detail/conversion.hpp>
 #include <csv2/detail/output.hpp>
 #include <csv2/detail/scanner.hpp>
+#include <csv2/detail/validation.hpp>
 
 #if CSV2_HAS_MMAP
 #include <csv2/mio.hpp>
@@ -26,6 +28,9 @@
 #if CSV2_HAS_RANGES
 #include <ranges>
 #endif
+#if CSV2_HAS_EXPECTED
+#include <expected>
+#endif
 
 namespace csv2 {
 
@@ -35,6 +40,17 @@ class basic_cell {
   size_t start_{0};
   size_t end_{0};
   bool escaped_{false};
+
+  std::pair<size_t, size_t> content_bounds_() const noexcept {
+    std::pair<size_t, size_t> bounds = trim_policy::trim(buffer_, start_, end_);
+    if (bounds.second - bounds.first >= 2 && buffer_[bounds.first] == quote_character::value &&
+        buffer_[bounds.second - 1] == quote_character::value) {
+      ++bounds.first;
+      --bounds.second;
+    }
+    return bounds;
+  }
+
 public:
   basic_cell() = default;
   basic_cell(const char *buffer, size_t start, size_t end, bool escaped) noexcept
@@ -121,6 +137,29 @@ public:
     }
     return output;
   }
+
+  template <class Integer>
+  typename std::enable_if<detail::is_csv_integer<Integer>::value, bool>::type
+  try_parse(Integer &output, conversion_error &error, int base = 10) const noexcept {
+    if (!buffer_ || escaped_)
+      return detail::conversion_failure(error, conversion_errc::invalid_argument, 0);
+    const std::pair<size_t, size_t> bounds = content_bounds_();
+    return detail::parse_integer(buffer_ + bounds.first, buffer_ + bounds.second, output, error,
+                                 base);
+  }
+
+#if CSV2_HAS_EXPECTED
+  template <class Integer>
+  typename std::enable_if<detail::is_csv_integer<Integer>::value,
+                          std::expected<Integer, conversion_error>>::type
+  parse_expected(int base = 10) const noexcept {
+    Integer result{};
+    conversion_error error;
+    if (try_parse(result, error, base))
+      return result;
+    return std::unexpected(error);
+  }
+#endif
 };
 
 template <class delimiter, class quote_character, class trim_policy>
@@ -370,6 +409,18 @@ public:
     std::error_code error;
     return mmap(std::forward<StringType>(filename), error);
   }
+
+#if CSV2_HAS_EXPECTED
+  template <typename StringType>
+  typename std::enable_if<mio::detail::is_path<StringType>::value,
+                          std::expected<void, std::error_code>>::type
+  mmap_expected(StringType &&filename) {
+    std::error_code error;
+    if (mmap(std::forward<StringType>(filename), error))
+      return {};
+    return std::unexpected(error);
+  }
+#endif
 #endif
 
   // Lvalue strings are borrowed. Rvalue strings are owned by this Reader.
@@ -416,6 +467,20 @@ public:
     buffer_ = data;
     buffer_size_ = size;
     return true;
+  }
+#endif
+
+  bool validate(parse_error &error) const noexcept {
+    return detail::validate_csv<delimiter, quote_character, trim_policy>(buffer_, buffer_size_,
+                                                                         error);
+  }
+
+#if CSV2_HAS_EXPECTED
+  std::expected<void, parse_error> validate_expected() const noexcept {
+    parse_error error;
+    if (validate(error))
+      return {};
+    return std::unexpected(error);
   }
 #endif
 

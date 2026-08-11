@@ -797,6 +797,113 @@ TEST_CASE("Scan cell boundaries through the shared fast path" * test_suite("Read
           std::vector<std::string>({"plain", "\"quoted,field\"", "\"a\"b\"", "tail", ""}));
 }
 
+TEST_CASE("Validate strict CSV syntax without changing permissive traversal" *
+          test_suite("Reader")) {
+  const char *valid_inputs[] = {"a,b\n1,2", " \t\"a\"\"b\" \t,c", "a,\"b\nc\",d",
+                                "a,\"b\r\nc\",d", "a,\"b\rc\",d", "a,b\n1\n2,3,4"};
+  for (const char *input_value : valid_inputs) {
+    ReaderWithoutHeader reader;
+    std::string input(input_value);
+    REQUIRE(reader.parse(input));
+    csv2::parse_error error;
+    REQUIRE(reader.validate(error));
+    REQUIRE(error.code == csv2::parse_errc::none);
+  }
+
+  struct InvalidCase {
+    const char *input;
+    csv2::parse_errc code;
+    std::size_t offset;
+    std::size_t row;
+    std::size_t column;
+  };
+  const InvalidCase invalid_inputs[] = {
+      {"a\"b,c", csv2::parse_errc::unexpected_quote, 1, 1, 1},
+      {"\"a,b", csv2::parse_errc::unclosed_quote, 0, 1, 1},
+      {"\"a\"x,b", csv2::parse_errc::characters_after_closing_quote, 3, 1, 1},
+      {"\"a\" \"b\"", csv2::parse_errc::invalid_doubled_quote, 4, 1, 1},
+      {"a\rb", csv2::parse_errc::bare_carriage_return, 1, 1, 1},
+      {"a,b\nc,\"d\"x", csv2::parse_errc::characters_after_closing_quote, 9, 2, 2},
+  };
+
+  for (const auto &test_case : invalid_inputs) {
+    ReaderWithoutHeader reader;
+    std::string input(test_case.input);
+    REQUIRE(reader.parse(input));
+    csv2::parse_error error;
+    REQUIRE_FALSE(reader.validate(error));
+    REQUIRE(error.code == test_case.code);
+    REQUIRE(error.byte_offset == test_case.offset);
+    REQUIRE(error.row == test_case.row);
+    REQUIRE(error.column == test_case.column);
+    REQUIRE(read_rows(reader).size() >= 1);
+  }
+}
+
+TEST_CASE("Convert complete integer field content without modifying failures" *
+          test_suite("Reader")) {
+  ReaderWithoutHeader reader;
+  std::string input("42,-2147483648,2147483648,12x,+7,101,\"17\"");
+  REQUIRE(reader.parse(input));
+  auto cell = (*reader.begin()).begin();
+  csv2::conversion_error error;
+
+  int value = -1;
+  REQUIRE((*cell).try_parse(value, error));
+  REQUIRE(value == 42);
+  REQUIRE(error.code == csv2::conversion_errc::none);
+
+  ++cell;
+  REQUIRE((*cell).try_parse(value, error));
+  REQUIRE(value == (std::numeric_limits<int>::min)());
+
+  ++cell;
+  value = 9;
+  REQUIRE_FALSE((*cell).try_parse(value, error));
+  REQUIRE(value == 9);
+  REQUIRE(error.code == csv2::conversion_errc::result_out_of_range);
+
+  ++cell;
+  REQUIRE_FALSE((*cell).try_parse(value, error));
+  REQUIRE(error.code == csv2::conversion_errc::trailing_characters);
+  REQUIRE(error.byte_offset == 2);
+
+  ++cell;
+  REQUIRE_FALSE((*cell).try_parse(value, error));
+  REQUIRE(error.code == csv2::conversion_errc::invalid_argument);
+
+  ++cell;
+  REQUIRE((*cell).try_parse(value, error, 2));
+  REQUIRE(value == 5);
+
+  ++cell;
+  REQUIRE((*cell).try_parse(value, error));
+  REQUIRE(value == 17);
+
+  value = 11;
+  REQUIRE_FALSE((*cell).try_parse(value, error, 1));
+  REQUIRE(value == 11);
+  REQUIRE(error.code == csv2::conversion_errc::invalid_base);
+}
+
+#if CSV2_HAS_EXPECTED
+TEST_CASE("Expose C++23 expected adapters when the library provides them" *
+          test_suite("Reader")) {
+  ReaderWithoutHeader reader;
+  std::string input("42,invalid");
+  REQUIRE(reader.parse(input));
+  REQUIRE(reader.validate_expected().has_value());
+
+  auto cell = (*reader.begin()).begin();
+  const auto parsed = (*cell).template parse_expected<int>();
+  REQUIRE(parsed == 42);
+  ++cell;
+  const auto failed = (*cell).template parse_expected<int>();
+  REQUIRE_FALSE(failed.has_value());
+  REQUIRE(failed.error().code == csv2::conversion_errc::invalid_argument);
+}
+#endif
+
 TEST_CASE("Handle record terminators and quoted newlines" * test_suite("Reader")) {
   struct RecordCase {
     const char *input;

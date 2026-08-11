@@ -107,6 +107,174 @@
 #endif
 #endif
 
+// #include <csv2/detail/conversion.hpp>
+
+// #include <csv2/detail/config.hpp>
+// #include <csv2/errors.hpp>
+
+#include <cstddef>
+
+namespace csv2 {
+
+enum class parse_errc {
+  none,
+  unexpected_quote,
+  unclosed_quote,
+  invalid_doubled_quote,
+  characters_after_closing_quote,
+  bare_carriage_return
+};
+
+struct parse_error {
+  parse_errc code{parse_errc::none};
+  std::size_t byte_offset{0};
+  std::size_t row{0};
+  std::size_t column{0};
+};
+
+enum class conversion_errc {
+  none,
+  invalid_argument,
+  invalid_base,
+  result_out_of_range,
+  trailing_characters
+};
+
+struct conversion_error {
+  conversion_errc code{conversion_errc::none};
+  std::size_t byte_offset{0};
+};
+
+} // namespace csv2
+
+
+#if CSV2_HAS_CHARCONV
+#include <charconv>
+#endif
+
+#include <cstddef>
+#include <limits>
+#include <system_error>
+#include <type_traits>
+
+namespace csv2 {
+namespace detail {
+
+template <class T>
+struct is_csv_integer
+    : std::integral_constant<
+          bool, std::is_integral<T>::value && !std::is_same<T, bool>::value &&
+                    !std::is_same<T, char>::value && !std::is_same<T, signed char>::value &&
+                    !std::is_same<T, unsigned char>::value && !std::is_same<T, wchar_t>::value &&
+                    !std::is_same<T, char16_t>::value && !std::is_same<T, char32_t>::value> {};
+
+inline int integer_digit(char character) noexcept {
+  if (character >= '0' && character <= '9')
+    return character - '0';
+  if (character >= 'a' && character <= 'z')
+    return character - 'a' + 10;
+  if (character >= 'A' && character <= 'Z')
+    return character - 'A' + 10;
+  return -1;
+}
+
+inline bool conversion_failure(conversion_error &error, conversion_errc code,
+                               std::size_t offset) noexcept {
+  error.code = code;
+  error.byte_offset = offset;
+  return false;
+}
+
+template <class Integer>
+bool parse_integer_fallback(const char *first, const char *last, Integer &output,
+                            conversion_error &error, int base) noexcept {
+  typedef typename std::make_unsigned<Integer>::type unsigned_type;
+  if (first == last)
+    return conversion_failure(error, conversion_errc::invalid_argument, 0);
+
+  const char *cursor = first;
+  bool negative = false;
+  if (*cursor == '-') {
+    if (!std::is_signed<Integer>::value)
+      return conversion_failure(error, conversion_errc::invalid_argument, 0);
+    negative = true;
+    ++cursor;
+  } else if (*cursor == '+') {
+    return conversion_failure(error, conversion_errc::invalid_argument, 0);
+  }
+  if (cursor == last)
+    return conversion_failure(error, conversion_errc::invalid_argument,
+                              static_cast<std::size_t>(cursor - first));
+
+  const unsigned_type maximum = static_cast<unsigned_type>((std::numeric_limits<Integer>::max)());
+  const unsigned_type limit = negative ? static_cast<unsigned_type>(maximum + 1) : maximum;
+  unsigned_type magnitude = 0;
+  bool overflow = false;
+  const char *digits_begin = cursor;
+  for (; cursor != last; ++cursor) {
+    const int digit = integer_digit(*cursor);
+    if (digit < 0 || digit >= base)
+      break;
+    const unsigned_type unsigned_digit = static_cast<unsigned_type>(digit);
+    if (!overflow &&
+        magnitude > static_cast<unsigned_type>((limit - unsigned_digit) /
+                                               static_cast<unsigned_type>(base))) {
+      overflow = true;
+    } else if (!overflow) {
+      magnitude = static_cast<unsigned_type>(magnitude * static_cast<unsigned_type>(base) +
+                                             unsigned_digit);
+    }
+  }
+
+  if (cursor == digits_begin)
+    return conversion_failure(error, conversion_errc::invalid_argument,
+                              static_cast<std::size_t>(cursor - first));
+  if (overflow)
+    return conversion_failure(error, conversion_errc::result_out_of_range,
+                              static_cast<std::size_t>(cursor - first));
+  if (cursor != last)
+    return conversion_failure(error, conversion_errc::trailing_characters,
+                              static_cast<std::size_t>(cursor - first));
+
+  Integer converted;
+  if (negative) {
+    converted = magnitude == limit ? (std::numeric_limits<Integer>::min)()
+                                   : static_cast<Integer>(-static_cast<Integer>(magnitude));
+  } else {
+    converted = static_cast<Integer>(magnitude);
+  }
+  output = converted;
+  error = conversion_error();
+  return true;
+}
+
+template <class Integer>
+bool parse_integer(const char *first, const char *last, Integer &output,
+                   conversion_error &error, int base) noexcept {
+  if (base < 2 || base > 36)
+    return conversion_failure(error, conversion_errc::invalid_base, 0);
+
+#if CSV2_HAS_CHARCONV
+  Integer converted{};
+  const std::from_chars_result result = std::from_chars(first, last, converted, base);
+  const std::size_t offset = static_cast<std::size_t>(result.ptr - first);
+  if (result.ec == std::errc::invalid_argument)
+    return conversion_failure(error, conversion_errc::invalid_argument, offset);
+  if (result.ec == std::errc::result_out_of_range)
+    return conversion_failure(error, conversion_errc::result_out_of_range, offset);
+  if (result.ptr != last)
+    return conversion_failure(error, conversion_errc::trailing_characters, offset);
+  output = converted;
+  error = conversion_error();
+  return true;
+#else
+  return parse_integer_fallback(first, last, output, error, base);
+#endif
+}
+
+} // namespace detail
+} // namespace csv2
+
 // #include <csv2/detail/output.hpp>
 
 #include <cstddef>
@@ -300,6 +468,117 @@ cell_bounds find_cell_bounds(const char *buffer, std::size_t current,
     }
   }
   return {end, escaped};
+}
+
+} // namespace detail
+} // namespace csv2
+
+// #include <csv2/detail/validation.hpp>
+
+// #include <csv2/errors.hpp>
+
+#include <cstddef>
+#include <utility>
+
+namespace csv2 {
+namespace detail {
+
+inline bool validation_failure(parse_error &error, parse_errc code, std::size_t offset,
+                               std::size_t row, std::size_t column) noexcept {
+  error.code = code;
+  error.byte_offset = offset;
+  error.row = row;
+  error.column = column;
+  return false;
+}
+
+template <class TrimPolicy>
+bool is_trim_character(const char *buffer, std::size_t offset) noexcept {
+  const std::pair<std::size_t, std::size_t> bounds =
+      TrimPolicy::trim(buffer, offset, offset + 1);
+  return bounds.first == bounds.second;
+}
+
+template <class Delimiter, class QuoteCharacter, class TrimPolicy>
+bool validate_csv(const char *buffer, std::size_t size, parse_error &error) noexcept {
+  enum state { field_start, unquoted, quoted, after_quote } current = field_start;
+  std::size_t row = 1;
+  std::size_t column = 1;
+  std::size_t opening_quote = 0;
+
+  error = parse_error();
+  for (std::size_t i = 0; i < size;) {
+    const char character = buffer[i];
+    if (current == quoted) {
+      if (character == QuoteCharacter::value) {
+        if (i + 1 < size && buffer[i + 1] == QuoteCharacter::value) {
+          i += 2;
+          continue;
+        }
+        current = after_quote;
+      }
+      ++i;
+      continue;
+    }
+
+    if (current == field_start && is_trim_character<TrimPolicy>(buffer, i)) {
+      ++i;
+      continue;
+    }
+    if (current == field_start && character == QuoteCharacter::value) {
+      current = quoted;
+      opening_quote = i;
+      ++i;
+      continue;
+    }
+
+    if (current == unquoted && character == QuoteCharacter::value)
+      return validation_failure(error, parse_errc::unexpected_quote, i, row, column);
+    if (current == after_quote) {
+      if (is_trim_character<TrimPolicy>(buffer, i)) {
+        ++i;
+        continue;
+      }
+      if (character == QuoteCharacter::value)
+        return validation_failure(error, parse_errc::invalid_doubled_quote, i, row, column);
+      if (character != Delimiter::value && character != '\r' && character != '\n')
+        return validation_failure(error, parse_errc::characters_after_closing_quote, i, row,
+                                  column);
+    }
+
+    if (character == Delimiter::value) {
+      ++column;
+      current = field_start;
+      ++i;
+      continue;
+    }
+    if (character == '\r') {
+      if (i + 1 >= size || buffer[i + 1] != '\n')
+        return validation_failure(error, parse_errc::bare_carriage_return, i, row, column);
+      ++row;
+      column = 1;
+      current = field_start;
+      i += 2;
+      continue;
+    }
+    if (character == '\n') {
+      ++row;
+      column = 1;
+      current = field_start;
+      ++i;
+      continue;
+    }
+
+    if (current == after_quote)
+      return validation_failure(error, parse_errc::characters_after_closing_quote, i, row,
+                                column);
+    current = unquoted;
+    ++i;
+  }
+
+  if (current == quoted)
+    return validation_failure(error, parse_errc::unclosed_quote, opening_quote, row, column);
+  return true;
 }
 
 } // namespace detail
@@ -2034,6 +2313,9 @@ template <bool flag> struct first_row_is_header {
 #if CSV2_HAS_RANGES
 #include <ranges>
 #endif
+#if CSV2_HAS_EXPECTED
+#include <expected>
+#endif
 
 namespace csv2 {
 
@@ -2043,6 +2325,17 @@ class basic_cell {
   size_t start_{0};
   size_t end_{0};
   bool escaped_{false};
+
+  std::pair<size_t, size_t> content_bounds_() const noexcept {
+    std::pair<size_t, size_t> bounds = trim_policy::trim(buffer_, start_, end_);
+    if (bounds.second - bounds.first >= 2 && buffer_[bounds.first] == quote_character::value &&
+        buffer_[bounds.second - 1] == quote_character::value) {
+      ++bounds.first;
+      --bounds.second;
+    }
+    return bounds;
+  }
+
 public:
   basic_cell() = default;
   basic_cell(const char *buffer, size_t start, size_t end, bool escaped) noexcept
@@ -2129,6 +2422,29 @@ public:
     }
     return output;
   }
+
+  template <class Integer>
+  typename std::enable_if<detail::is_csv_integer<Integer>::value, bool>::type
+  try_parse(Integer &output, conversion_error &error, int base = 10) const noexcept {
+    if (!buffer_ || escaped_)
+      return detail::conversion_failure(error, conversion_errc::invalid_argument, 0);
+    const std::pair<size_t, size_t> bounds = content_bounds_();
+    return detail::parse_integer(buffer_ + bounds.first, buffer_ + bounds.second, output, error,
+                                 base);
+  }
+
+#if CSV2_HAS_EXPECTED
+  template <class Integer>
+  typename std::enable_if<detail::is_csv_integer<Integer>::value,
+                          std::expected<Integer, conversion_error>>::type
+  parse_expected(int base = 10) const noexcept {
+    Integer result{};
+    conversion_error error;
+    if (try_parse(result, error, base))
+      return result;
+    return std::unexpected(error);
+  }
+#endif
 };
 
 template <class delimiter, class quote_character, class trim_policy>
@@ -2378,6 +2694,18 @@ public:
     std::error_code error;
     return mmap(std::forward<StringType>(filename), error);
   }
+
+#if CSV2_HAS_EXPECTED
+  template <typename StringType>
+  typename std::enable_if<mio::detail::is_path<StringType>::value,
+                          std::expected<void, std::error_code>>::type
+  mmap_expected(StringType &&filename) {
+    std::error_code error;
+    if (mmap(std::forward<StringType>(filename), error))
+      return {};
+    return std::unexpected(error);
+  }
+#endif
 #endif
 
   // Lvalue strings are borrowed. Rvalue strings are owned by this Reader.
@@ -2424,6 +2752,20 @@ public:
     buffer_ = data;
     buffer_size_ = size;
     return true;
+  }
+#endif
+
+  bool validate(parse_error &error) const noexcept {
+    return detail::validate_csv<delimiter, quote_character, trim_policy>(buffer_, buffer_size_,
+                                                                         error);
+  }
+
+#if CSV2_HAS_EXPECTED
+  std::expected<void, parse_error> validate_expected() const noexcept {
+    parse_error error;
+    if (validate(error))
+      return {};
+    return std::unexpected(error);
   }
 #endif
 

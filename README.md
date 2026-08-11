@@ -178,6 +178,10 @@ public:
   template <typename StringType>
   bool mmap(StringType&& filename, std::error_code& error);
 
+  // C++23, when std::expected is provided
+  template <typename StringType>
+  std::expected<void, std::error_code> mmap_expected(StringType&& filename);
+
   // Lvalues are borrowed; rvalues are owned by the Reader
   template <typename StringType>
   bool parse(StringType&& contents);
@@ -195,6 +199,14 @@ public:
   // Shape
   size_t rows(bool ignore_empty_lines = false) const;
   size_t cols() const;
+
+  // Optional strict, zero-allocation validation. Existing iteration remains
+  // permissive. byte_offset is zero-based; row/column are one-based logical
+  // record and field numbers.
+  bool validate(parse_error& error) const noexcept;
+
+  // C++23, when the standard library provides std::expected
+  std::expected<void, parse_error> validate_expected() const noexcept;
   
   // Row iterator
   // If first_row_is_header, row iteration will start
@@ -220,6 +232,12 @@ borrowed range, and forward range, so a temporary Row can enter a views
 pipeline. Reader itself is deliberately not a borrowed range: every Row and
 Cell continues to require the Reader's selected source storage to remain
 alive.
+
+`Reader::validate()` is an explicit strict layer over the same source. It
+rejects quotes in unquoted fields, unclosed quotes, invalid doubled quotes,
+non-trim content after a closing quote, and bare carriage returns. CR and LF
+remain valid inside quoted fields, and rows may contain different numbers of
+fields. Calling it never changes the permissive behavior of iteration.
 
 Here's the `Row` class:
 
@@ -256,8 +274,21 @@ public:
   // Handles escaped content, e.g., 
   // """foo""" => ""foo""
   void read_value(Container& value) const;
+
+  // Complete integer conversion, base 2..36. On failure value is unchanged.
+  template<class Integer>
+  bool try_parse(Integer& value, conversion_error& error, int base = 10) const;
+
+  // C++23, when the standard library provides std::expected
+  template<class Integer>
+  std::expected<Integer, conversion_error> parse_expected(int base = 10) const;
 };
 ```
+
+Integer conversion excludes `bool` and character types, consumes the whole
+trimmed field content, and strips a valid pair of outer quotes. C++17 and newer
+use `std::from_chars`; the C++11 fallback has the same base, range, sign, and
+complete-consumption rules. Neither path allocates.
 
 ## CSV Writer
 
