@@ -63,6 +63,8 @@ jobs:
           find_package(csv2 CONFIG REQUIRED)
           add_executable(csv2_consumer main.cpp)
           target_link_libraries(csv2_consumer PRIVATE csv2::csv2)
+          target_compile_features(csv2_consumer PRIVATE cxx_std_20)
+          set_target_properties(csv2_consumer PROPERTIES CXX_EXTENSIONS OFF)
           EOF
           cat > build/consumer/main.cpp <<'EOF'
           #include <csv2/reader.hpp>
@@ -182,10 +184,17 @@ jobs:
 
       - name: Check first-party C++ formatting
         if: matrix.sanitizers == 'OFF'
-        run: >-
-          clang-format-18 --dry-run --Werror
-          include/csv2/parameters.hpp
-          include/csv2/reader.hpp
-          include/csv2/writer.hpp
-          benchmark/main.cpp
-          test/main.cpp
+        run: |
+          git ls-files -z -- \
+            'include/csv2/detail/*.hpp' \
+            'include/csv2/errors.hpp' \
+            'include/csv2/parameters.hpp' \
+            'include/csv2/reader.hpp' \
+            'include/csv2/writer.hpp' \
+            'benchmark/main.cpp' \
+            'test/config.cpp' \
+            'test/fuzz_reader.cpp' \
+            'test/main.cpp' \
+            'test/mmap_path.cpp' \
+            'test/standard_cxx*.cpp' | \
+            xargs -0 clang-format-18 --dry-run --Werror

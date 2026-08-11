@@ -17,8 +17,7 @@ static_assert(CSV2_HAS_RANGES == 0 || CSV2_HAS_RANGES == 1,
               "feature flags must be boolean preprocessor values");
 static_assert(CSV2_HAS_EXPECTED == 0 || CSV2_HAS_EXPECTED == 1,
               "feature flags must be boolean preprocessor values");
-static_assert(CSV2_HAS_RANGES_TO_CONTAINER == 0 ||
-                  CSV2_HAS_RANGES_TO_CONTAINER == 1,
+static_assert(CSV2_HAS_RANGES_TO_CONTAINER == 0 || CSV2_HAS_RANGES_TO_CONTAINER == 1,
               "feature flags must be boolean preprocessor values");
 
 CSV2_NODISCARD CSV2_CONSTEXPR14 int csv2_config_contract() noexcept {

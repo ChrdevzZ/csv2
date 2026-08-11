@@ -69,8 +69,7 @@ class Writer {
   void release_noexcept_(std::false_type) noexcept { active_ = false; }
 
   void release_noexcept_() noexcept {
-    release_noexcept_(typename std::is_same<Ownership,
-                                            stream_ownership::close_on_destroy>::type());
+    release_noexcept_(typename std::is_same<Ownership, stream_ownership::close_on_destroy>::type());
   }
 
   template <typename Field>
@@ -95,8 +94,7 @@ class Writer {
     return false;
   }
 
-  template <class Policy>
-  void write_escaped_chars_(const char *data, size_t size, Policy policy) {
+  template <class Policy> void write_escaped_chars_(const char *data, size_t size, Policy policy) {
     if (!should_quote_(data, size, policy)) {
       if (size != 0)
         stream_->write(data, static_cast<std::streamsize>(size));

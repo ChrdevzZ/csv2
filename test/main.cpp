@@ -466,6 +466,8 @@ int main() {
 #include <csv2/mio.hpp>
 #elif defined(CSV2_TEST_HEADER_PARAMETERS)
 #include <csv2/parameters.hpp>
+#elif defined(CSV2_TEST_HEADER_ERRORS)
+#include <csv2/errors.hpp>
 #elif defined(CSV2_TEST_HEADER_READER)
 #include <csv2/reader.hpp>
 #elif defined(CSV2_TEST_HEADER_WRITER)
@@ -517,9 +519,9 @@ static_assert(true, "compiling this translation unit is the assertion");
 #include <exception>
 #include <forward_list>
 #include <fstream>
+#include <iterator>
 #include <limits>
 #include <list>
-#include <iterator>
 #include <sstream>
 #include <string>
 #include <system_error>
@@ -565,8 +567,7 @@ using ReaderWithHeader =
     csv2::Reader<csv2::delimiter<','>, csv2::quote_character<'"'>, csv2::first_row_is_header<true>>;
 using PublicRow = csv2::basic_row<csv2::delimiter<','>, csv2::quote_character<'"'>,
                                   csv2::trim_policy::trim_whitespace>;
-using PublicCell =
-    csv2::basic_cell<csv2::quote_character<'"'>, csv2::trim_policy::trim_whitespace>;
+using PublicCell = csv2::basic_cell<csv2::quote_character<'"'>, csv2::trim_policy::trim_whitespace>;
 static_assert(std::is_same<ReaderWithoutHeader::Row, PublicRow>::value,
               "Reader::Row must remain a source-compatible alias");
 static_assert(std::is_same<ReaderWithoutHeader::Cell, PublicCell>::value,
@@ -808,8 +809,8 @@ TEST_CASE("Scan cell boundaries through the shared fast path" * test_suite("Read
 
 TEST_CASE("Validate strict CSV syntax without changing permissive traversal" *
           test_suite("Reader")) {
-  const char *valid_inputs[] = {"a,b\n1,2", " \t\"a\"\"b\" \t,c", "a,\"b\nc\",d",
-                                "a,\"b\r\nc\",d", "a,\"b\rc\",d", "a,b\n1\n2,3,4"};
+  const char *valid_inputs[] = {"a,b\n1,2",       " \t\"a\"\"b\" \t,c", "a,\"b\nc\",d",
+                                "a,\"b\r\nc\",d", "a,\"b\rc\",d",       "a,b\n1\n2,3,4"};
   for (const char *input_value : valid_inputs) {
     ReaderWithoutHeader reader;
     std::string input(input_value);
@@ -896,8 +897,7 @@ TEST_CASE("Convert complete integer field content without modifying failures" *
 }
 
 #if CSV2_HAS_EXPECTED
-TEST_CASE("Expose C++23 expected adapters when the library provides them" *
-          test_suite("Reader")) {
+TEST_CASE("Expose C++23 expected adapters when the library provides them" * test_suite("Reader")) {
   ReaderWithoutHeader reader;
   std::string input("42,invalid");
   REQUIRE(reader.parse(input));
@@ -910,6 +910,14 @@ TEST_CASE("Expose C++23 expected adapters when the library provides them" *
   const auto failed = (*cell).template parse_expected<int>();
   REQUIRE_FALSE(failed.has_value());
   REQUIRE(failed.error().code == csv2::conversion_errc::invalid_argument);
+
+#if CSV2_HAS_MMAP
+  ReaderWithoutHeader mapped;
+  REQUIRE(mapped.mmap_expected("inputs/test_01.csv").has_value());
+  const auto missing = mapped.mmap_expected("inputs/this-file-does-not-exist.csv");
+  REQUIRE_FALSE(missing.has_value());
+  REQUIRE(missing.error());
+#endif
 }
 #endif
 
@@ -1155,9 +1163,8 @@ TEST_CASE("Pipe a temporary borrowed Row view" * test_suite("Reader")) {
   ReaderWithoutHeader reader;
   std::string input("a,bb,ccc");
   REQUIRE(reader.parse(input));
-  auto sizes = *reader.begin() | std::views::transform([](const PublicCell cell) {
-                 return cell.raw_size();
-               });
+  auto sizes = *reader.begin() |
+               std::views::transform([](const PublicCell cell) { return cell.raw_size(); });
   REQUIRE(std::ranges::equal(sizes, std::vector<std::size_t>({1, 2, 3})));
 
 #if CSV2_HAS_RANGES_TO_CONTAINER
@@ -1562,8 +1569,7 @@ TEST_CASE("Build an explicit random-access row index from logical record offsets
   REQUIRE(non_empty_rows.size() == 2);
   REQUIRE(non_empty_rows.end() - non_empty_rows.begin() == 2);
   REQUIRE(read_cells(*(non_empty_rows.begin() + 1)) == std::vector<std::string>({"x", "y"}));
-  REQUIRE(read_cells(non_empty_rows.begin()[0]) ==
-          std::vector<std::string>({"\"a\nb\"", "c"}));
+  REQUIRE(read_cells(non_empty_rows.begin()[0]) == std::vector<std::string>({"\"a\nb\"", "c"}));
 
 #if CSV2_HAS_RANGES
   static_assert(std::ranges::random_access_range<ReaderWithHeader::RowIndex>);
@@ -1634,25 +1640,22 @@ TEST_CASE("Write ADL ranges and contiguous character fields directly" * test_sui
 TEST_CASE("Escape CSV fields with explicit minimal and always quote policies" *
           test_suite("Writer")) {
   std::ostringstream minimal_output;
-  csv2::EscapingWriter<csv2::delimiter<','>, std::ostringstream,
-                       csv2::stream_ownership::leave_open>
+  csv2::EscapingWriter<csv2::delimiter<','>, std::ostringstream, csv2::stream_ownership::leave_open>
       minimal(minimal_output);
-  minimal.write_row(std::vector<std::string>(
-      {"plain", "a,b", "a\"b", "line\nbreak", "car\rriage", ""}));
-  REQUIRE(minimal_output.str() ==
-          "plain,\"a,b\",\"a\"\"b\",\"line\nbreak\",\"car\rriage\",\n");
+  minimal.write_row(
+      std::vector<std::string>({"plain", "a,b", "a\"b", "line\nbreak", "car\rriage", ""}));
+  REQUIRE(minimal_output.str() == "plain,\"a,b\",\"a\"\"b\",\"line\nbreak\",\"car\rriage\",\n");
 
   std::ostringstream always_output;
-  csv2::Writer<csv2::delimiter<','>, std::ostringstream,
-               csv2::stream_ownership::leave_open, csv2::quote_policy::always>
+  csv2::Writer<csv2::delimiter<','>, std::ostringstream, csv2::stream_ownership::leave_open,
+               csv2::quote_policy::always>
       always(always_output);
   always.write_row(std::vector<std::string>({"a", "\"b\"", ""}));
   REQUIRE(always_output.str() == "\"a\",\"\"\"b\"\"\",\"\"\n");
 
   std::ostringstream formatted_output;
   formatted_output << std::hex;
-  csv2::EscapingWriter<csv2::delimiter<','>, std::ostringstream,
-                       csv2::stream_ownership::leave_open>
+  csv2::EscapingWriter<csv2::delimiter<','>, std::ostringstream, csv2::stream_ownership::leave_open>
       formatted(formatted_output);
   const std::vector<CommaFormattedValue> values = {{15, 16}};
   formatted.write_row(values);
@@ -1662,8 +1665,7 @@ TEST_CASE("Escape CSV fields with explicit minimal and always quote policies" *
 TEST_CASE("Leave borrowed streams open unless close is explicit" * test_suite("Writer")) {
   CountingCloseStream implicit_stream;
   {
-    csv2::Writer<csv2::delimiter<','>, CountingCloseStream,
-                 csv2::stream_ownership::leave_open>
+    csv2::Writer<csv2::delimiter<','>, CountingCloseStream, csv2::stream_ownership::leave_open>
         writer(implicit_stream);
     writer.write_row(std::vector<std::string>({"a"}));
   }
@@ -1672,8 +1674,7 @@ TEST_CASE("Leave borrowed streams open unless close is explicit" * test_suite("W
 
   CountingCloseStream explicit_stream;
   {
-    csv2::Writer<csv2::delimiter<','>, CountingCloseStream,
-                 csv2::stream_ownership::leave_open>
+    csv2::Writer<csv2::delimiter<','>, CountingCloseStream, csv2::stream_ownership::leave_open>
         writer(explicit_stream);
     writer.close();
   }
@@ -1685,14 +1686,13 @@ TEST_CASE("Write C++20 view pipelines" * test_suite("Writer")) {
   std::ostringstream output;
   csv2::Writer<csv2::delimiter<','>, std::ostringstream> writer(output);
   const std::vector<std::string> fields = {"a", "skip", "b"};
-  auto selected = fields | std::views::filter([](const std::string &field) {
-                    return field != "skip";
-                  });
+  auto selected =
+      fields | std::views::filter([](const std::string &field) { return field != "skip"; });
   writer.write_row(selected);
 
   const std::vector<std::string> counted_fields = {"x", "y", "ignored"};
-  const auto counted = std::ranges::subrange(
-      std::counted_iterator(counted_fields.begin(), 2), std::default_sentinel);
+  const auto counted = std::ranges::subrange(std::counted_iterator(counted_fields.begin(), 2),
+                                             std::default_sentinel);
   writer.write_row(counted);
   REQUIRE(output.str() == "a,b\nx,y\n");
 }
@@ -1759,7 +1759,9 @@ TEST_CASE("Report explicit Writer close errors and suppress destructor close err
   REQUIRE(explicit_stream.close_count == 1);
 
   ThrowingCloseStream destructor_stream;
-  { ThrowingWriter writer(destructor_stream); }
+  {
+    ThrowingWriter writer(destructor_stream);
+  }
   REQUIRE(destructor_stream.close_count == 1);
 }
 #endif
