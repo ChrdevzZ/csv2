@@ -2,6 +2,7 @@
 
 #include <cstring>
 #include <csv2/detail/config.hpp>
+#include <csv2/detail/output.hpp>
 
 #if CSV2_HAS_MMAP
 #include <csv2/mio.hpp>
@@ -283,30 +284,53 @@ public:
 #endif
 
     template <typename Container> void read_raw_value(Container &result) const {
-      if (start_ >= end_)
-        return;
-      result.reserve(result.size() + end_ - start_);
-      for (size_t i = start_; i < end_; ++i)
-        result.push_back(buffer_[i]);
+      detail::reserve_for_append(result, raw_size());
+      copy_raw_to(detail::container_inserter(result));
     }
 
     template <typename Container> void read_value(Container &result) const {
-      if (start_ >= end_)
-        return;
       const auto bounds = trim_policy::trim(buffer_, start_, end_);
-      result.reserve(result.size() + bounds.second - bounds.first);
-      if (!escaped_) {
-        for (size_t i = bounds.first; i < bounds.second; ++i)
-          result.push_back(buffer_[i]);
-        return;
-      }
+      detail::reserve_for_append(result, bounds.second - bounds.first);
+      decode_to(detail::container_inserter(result));
+    }
 
+    template <typename OutputIt> OutputIt copy_raw_to(OutputIt output) const {
+      if (start_ >= end_)
+        return output;
+      return detail::copy_chars(buffer_ + start_, buffer_ + end_, output);
+    }
+
+    template <typename OutputIt> OutputIt decode_to(OutputIt output) const {
+      if (start_ >= end_)
+        return output;
+      const auto bounds = trim_policy::trim(buffer_, start_, end_);
       for (size_t i = bounds.first; i < bounds.second; ++i) {
-        result.push_back(buffer_[i]);
+        *output = buffer_[i];
+        ++output;
         if (buffer_[i] == quote_character::value && i + 1 < bounds.second &&
             buffer_[i + 1] == quote_character::value)
           ++i;
       }
+      return output;
+    }
+
+    template <typename OutputIt> OutputIt copy_content_to(OutputIt output) const {
+      if (start_ >= end_)
+        return output;
+      auto bounds = trim_policy::trim(buffer_, start_, end_);
+      if (bounds.second - bounds.first >= 2 && buffer_[bounds.first] == quote_character::value &&
+          buffer_[bounds.second - 1] == quote_character::value) {
+        ++bounds.first;
+        --bounds.second;
+      }
+      for (size_t i = bounds.first; i < bounds.second; ++i) {
+        *output = buffer_[i];
+        ++output;
+        if (buffer_[i] == quote_character::value && i + 1 < bounds.second &&
+            buffer_[i + 1] == quote_character::value)
+          ++i;
+      }
+      return output;
     }
   };
 
@@ -317,18 +341,6 @@ public:
     friend class RowIterator;
     friend class Reader;
 
-    template <typename Container>
-    static auto reserve_for_append_(Container &result, size_t additional,
-                                    int) -> decltype(result.reserve(result.size() + additional),
-                                                     void()) {
-      result.reserve(result.size() + additional);
-    }
-
-    template <typename Container>
-    static void reserve_for_append_(Container &result, size_t additional, long) {
-      result.reserve(additional);
-    }
-
   public:
     const char *raw_data() const noexcept { return buffer_ ? buffer_ + start_ : nullptr; }
     size_t raw_size() const noexcept { return end_ - start_; }
@@ -336,11 +348,9 @@ public:
     size_t length() const noexcept { return raw_size(); }
 
     template <typename Container> void read_raw_value(Container &result) const {
-      if (start_ >= end_)
-        return;
-      reserve_for_append_(result, end_ - start_, 0);
-      for (size_t i = start_; i < end_; ++i)
-        result.push_back(buffer_[i]);
+      detail::reserve_for_append(result, raw_size());
+      if (start_ < end_)
+        detail::append_range(result, buffer_ + start_, buffer_ + end_);
     }
 
     class CellIterator {

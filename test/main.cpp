@@ -512,6 +512,7 @@ static_assert(true, "compiling this translation unit is the assertion");
 
 #include <cstddef>
 #include <cstdio>
+#include <deque>
 #include <exception>
 #include <forward_list>
 #include <fstream>
@@ -524,6 +525,10 @@ static_assert(true, "compiling this translation unit is the assertion");
 #include <type_traits>
 #include <utility>
 #include <vector>
+
+#if CSV2_HAS_MEMORY_RESOURCE
+#include <memory_resource>
+#endif
 
 #if CSV2_HAS_FILESYSTEM
 #include <filesystem>
@@ -655,6 +660,13 @@ public:
 
   std::string value;
   std::size_t last_reserve{0};
+};
+
+class AppendOnlyBuffer {
+public:
+  void append(const char *data, std::size_t size) { value.append(data, size); }
+
+  std::string value;
 };
 
 #if CSV2_HAS_MMAP && (defined(__linux__) || defined(_WIN32))
@@ -872,6 +884,44 @@ TEST_CASE("Read raw and decoded cell values by appending to the output" * test_s
   std::string decoded("value:");
   cell.read_value(decoded);
   REQUIRE(decoded == "value:\"a\"b\"");
+}
+
+TEST_CASE("Copy fields to generic containers and output iterators" * test_suite("Reader")) {
+  ReaderWithoutHeader reader;
+  std::string input(" \t\"a\"\"b\"\t ");
+  REQUIRE(reader.parse(input));
+  const auto cell = *(*reader.begin()).begin();
+
+  std::deque<char> raw;
+  cell.read_raw_value(raw);
+  REQUIRE(std::string(raw.begin(), raw.end()) == input);
+
+  std::list<char> decoded;
+  cell.read_value(decoded);
+  REQUIRE(std::string(decoded.begin(), decoded.end()) == "\"a\"b\"");
+
+  AppendOnlyBuffer appended;
+  cell.read_value(appended);
+  REQUIRE(appended.value == "\"a\"b\"");
+
+  std::vector<char> copied;
+  cell.copy_raw_to(std::back_inserter(copied));
+  REQUIRE(std::string(copied.begin(), copied.end()) == input);
+
+  char decoded_buffer[32] = {};
+  char *const decoded_end = cell.decode_to(decoded_buffer);
+  REQUIRE(std::string(decoded_buffer, decoded_end) == "\"a\"b\"");
+
+  std::string content;
+  cell.copy_content_to(std::back_inserter(content));
+  REQUIRE(content == "a\"b");
+
+#if CSV2_HAS_MEMORY_RESOURCE
+  std::pmr::monotonic_buffer_resource resource;
+  std::pmr::string pmr_value(&resource);
+  cell.read_value(pmr_value);
+  REQUIRE(pmr_value == "\"a\"b\"");
+#endif
 }
 
 TEST_CASE("Expose stable raw byte views and explicit source ownership" * test_suite("Reader")) {
