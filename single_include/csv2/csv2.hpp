@@ -166,7 +166,12 @@ struct is_csv_integer
           bool, std::is_integral<T>::value && !std::is_same<T, bool>::value &&
                     !std::is_same<T, char>::value && !std::is_same<T, signed char>::value &&
                     !std::is_same<T, unsigned char>::value && !std::is_same<T, wchar_t>::value &&
-                    !std::is_same<T, char16_t>::value && !std::is_same<T, char32_t>::value> {};
+                    !std::is_same<T, char16_t>::value && !std::is_same<T, char32_t>::value
+#if defined(__cpp_char8_t)
+                    && !std::is_same<T, char8_t>::value
+#endif
+          > {
+};
 
 inline int integer_digit(char character) noexcept {
   if (character >= '0' && character <= '9')
@@ -2288,8 +2293,9 @@ template <bool flag> struct first_row_is_header {
 } // namespace csv2
 
 
-#include <functional>
+#include <cstdint>
 #include <iterator>
+#include <limits>
 #include <memory>
 #include <string>
 #include <system_error>
@@ -2338,6 +2344,8 @@ public:
 
 #if CSV2_HAS_STRING_VIEW
   std::string_view raw_trimmed_view() const noexcept {
+    if (!buffer_)
+      return std::string_view();
     const auto bounds = trim_policy::trim(buffer_, start_, end_);
     return std::string_view(buffer_ + bounds.first, bounds.second - bounds.first);
   }
@@ -2553,6 +2561,8 @@ public:
 
   RowIndex(const char *buffer, size_t buffer_size, size_t start, bool ignore_empty_lines)
       : buffer_(buffer), buffer_size_(buffer_size) {
+    if (!buffer_)
+      return;
     while (start < buffer_size_) {
       const detail::record_bounds bounds =
           detail::find_record_bounds<quote_character_type>(buffer_, buffer_size_, start);
@@ -2698,10 +2708,23 @@ class Reader {
     if (!source || !data || size > source_size)
       return false;
 
-    const char *const source_end = source + source_size;
-    const char *const data_end = data + size;
-    const std::less<const char *> less;
-    return !less(data, source) && !less(source_end, data_end);
+    const std::uintptr_t source_begin = reinterpret_cast<std::uintptr_t>(source);
+    const std::uintptr_t data_begin = reinterpret_cast<std::uintptr_t>(data);
+    if (source_size > (std::numeric_limits<std::uintptr_t>::max)() - source_begin)
+      return false;
+    const std::uintptr_t source_end = source_begin + source_size;
+    return data_begin >= source_begin && data_begin <= source_end &&
+           size <= source_end - data_begin;
+  }
+
+  static bool contains_address_(const char *source, size_t source_size, const char *data) noexcept {
+    if (!source || !data)
+      return false;
+    const std::uintptr_t source_begin = reinterpret_cast<std::uintptr_t>(source);
+    const std::uintptr_t data_begin = reinterpret_cast<std::uintptr_t>(data);
+    if (source_size > (std::numeric_limits<std::uintptr_t>::max)() - source_begin)
+      return false;
+    return data_begin >= source_begin && data_begin <= source_begin + source_size;
   }
 
   bool owns_range_(const char *data, size_t size) const noexcept {
@@ -2709,6 +2732,16 @@ class Reader {
       return true;
 #if CSV2_HAS_MMAP
     if (mmap_.is_mapped() && contains_range_(mmap_.data(), mmap_.size(), data, size))
+      return true;
+#endif
+    return false;
+  }
+
+  bool aliases_source_(const char *data) const noexcept {
+    if (owned_buffer_ && contains_address_(owned_buffer_->c_str(), owned_buffer_->size(), data))
+      return true;
+#if CSV2_HAS_MMAP
+    if (mmap_.is_mapped() && contains_address_(mmap_.data(), mmap_.size(), data))
       return true;
 #endif
     return false;
@@ -2832,7 +2865,12 @@ public:
       reset_source_();
       return false;
     }
-    if (!owns_range_(data, size))
+    const bool owned_range = owns_range_(data, size);
+    if (aliases_source_(data) && !owned_range) {
+      reset_source_();
+      return false;
+    }
+    if (!owned_range)
       reset_source_();
     buffer_ = data;
     buffer_size_ = size;
@@ -2859,7 +2897,12 @@ public:
       reset_source_();
       return false;
     }
-    if (!owns_range_(data, size))
+    const bool owned_range = owns_range_(data, size);
+    if (aliases_source_(data) && !owned_range) {
+      reset_source_();
+      return false;
+    }
+    if (!owned_range)
       reset_source_();
     buffer_ = data;
     buffer_size_ = size;

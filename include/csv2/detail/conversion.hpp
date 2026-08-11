@@ -21,7 +21,12 @@ struct is_csv_integer
           bool, std::is_integral<T>::value && !std::is_same<T, bool>::value &&
                     !std::is_same<T, char>::value && !std::is_same<T, signed char>::value &&
                     !std::is_same<T, unsigned char>::value && !std::is_same<T, wchar_t>::value &&
-                    !std::is_same<T, char16_t>::value && !std::is_same<T, char32_t>::value> {};
+                    !std::is_same<T, char16_t>::value && !std::is_same<T, char32_t>::value
+#if defined(__cpp_char8_t)
+                    && !std::is_same<T, char8_t>::value
+#endif
+          > {
+};
 
 inline int integer_digit(char character) noexcept {
   if (character >= '0' && character <= '9')

@@ -576,6 +576,10 @@ static_assert(sizeof(ReaderWithoutHeader::RowIterator) <= 5 * sizeof(void *),
               "RowIterator must remain a five-word cursor");
 static_assert(sizeof(PublicRow::CellIterator) <= 5 * sizeof(void *),
               "CellIterator must not retain redundant range state");
+#if defined(__cpp_char8_t)
+static_assert(!csv2::detail::is_csv_integer<char8_t>::value,
+              "character types must not use integer conversion");
+#endif
 
 #if CSV2_HAS_RANGES
 using ConceptRowIterator = decltype(std::declval<ReaderWithoutHeader &>().begin());
@@ -1145,6 +1149,25 @@ TEST_CASE("Expose stable raw byte views and explicit source ownership" * test_su
   REQUIRE(owned_row == "owned,value");
 }
 
+TEST_CASE("Reject an owned alias range that extends beyond its backing source" *
+          test_suite("Reader")) {
+  ReaderWithoutHeader reader;
+  const std::string input("owned,value");
+  REQUIRE(reader.parse_owned(input));
+  const char *const source = (*reader.begin()).raw_data();
+
+  REQUIRE_FALSE(reader.parse_borrowed(source + 1, input.size()));
+  REQUIRE(reader.rows() == 0);
+}
+
+#if CSV2_HAS_STRING_VIEW
+TEST_CASE("Expose an empty view from a default cell" * test_suite("Reader")) {
+  const PublicCell cell;
+  REQUIRE(cell.raw_trimmed_view().empty());
+  REQUIRE(cell.read_view().empty());
+}
+#endif
+
 #if CSV2_HAS_SPAN
 TEST_CASE("Borrow a span source without copying" * test_suite("Reader")) {
   char bytes[] = {'a', ',', 'b'};
@@ -1570,6 +1593,9 @@ TEST_CASE("Build an explicit random-access row index from logical record offsets
   REQUIRE(non_empty_rows.end() - non_empty_rows.begin() == 2);
   REQUIRE(read_cells(*(non_empty_rows.begin() + 1)) == std::vector<std::string>({"x", "y"}));
   REQUIRE(read_cells(non_empty_rows.begin()[0]) == std::vector<std::string>({"\"a\nb\"", "c"}));
+
+  const ReaderWithHeader::RowIndex invalid(nullptr, 4, 0, false);
+  REQUIRE(invalid.empty());
 
 #if CSV2_HAS_RANGES
   static_assert(std::ranges::random_access_range<ReaderWithHeader::RowIndex>);
