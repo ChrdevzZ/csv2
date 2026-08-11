@@ -510,6 +510,7 @@ static_assert(true, "compiling this translation unit is the assertion");
 #error "mio must not be included when CSV2_HAS_MMAP is disabled"
 #endif
 
+#include <algorithm>
 #include <cstddef>
 #include <cstdio>
 #include <deque>
@@ -562,6 +563,14 @@ using ReaderWithoutHeader = csv2::Reader<csv2::delimiter<','>, csv2::quote_chara
                                          csv2::first_row_is_header<false>>;
 using ReaderWithHeader =
     csv2::Reader<csv2::delimiter<','>, csv2::quote_character<'"'>, csv2::first_row_is_header<true>>;
+using PublicRow = csv2::basic_row<csv2::delimiter<','>, csv2::quote_character<'"'>,
+                                  csv2::trim_policy::trim_whitespace>;
+using PublicCell =
+    csv2::basic_cell<csv2::quote_character<'"'>, csv2::trim_policy::trim_whitespace>;
+static_assert(std::is_same<ReaderWithoutHeader::Row, PublicRow>::value,
+              "Reader::Row must remain a source-compatible alias");
+static_assert(std::is_same<ReaderWithoutHeader::Cell, PublicCell>::value,
+              "Reader::Cell must remain a source-compatible alias");
 
 #if CSV2_HAS_RANGES
 using ConceptRowIterator = decltype(std::declval<ReaderWithoutHeader &>().begin());
@@ -573,6 +582,9 @@ static_assert(std::input_iterator<ConceptCellIterator>);
 static_assert(std::forward_iterator<ConceptCellIterator>);
 static_assert(std::ranges::forward_range<ReaderWithoutHeader>);
 static_assert(std::ranges::forward_range<ConceptRow>);
+static_assert(std::ranges::view<ConceptRow>);
+static_assert(std::ranges::borrowed_range<ConceptRow>);
+static_assert(!std::ranges::borrowed_range<ReaderWithoutHeader>);
 #endif
 
 template <typename RowType> std::vector<std::string> read_cells(const RowType &row) {
@@ -1007,6 +1019,23 @@ TEST_CASE("Borrow a span source without copying" * test_suite("Reader")) {
   std::string row;
   (*reader.begin()).read_raw_value(row);
   REQUIRE(row == "x,b");
+}
+#endif
+
+#if CSV2_HAS_RANGES
+TEST_CASE("Pipe a temporary borrowed Row view" * test_suite("Reader")) {
+  ReaderWithoutHeader reader;
+  std::string input("a,bb,ccc");
+  REQUIRE(reader.parse(input));
+  auto sizes = *reader.begin() | std::views::transform([](const PublicCell cell) {
+                 return cell.raw_size();
+               });
+  REQUIRE(std::ranges::equal(sizes, std::vector<std::size_t>({1, 2, 3})));
+
+#if CSV2_HAS_RANGES_TO_CONTAINER
+  const auto collected = sizes | std::ranges::to<std::vector<std::size_t>>();
+  REQUIRE(collected == std::vector<std::size_t>({1, 2, 3}));
+#endif
 }
 #endif
 
