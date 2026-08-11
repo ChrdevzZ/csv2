@@ -27,6 +27,17 @@ static_assert(reader_accepts_path<std::string>::value,
 static_assert(!reader_accepts_path<std::vector<char>>::value,
               "Reader must reject arbitrary contiguous storage");
 
+#if defined(_WIN32)
+static_assert(mio::detail::is_path<const wchar_t *>::value,
+              "NUL-terminated wide paths must be accepted on Windows");
+static_assert(mio::detail::is_path<std::wstring>::value,
+              "std::wstring paths must be accepted on Windows");
+static_assert(reader_accepts_path<const wchar_t *>::value,
+              "Reader must expose its wide C-string mmap overload on Windows");
+static_assert(reader_accepts_path<std::wstring>::value,
+              "Reader must expose its std::wstring mmap overload on Windows");
+#endif
+
 #if CSV2_HAS_STRING_VIEW
 #include <string_view>
 static_assert(!mio::detail::is_path<std::string_view>::value,
