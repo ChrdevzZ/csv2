@@ -73,11 +73,11 @@ class Writer {
   }
 
   template <typename Field>
-  auto write_raw_field_(const Field &field, int)
-      -> decltype(static_cast<const char *>(field.data()), field.size(),
-                  stream_->write(static_cast<const char *>(field.data()),
-                                 static_cast<std::streamsize>(field.size())),
-                  void()) {
+  auto write_raw_field_(const Field &field,
+                        int) -> decltype(static_cast<const char *>(field.data()), field.size(),
+                                         stream_->write(static_cast<const char *>(field.data()),
+                                                        static_cast<std::streamsize>(field.size())),
+                                         void()) {
     stream_->write(static_cast<const char *>(field.data()),
                    static_cast<std::streamsize>(field.size()));
   }
@@ -117,8 +117,9 @@ class Writer {
   }
 
   template <typename Field>
-  auto write_escaped_field_(const Field &field, int)
-      -> decltype(static_cast<const char *>(field.data()), field.size(), void()) {
+  auto write_escaped_field_(const Field &field,
+                            int) -> decltype(static_cast<const char *>(field.data()), field.size(),
+                                             void()) {
     write_escaped_chars_(static_cast<const char *>(field.data()), static_cast<size_t>(field.size()),
                          QuotePolicy());
   }
