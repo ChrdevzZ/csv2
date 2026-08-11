@@ -571,6 +571,10 @@ static_assert(std::is_same<ReaderWithoutHeader::Row, PublicRow>::value,
               "Reader::Row must remain a source-compatible alias");
 static_assert(std::is_same<ReaderWithoutHeader::Cell, PublicCell>::value,
               "Reader::Cell must remain a source-compatible alias");
+static_assert(sizeof(ReaderWithoutHeader::RowIterator) <= 5 * sizeof(void *),
+              "RowIterator must remain a five-word cursor");
+static_assert(sizeof(PublicRow::CellIterator) <= 5 * sizeof(void *),
+              "CellIterator must not retain redundant range state");
 
 #if CSV2_HAS_RANGES
 using ConceptRowIterator = decltype(std::declval<ReaderWithoutHeader &>().begin());
@@ -783,6 +787,14 @@ TEST_CASE("Honor delimiter, quote, and trim policies" * test_suite("Reader")) {
   std::string untrimmed_input(" a | b ");
   REQUIRE(untrimmed.parse(untrimmed_input));
   REQUIRE(read_cells(*untrimmed.begin()) == std::vector<std::string>({" a ", " b "}));
+}
+
+TEST_CASE("Scan cell boundaries through the shared fast path" * test_suite("Reader")) {
+  ReaderWithoutHeader reader;
+  std::string input("plain,\"quoted,field\",\"a\"\"b\",tail,");
+  REQUIRE(reader.parse(input));
+  REQUIRE(read_cells(*reader.begin()) ==
+          std::vector<std::string>({"plain", "\"quoted,field\"", "\"a\"b\"", "tail", ""}));
 }
 
 TEST_CASE("Handle record terminators and quoted newlines" * test_suite("Reader")) {
