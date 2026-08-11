@@ -253,6 +253,17 @@ public:
 
 ## CSV Writer
 
+`Writer` accepts standard ranges through ADL `begin`/`end`, including native
+arrays and C++20 iterator/sentinel views. Contiguous `char` fields are written
+with a single stream `write()` call; arithmetic and other streamable values
+continue to use `operator<<` and therefore preserve the stream's locale and
+formatting state.
+
+The default `stream_ownership::close_on_destroy` policy preserves the original
+behavior. Select `stream_ownership::leave_open` as the third template argument
+when the caller retains close responsibility. Explicit `Writer::close()` still
+closes a close-capable stream under either policy and reports its errors.
+
 This library also provides a basic `csv2::Writer` class - one that can be used to write CSV rows to file. Here's a basic usage:
 
 ```cpp

@@ -619,6 +619,17 @@ public:
   int close_count{0};
 };
 
+class DirectWriteTrackingStream : public std::ostringstream {
+public:
+  DirectWriteTrackingStream &write(const char *data, std::streamsize size) {
+    ++write_calls;
+    std::ostringstream::write(data, size);
+    return *this;
+  }
+
+  std::size_t write_calls{0};
+};
+
 #if !defined(CSV2_TEST_NO_EXCEPTIONS)
 struct CloseError {};
 
@@ -1421,6 +1432,60 @@ TEST_CASE("Write empty and forward-iterable rows" * test_suite("Writer")) {
 
   REQUIRE(output.str() == "\n\na,b\nx,y,z\n");
 }
+
+TEST_CASE("Write ADL ranges and contiguous character fields directly" * test_suite("Writer")) {
+  DirectWriteTrackingStream output;
+  csv2::Writer<csv2::delimiter<','>, DirectWriteTrackingStream> writer(output);
+  const std::string row[] = {"alpha", "beta"};
+  writer.write_row(row);
+
+  REQUIRE(output.str() == "alpha,beta\n");
+  REQUIRE(output.write_calls == 2);
+
+  std::ostringstream numbers;
+  csv2::Writer<csv2::delimiter<','>, std::ostringstream> number_writer(numbers);
+  number_writer.write_row(std::vector<int>({1, 2}));
+  REQUIRE(numbers.str() == "1,2\n");
+}
+
+TEST_CASE("Leave borrowed streams open unless close is explicit" * test_suite("Writer")) {
+  CountingCloseStream implicit_stream;
+  {
+    csv2::Writer<csv2::delimiter<','>, CountingCloseStream,
+                 csv2::stream_ownership::leave_open>
+        writer(implicit_stream);
+    writer.write_row(std::vector<std::string>({"a"}));
+  }
+  REQUIRE(implicit_stream.close_count == 0);
+  REQUIRE(implicit_stream.str() == "a\n");
+
+  CountingCloseStream explicit_stream;
+  {
+    csv2::Writer<csv2::delimiter<','>, CountingCloseStream,
+                 csv2::stream_ownership::leave_open>
+        writer(explicit_stream);
+    writer.close();
+  }
+  REQUIRE(explicit_stream.close_count == 1);
+}
+
+#if CSV2_HAS_RANGES
+TEST_CASE("Write C++20 view pipelines" * test_suite("Writer")) {
+  std::ostringstream output;
+  csv2::Writer<csv2::delimiter<','>, std::ostringstream> writer(output);
+  const std::vector<std::string> fields = {"a", "skip", "b"};
+  auto selected = fields | std::views::filter([](const std::string &field) {
+                    return field != "skip";
+                  });
+  writer.write_row(selected);
+
+  const std::vector<std::string> counted_fields = {"x", "y", "ignored"};
+  const auto counted = std::ranges::subrange(
+      std::counted_iterator(counted_fields.begin(), 2), std::default_sentinel);
+  writer.write_row(counted);
+  REQUIRE(output.str() == "a,b\nx,y\n");
+}
+#endif
 
 TEST_CASE("Write a forward-iterable collection of rows" * test_suite("Writer")) {
   std::ostringstream output;
