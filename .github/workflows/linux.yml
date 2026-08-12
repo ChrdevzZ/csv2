@@ -232,7 +232,10 @@ jobs:
       - name: Test with ASan and UBSan
         if: matrix.sanitizers == 'ON'
         env:
-          ASAN_OPTIONS: detect_leaks=1:halt_on_error=1
+          # Ubuntu's prebuilt libc++/libc++abi hits LLVM #59432: its packaging
+          # prevents ASan from interposing exception deallocation. The GCC
+          # sanitizer job above retains alloc/dealloc mismatch coverage.
+          ASAN_OPTIONS: detect_leaks=1:halt_on_error=1:alloc_dealloc_mismatch=0
           UBSAN_OPTIONS: halt_on_error=1:print_stacktrace=1
         run: >-
           ctest --test-dir build

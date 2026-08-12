@@ -185,8 +185,7 @@ int main(int argc, char **argv) {
     std::cout << "protocol=" << protocol << " revision=" << CSV2_BENCHMARK_REVISION
               << " operations=rows_cells"
 #if CSV2_HAS_MMAP
-              << ",legacy_mmap_rows_cells"
-              << " sources=buffer,mmap"
+              << ",legacy_mmap_rows_cells" << " sources=buffer,mmap"
 #else
               << " sources=buffer"
 #endif
