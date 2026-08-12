@@ -1,6 +1,8 @@
+#include <cerrno>
 #include <chrono>
 #include <cstdint>
 #include <cstdlib>
+#include <cstring>
 #include <csv2/reader.hpp>
 #include <csv2/writer.hpp>
 #include <fstream>
@@ -13,6 +15,13 @@
 #include <string>
 #include <system_error>
 #include <vector>
+
+#if defined(__linux__)
+#include <linux/perf_event.h>
+#include <sys/ioctl.h>
+#include <sys/syscall.h>
+#include <unistd.h>
+#endif
 
 #if CSV2_HAS_RANGES
 #include <ranges>
@@ -77,6 +86,7 @@ struct Options {
   bool check_expected{false};
   std::uint64_t expected_checksum{0};
   bool track_allocations{false};
+  bool track_hardware_counters{false};
   bool check_expected_allocations{false};
   std::uint64_t expected_allocations{0};
 };
@@ -85,6 +95,116 @@ struct Result {
   std::uint64_t checksum{1469598103934665603ull};
   std::uint64_t rows{0};
   std::uint64_t cells{0};
+};
+
+struct HardwareCounterResult {
+  std::uint64_t time_enabled{0};
+  std::uint64_t time_running{0};
+  std::uint64_t cycles{0};
+  std::uint64_t instructions{0};
+  std::uint64_t branch_misses{0};
+};
+
+class HardwareCounterGroup {
+#if defined(__linux__)
+  int leader_{-1};
+  int instructions_{-1};
+  int branch_misses_{-1};
+
+  static int open_event_(std::uint64_t config, int group, bool disabled) noexcept {
+    perf_event_attr attributes{};
+    attributes.type = PERF_TYPE_HARDWARE;
+    attributes.size = sizeof(attributes);
+    attributes.config = config;
+    attributes.disabled = disabled ? 1 : 0;
+    attributes.exclude_kernel = 1;
+    attributes.exclude_hv = 1;
+    attributes.read_format =
+        PERF_FORMAT_GROUP | PERF_FORMAT_TOTAL_TIME_ENABLED | PERF_FORMAT_TOTAL_TIME_RUNNING;
+    return static_cast<int>(syscall(SYS_perf_event_open, &attributes, 0, -1, group, 0));
+  }
+
+  void close_() noexcept {
+    if (branch_misses_ >= 0)
+      ::close(branch_misses_);
+    if (instructions_ >= 0)
+      ::close(instructions_);
+    if (leader_ >= 0)
+      ::close(leader_);
+    branch_misses_ = -1;
+    instructions_ = -1;
+    leader_ = -1;
+  }
+#endif
+
+public:
+  ~HardwareCounterGroup() noexcept {
+#if defined(__linux__)
+    close_();
+#endif
+  }
+
+  bool prepare(std::string &message) noexcept {
+#if defined(__linux__)
+    leader_ = open_event_(PERF_COUNT_HW_CPU_CYCLES, -1, true);
+    if (leader_ >= 0)
+      instructions_ = open_event_(PERF_COUNT_HW_INSTRUCTIONS, leader_, false);
+    if (instructions_ >= 0)
+      branch_misses_ = open_event_(PERF_COUNT_HW_BRANCH_MISSES, leader_, false);
+    if (leader_ >= 0 && instructions_ >= 0 && branch_misses_ >= 0)
+      return true;
+    message = std::string("unable to open Linux hardware counters: ") + std::strerror(errno);
+    close_();
+    return false;
+#else
+    message = "operation-scoped hardware counters require Linux perf_event_open";
+    return false;
+#endif
+  }
+
+  bool start(std::string &message) noexcept {
+#if defined(__linux__)
+    if (ioctl(leader_, PERF_EVENT_IOC_RESET, PERF_IOC_FLAG_GROUP) == 0 &&
+        ioctl(leader_, PERF_EVENT_IOC_ENABLE, PERF_IOC_FLAG_GROUP) == 0)
+      return true;
+    message = std::string("unable to start Linux hardware counters: ") + std::strerror(errno);
+    return false;
+#else
+    (void)message;
+    return false;
+#endif
+  }
+
+  bool stop(HardwareCounterResult &result, std::string &message) noexcept {
+#if defined(__linux__)
+    if (ioctl(leader_, PERF_EVENT_IOC_DISABLE, PERF_IOC_FLAG_GROUP) != 0) {
+      message = std::string("unable to stop Linux hardware counters: ") + std::strerror(errno);
+      return false;
+    }
+    struct GroupRead {
+      std::uint64_t count;
+      std::uint64_t time_enabled;
+      std::uint64_t time_running;
+      std::uint64_t values[3];
+    } reading{};
+    const ssize_t bytes = ::read(leader_, &reading, sizeof(reading));
+    if (bytes != static_cast<ssize_t>(sizeof(reading)) || reading.count != 3) {
+      message = std::string("unable to read Linux hardware counters: ") +
+                (bytes < 0 ? std::strerror(errno) : "unexpected counter group layout");
+      return false;
+    }
+    result.time_enabled = reading.time_enabled;
+    result.time_running = reading.time_running;
+    result.cycles = reading.values[0];
+    result.instructions = reading.values[1];
+    result.branch_misses = reading.values[2];
+    return true;
+#else
+    (void)result;
+    (void)message;
+    return false;
+#endif
+  }
 };
 
 void mix(std::uint64_t &checksum, std::uint64_t value) noexcept {
@@ -126,6 +246,10 @@ bool parse_options(int argc, char **argv, Options &options) {
     const std::string name(argv[argument]);
     if (name == "--track-allocations") {
       options.track_allocations = true;
+      continue;
+    }
+    if (name == "--track-counters") {
+      options.track_hardware_counters = true;
       continue;
     }
     if (argument + 1 >= argc)
@@ -417,7 +541,7 @@ int main(int argc, char **argv) {
   if (!parse_options(argc, argv, options)) {
     std::cerr << "usage: csv2_benchmark --operation NAME --input FILE "
                  "[--source mmap|buffer] [--iterations N] [--expect-checksum N] "
-                 "[--track-allocations] [--expect-allocations N]\n";
+                 "[--track-allocations] [--expect-allocations N] [--track-counters]\n";
     return EXIT_FAILURE;
   }
 #if !defined(CSV2_BENCHMARK_ENABLE_ALLOCATION_TRACKING)
@@ -458,7 +582,18 @@ int main(int argc, char **argv) {
   }
 
   Result result;
+  HardwareCounterGroup hardware_counters;
+  HardwareCounterResult hardware_counter_result;
+  std::string hardware_counter_error;
+  if (options.track_hardware_counters && !hardware_counters.prepare(hardware_counter_error)) {
+    std::cerr << "error: " << hardware_counter_error << '\n';
+    return EXIT_FAILURE;
+  }
   csv2_benchmark_allocation::reset(options.track_allocations);
+  if (options.track_hardware_counters && !hardware_counters.start(hardware_counter_error)) {
+    std::cerr << "error: " << hardware_counter_error << '\n';
+    return EXIT_FAILURE;
+  }
   const std::chrono::steady_clock::time_point start = std::chrono::steady_clock::now();
   bool success = false;
   if (options.operation == "map_only") {
@@ -472,6 +607,11 @@ int main(int argc, char **argv) {
       success = run_reader_operation(options.operation, reader, result);
   }
   const std::chrono::steady_clock::time_point stop = std::chrono::steady_clock::now();
+  if (options.track_hardware_counters &&
+      !hardware_counters.stop(hardware_counter_result, hardware_counter_error)) {
+    std::cerr << "error: " << hardware_counter_error << '\n';
+    return EXIT_FAILURE;
+  }
   csv2_benchmark_allocation::enabled = false;
 
   if (!success) {
@@ -506,6 +646,13 @@ int main(int argc, char **argv) {
 #endif
             << " allocations=" << csv2_benchmark_allocation::count
             << " allocated_bytes=" << csv2_benchmark_allocation::bytes
+            << (options.track_hardware_counters ? " hardware_counter_scope=timed_operation"
+                                                : " hardware_counter_scope=disabled")
+            << " hardware_counter_time_enabled=" << hardware_counter_result.time_enabled
+            << " hardware_counter_time_running=" << hardware_counter_result.time_running
+            << " cycles=" << hardware_counter_result.cycles
+            << " instructions=" << hardware_counter_result.instructions
+            << " branch_misses=" << hardware_counter_result.branch_misses
             << " checksum=" << result.checksum << '\n';
   return EXIT_SUCCESS;
 }
