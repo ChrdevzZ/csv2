@@ -9,8 +9,8 @@
 #include <iomanip>
 #include <iostream>
 #include <iterator>
+#include <limits>
 #include <new>
-#include <sstream>
 #include <streambuf>
 #include <string>
 #include <system_error>
@@ -221,24 +221,33 @@ template <class Range> void mix_bytes(std::uint64_t &checksum, const Range &valu
     mix(checksum, static_cast<unsigned char>(character));
 }
 
-bool parse_size(const char *text, std::size_t &value) {
-  std::istringstream input(text);
-  std::size_t parsed = 0;
-  input >> parsed;
-  if (!input || !input.eof() || parsed == 0)
+template <typename Unsigned>
+bool parse_unsigned_decimal(const char *text, Unsigned &value, bool require_nonzero) {
+  if (!text || *text == '\0')
+    return false;
+
+  Unsigned parsed = 0;
+  const Unsigned maximum = (std::numeric_limits<Unsigned>::max)();
+  for (const char *current = text; *current != '\0'; ++current) {
+    if (*current < '0' || *current > '9')
+      return false;
+    const Unsigned digit = static_cast<Unsigned>(*current - '0');
+    if (parsed > static_cast<Unsigned>((maximum - digit) / Unsigned(10)))
+      return false;
+    parsed = static_cast<Unsigned>(parsed * Unsigned(10) + digit);
+  }
+  if (require_nonzero && parsed == 0)
     return false;
   value = parsed;
   return true;
 }
 
+bool parse_size(const char *text, std::size_t &value) {
+  return parse_unsigned_decimal(text, value, true);
+}
+
 bool parse_checksum(const char *text, std::uint64_t &value) {
-  std::istringstream input(text);
-  std::uint64_t parsed = 0;
-  input >> parsed;
-  if (!input || !input.eof())
-    return false;
-  value = parsed;
-  return true;
+  return parse_unsigned_decimal(text, value, false);
 }
 
 bool parse_options(int argc, char **argv, Options &options) {
