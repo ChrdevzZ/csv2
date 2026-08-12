@@ -11,7 +11,7 @@ namespace trim_policy {
 struct no_trimming {
 public:
   static std::pair<std::size_t, std::size_t> trim(const char *buffer, std::size_t start,
-                                                  std::size_t end) {
+                                                  std::size_t end) noexcept {
     (void)(buffer); // to silence unused parameter warning
     return {start, end};
   }
@@ -27,7 +27,7 @@ private:
 
 public:
   static std::pair<std::size_t, std::size_t> trim(const char *buffer, std::size_t start,
-                                                  std::size_t end) {
+                                                  std::size_t end) noexcept {
     std::size_t new_start = start, new_end = end;
     while (new_start != new_end && is_trim_char(buffer[new_start], character_list...))
       ++new_start;

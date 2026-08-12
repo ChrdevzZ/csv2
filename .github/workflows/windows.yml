@@ -212,6 +212,11 @@ jobs:
           target_link_libraries(csv2_consumer PRIVATE csv2::csv2)
           target_compile_features(csv2_consumer PRIVATE cxx_std_20)
           set_target_properties(csv2_consumer PROPERTIES CXX_EXTENSIONS OFF)
+          add_executable(csv2_no_mmap_consumer no_mmap.cpp)
+          target_link_libraries(csv2_no_mmap_consumer PRIVATE csv2::csv2)
+          target_compile_features(csv2_no_mmap_consumer PRIVATE cxx_std_11)
+          target_compile_definitions(csv2_no_mmap_consumer PRIVATE CSV2_HAS_MMAP=0)
+          set_target_properties(csv2_no_mmap_consumer PROPERTIES CXX_EXTENSIONS OFF)
           '@ | Set-Content build/consumer/CMakeLists.txt
           @'
           #include <csv2/reader.hpp>
@@ -221,6 +226,17 @@ jobs:
             return reader.parse(std::string("a,b")) ? 0 : 1;
           }
           '@ | Set-Content build/consumer/main.cpp
+          @'
+          #include <csv2/mio.hpp>
+          #ifdef MIO_MMAP_HEADER
+          #error "mio must be absent when CSV2_HAS_MMAP=0"
+          #endif
+          #include <csv2/errors.hpp>
+          #include <csv2/parameters.hpp>
+          #include <csv2/reader.hpp>
+          #include <csv2/writer.hpp>
+          int main() { return CSV2_HAS_MMAP; }
+          '@ | Set-Content build/consumer/no_mmap.cpp
           cmake -S build/consumer -B build/consumer-build `
             -G "Visual Studio 18 2026" -A x64 `
             -DCMAKE_PREFIX_PATH="$PWD/build/install"
@@ -229,6 +245,10 @@ jobs:
           & build/consumer-build/${{ matrix.configuration }}/csv2_consumer.exe
           if ($LASTEXITCODE -ne 0) {
             throw "Installed package consumer failed"
+          }
+          & build/consumer-build/${{ matrix.configuration }}/csv2_no_mmap_consumer.exe
+          if ($LASTEXITCODE -ne 0) {
+            throw "Installed no-mmap consumer failed"
           }
 
       - name: Verify single-header regeneration

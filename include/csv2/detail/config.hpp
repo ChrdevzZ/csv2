@@ -10,7 +10,8 @@
 
 #define CSV2_DETAIL_HAS_VERSION_HEADER 0
 
-#if defined(__has_include) && !defined(CSV2_DETAIL_FORCE_HEADER_PROBES)
+#if !defined(CSV2_DETAIL_DISABLE_OPTIONAL_FACILITIES) && CSV2_CPLUSPLUS >= 202002L &&              \
+    defined(__has_include) && !defined(CSV2_DETAIL_FORCE_HEADER_PROBES)
 #if __has_include(<version>)
 #undef CSV2_DETAIL_HAS_VERSION_HEADER
 #define CSV2_DETAIL_HAS_VERSION_HEADER 1
@@ -18,21 +19,23 @@
 #endif
 #endif
 
-// A conforming library can provide the SD-6 macros only from the facility's
-// header. Probe those headers when <version> is unavailable (or in the
-// fallback contract) and continue to gate every API on the macro value below.
-#if !CSV2_DETAIL_HAS_VERSION_HEADER && CSV2_CPLUSPLUS >= 201703L
+// A conforming library can provide an SD-6 macro only from the facility's
+// header, and a partial <version> may omit a facility that its own header
+// supplies. Probe each missing macro independently and gate every API on the
+// resulting macro value below.
+#if !defined(CSV2_DETAIL_DISABLE_OPTIONAL_FACILITIES) && CSV2_CPLUSPLUS >= 201703L
 #if defined(__has_include)
-#if __has_include(<string_view>)
+#if (!defined(__cpp_lib_string_view) || __cpp_lib_string_view < 201606L) && __has_include(<string_view>)
 #include <string_view>
 #endif
-#if __has_include(<filesystem>)
+#if (!defined(__cpp_lib_filesystem) || __cpp_lib_filesystem < 201703L) && __has_include(<filesystem>)
 #include <filesystem>
 #endif
-#if __has_include(<charconv>)
+#if (!defined(__cpp_lib_to_chars) || __cpp_lib_to_chars < 201611L) && __has_include(<charconv>)
 #include <charconv>
 #endif
-#if __has_include(<memory_resource>)
+#if (!defined(__cpp_lib_memory_resource) || __cpp_lib_memory_resource < 201603L) &&                \
+    __has_include(<memory_resource>)
 #include <memory_resource>
 #endif
 #else
@@ -43,12 +46,14 @@
 #endif
 #endif
 
-#if !CSV2_DETAIL_HAS_VERSION_HEADER && CSV2_CPLUSPLUS >= 202002L
+#if !defined(CSV2_DETAIL_DISABLE_OPTIONAL_FACILITIES) && CSV2_CPLUSPLUS >= 202002L
 #if defined(__has_include)
-#if __has_include(<span>)
+#if (!defined(__cpp_lib_span) || __cpp_lib_span < 202002L) && __has_include(<span>)
 #include <span>
 #endif
-#if __has_include(<ranges>)
+#if (!defined(__cpp_lib_ranges) || __cpp_lib_ranges < 201911L ||                                   \
+     !defined(__cpp_lib_ranges_to_container)) &&                                                   \
+    __has_include(<ranges>)
 #include <ranges>
 #endif
 #else
@@ -57,9 +62,9 @@
 #endif
 #endif
 
-#if !CSV2_DETAIL_HAS_VERSION_HEADER && CSV2_CPLUSPLUS > 202002L
+#if !defined(CSV2_DETAIL_DISABLE_OPTIONAL_FACILITIES) && CSV2_CPLUSPLUS > 202002L
 #if defined(__has_include)
-#if __has_include(<expected>)
+#if (!defined(__cpp_lib_expected) || __cpp_lib_expected < 202202L) && __has_include(<expected>)
 #include <expected>
 #endif
 #else
@@ -97,6 +102,16 @@
 #define CSV2_FORCE_INLINE inline
 #endif
 
+#if defined(CSV2_DETAIL_DISABLE_OPTIONAL_FACILITIES)
+#define CSV2_HAS_STRING_VIEW 0
+#define CSV2_HAS_FILESYSTEM 0
+#define CSV2_HAS_CHARCONV 0
+#define CSV2_HAS_MEMORY_RESOURCE 0
+#define CSV2_HAS_SPAN 0
+#define CSV2_HAS_RANGES 0
+#define CSV2_HAS_EXPECTED 0
+#define CSV2_HAS_RANGES_TO_CONTAINER 0
+#else
 #if defined(__cpp_lib_string_view) && __cpp_lib_string_view >= 201606L
 #define CSV2_HAS_STRING_VIEW 1
 #else
@@ -144,6 +159,7 @@
 #else
 #define CSV2_HAS_RANGES_TO_CONTAINER 0
 #endif
+#endif
 
 #ifndef CSV2_HAS_MMAP
 #if defined(__has_include)
@@ -153,7 +169,8 @@
 #else
 #define CSV2_HAS_MMAP 0
 #endif
-#elif __has_include(<sys/mman.h>)
+#elif __has_include(<sys/mman.h>) && __has_include(<fcntl.h>) &&                                 \
+    __has_include(<sys/stat.h>) && __has_include(<unistd.h>)
 #define CSV2_HAS_MMAP 1
 #else
 #define CSV2_HAS_MMAP 0

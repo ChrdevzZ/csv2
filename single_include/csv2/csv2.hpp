@@ -13,7 +13,8 @@
 
 #define CSV2_DETAIL_HAS_VERSION_HEADER 0
 
-#if defined(__has_include) && !defined(CSV2_DETAIL_FORCE_HEADER_PROBES)
+#if !defined(CSV2_DETAIL_DISABLE_OPTIONAL_FACILITIES) && CSV2_CPLUSPLUS >= 202002L &&              \
+    defined(__has_include) && !defined(CSV2_DETAIL_FORCE_HEADER_PROBES)
 #if __has_include(<version>)
 #undef CSV2_DETAIL_HAS_VERSION_HEADER
 #define CSV2_DETAIL_HAS_VERSION_HEADER 1
@@ -21,21 +22,23 @@
 #endif
 #endif
 
-// A conforming library can provide the SD-6 macros only from the facility's
-// header. Probe those headers when <version> is unavailable (or in the
-// fallback contract) and continue to gate every API on the macro value below.
-#if !CSV2_DETAIL_HAS_VERSION_HEADER && CSV2_CPLUSPLUS >= 201703L
+// A conforming library can provide an SD-6 macro only from the facility's
+// header, and a partial <version> may omit a facility that its own header
+// supplies. Probe each missing macro independently and gate every API on the
+// resulting macro value below.
+#if !defined(CSV2_DETAIL_DISABLE_OPTIONAL_FACILITIES) && CSV2_CPLUSPLUS >= 201703L
 #if defined(__has_include)
-#if __has_include(<string_view>)
+#if (!defined(__cpp_lib_string_view) || __cpp_lib_string_view < 201606L) && __has_include(<string_view>)
 #include <string_view>
 #endif
-#if __has_include(<filesystem>)
+#if (!defined(__cpp_lib_filesystem) || __cpp_lib_filesystem < 201703L) && __has_include(<filesystem>)
 #include <filesystem>
 #endif
-#if __has_include(<charconv>)
+#if (!defined(__cpp_lib_to_chars) || __cpp_lib_to_chars < 201611L) && __has_include(<charconv>)
 #include <charconv>
 #endif
-#if __has_include(<memory_resource>)
+#if (!defined(__cpp_lib_memory_resource) || __cpp_lib_memory_resource < 201603L) &&                \
+    __has_include(<memory_resource>)
 #include <memory_resource>
 #endif
 #else
@@ -46,12 +49,14 @@
 #endif
 #endif
 
-#if !CSV2_DETAIL_HAS_VERSION_HEADER && CSV2_CPLUSPLUS >= 202002L
+#if !defined(CSV2_DETAIL_DISABLE_OPTIONAL_FACILITIES) && CSV2_CPLUSPLUS >= 202002L
 #if defined(__has_include)
-#if __has_include(<span>)
+#if (!defined(__cpp_lib_span) || __cpp_lib_span < 202002L) && __has_include(<span>)
 #include <span>
 #endif
-#if __has_include(<ranges>)
+#if (!defined(__cpp_lib_ranges) || __cpp_lib_ranges < 201911L ||                                   \
+     !defined(__cpp_lib_ranges_to_container)) &&                                                   \
+    __has_include(<ranges>)
 #include <ranges>
 #endif
 #else
@@ -60,9 +65,9 @@
 #endif
 #endif
 
-#if !CSV2_DETAIL_HAS_VERSION_HEADER && CSV2_CPLUSPLUS > 202002L
+#if !defined(CSV2_DETAIL_DISABLE_OPTIONAL_FACILITIES) && CSV2_CPLUSPLUS > 202002L
 #if defined(__has_include)
-#if __has_include(<expected>)
+#if (!defined(__cpp_lib_expected) || __cpp_lib_expected < 202202L) && __has_include(<expected>)
 #include <expected>
 #endif
 #else
@@ -100,6 +105,16 @@
 #define CSV2_FORCE_INLINE inline
 #endif
 
+#if defined(CSV2_DETAIL_DISABLE_OPTIONAL_FACILITIES)
+#define CSV2_HAS_STRING_VIEW 0
+#define CSV2_HAS_FILESYSTEM 0
+#define CSV2_HAS_CHARCONV 0
+#define CSV2_HAS_MEMORY_RESOURCE 0
+#define CSV2_HAS_SPAN 0
+#define CSV2_HAS_RANGES 0
+#define CSV2_HAS_EXPECTED 0
+#define CSV2_HAS_RANGES_TO_CONTAINER 0
+#else
 #if defined(__cpp_lib_string_view) && __cpp_lib_string_view >= 201606L
 #define CSV2_HAS_STRING_VIEW 1
 #else
@@ -147,6 +162,7 @@
 #else
 #define CSV2_HAS_RANGES_TO_CONTAINER 0
 #endif
+#endif
 
 #ifndef CSV2_HAS_MMAP
 #if defined(__has_include)
@@ -156,7 +172,8 @@
 #else
 #define CSV2_HAS_MMAP 0
 #endif
-#elif __has_include(<sys/mman.h>)
+#elif __has_include(<sys/mman.h>) && __has_include(<fcntl.h>) &&                                 \
+    __has_include(<sys/stat.h>) && __has_include(<unistd.h>)
 #define CSV2_HAS_MMAP 1
 #else
 #define CSV2_HAS_MMAP 0
@@ -269,8 +286,7 @@ bool parse_integer_fallback(const char *first, const char *last, Integer &output
     return conversion_failure(error, conversion_errc::invalid_argument, 0);
   }
   if (cursor == last)
-    return conversion_failure(error, conversion_errc::invalid_argument,
-                              static_cast<std::size_t>(cursor - first));
+    return conversion_failure(error, conversion_errc::invalid_argument, 0);
 
   const unsigned_type maximum = static_cast<unsigned_type>((std::numeric_limits<Integer>::max)());
   const unsigned_type limit = negative ? static_cast<unsigned_type>(maximum + 1) : maximum;
@@ -292,8 +308,7 @@ bool parse_integer_fallback(const char *first, const char *last, Integer &output
   }
 
   if (cursor == digits_begin)
-    return conversion_failure(error, conversion_errc::invalid_argument,
-                              static_cast<std::size_t>(cursor - first));
+    return conversion_failure(error, conversion_errc::invalid_argument, 0);
   if (overflow)
     return conversion_failure(error, conversion_errc::result_out_of_range,
                               static_cast<std::size_t>(cursor - first));
@@ -611,8 +626,11 @@ record_bounds find_record_bounds(const char *buffer, std::size_t buffer_size,
   const char *const newline = static_cast<const char *>(std::memchr(record_start, '\n', remaining));
   const std::size_t candidate_length =
       newline ? static_cast<std::size_t>(newline - record_start) : remaining;
+  // Include the record-separator candidate so a newline quote policy takes
+  // the same quote-first path as the scalar state machine below.
+  const std::size_t quote_length = candidate_length + (newline ? std::size_t{1} : 0);
   const char *const quote =
-      static_cast<const char *>(std::memchr(record_start, QuoteCharacter::value, candidate_length));
+      static_cast<const char *>(std::memchr(record_start, QuoteCharacter::value, quote_length));
 
   if (!quote) {
     if (!newline)
@@ -633,7 +651,11 @@ record_bounds find_record_bounds(const char *buffer, std::size_t buffer_size,
       }
       quote_opened = !quote_opened;
     } else if (buffer[i] == '\n' && !quote_opened) {
-      const std::size_t content_end = i > start && buffer[i - 1] == '\r' ? i - 1 : i;
+      // A carriage return that also served as the closing quote belongs to
+      // the record; only an ordinary CRLF terminator drops the CR byte.
+      const bool strip_carriage_return =
+          QuoteCharacter::value != '\r' && i > start && buffer[i - 1] == '\r';
+      const std::size_t content_end = strip_carriage_return ? i - 1 : i;
       return {content_end, i + 1};
     }
   }
@@ -669,8 +691,13 @@ CSV2_FORCE_INLINE cell_bounds find_cell_bounds(const char *buffer, std::size_t c
       static_cast<const char *>(std::memchr(first, Delimiter::value, tail_size));
   const std::size_t candidate_length =
       delimiter ? static_cast<std::size_t>(delimiter - first) : tail_size;
+  // Include the delimiter candidate itself in the quote probe. This matters
+  // when a supported policy deliberately assigns the same character to both
+  // roles: the scalar path gives quote handling precedence, so the fast path
+  // must fall back instead of accepting that byte as an unquoted delimiter.
+  const std::size_t quote_length = candidate_length + (delimiter ? std::size_t{1} : 0);
   const char *const quote =
-      static_cast<const char *>(std::memchr(first, QuoteCharacter::value, candidate_length));
+      static_cast<const char *>(std::memchr(first, QuoteCharacter::value, quote_length));
 
   if (!quote)
     return {delimiter ? static_cast<std::size_t>(delimiter - buffer) : end, false};
@@ -682,6 +709,7 @@ CSV2_FORCE_INLINE cell_bounds find_cell_bounds(const char *buffer, std::size_t c
 
 // #include <csv2/detail/validation.hpp>
 
+// #include <csv2/detail/scanner.hpp>
 // #include <csv2/errors.hpp>
 
 #include <cstddef>
@@ -699,85 +727,92 @@ inline bool validation_failure(parse_error &error, parse_errc code, std::size_t 
   return false;
 }
 
-template <class TrimPolicy>
-bool is_trim_character(const char *buffer, std::size_t offset) noexcept {
-  const std::pair<std::size_t, std::size_t> bounds = TrimPolicy::trim(buffer, offset, offset + 1);
-  return bounds.first == bounds.second;
+template <class QuoteCharacter, class TrimPolicy>
+bool validate_cell(const char *buffer, std::size_t start, std::size_t end, parse_error &error,
+                   std::size_t row,
+                   std::size_t column) noexcept(noexcept(TrimPolicy::trim(buffer, start, end))) {
+  const std::pair<std::size_t, std::size_t> bounds = TrimPolicy::trim(buffer, start, end);
+  if (bounds.first > bounds.second || bounds.first < start || bounds.second > end)
+    return validation_failure(error, parse_errc::characters_after_closing_quote, start, row,
+                              column);
+  if (bounds.first == bounds.second)
+    return true;
+
+  if (buffer[bounds.first] != QuoteCharacter::value) {
+    for (std::size_t i = start; i < end; ++i) {
+      if (buffer[i] == QuoteCharacter::value)
+        return validation_failure(error, parse_errc::unexpected_quote, i, row, column);
+      if (buffer[i] == '\r' &&
+          (QuoteCharacter::value == '\n' || i + 1 >= end || buffer[i + 1] != '\n'))
+        return validation_failure(error, parse_errc::bare_carriage_return, i, row, column);
+    }
+    return true;
+  }
+
+  std::size_t closing_quote = bounds.first + 1;
+  while (closing_quote < bounds.second) {
+    if (buffer[closing_quote] != QuoteCharacter::value) {
+      ++closing_quote;
+      continue;
+    }
+    if (closing_quote + 1 < bounds.second && buffer[closing_quote + 1] == QuoteCharacter::value) {
+      closing_quote += 2;
+      continue;
+    }
+    break;
+  }
+  if (closing_quote == bounds.second)
+    return validation_failure(error, parse_errc::unclosed_quote, bounds.first, row, column);
+
+  if (closing_quote + 1 < bounds.second) {
+    const std::size_t first_suffix = closing_quote + 1;
+    if (buffer[first_suffix] == '\r' && QuoteCharacter::value != '\r' &&
+        (first_suffix + 1 >= bounds.second || buffer[first_suffix + 1] != '\n'))
+      return validation_failure(error, parse_errc::bare_carriage_return, first_suffix, row, column);
+    std::size_t offending = first_suffix;
+    const std::pair<std::size_t, std::size_t> suffix =
+        TrimPolicy::trim(buffer, offending, bounds.second);
+    if (suffix.first <= suffix.second && suffix.first >= offending &&
+        suffix.second <= bounds.second && suffix.first < suffix.second)
+      offending = suffix.first;
+    const parse_errc code = offending != first_suffix && buffer[offending] == QuoteCharacter::value
+                                ? parse_errc::invalid_doubled_quote
+                                : parse_errc::characters_after_closing_quote;
+    return validation_failure(error, code, offending, row, column);
+  }
+  return true;
 }
 
 template <class Delimiter, class QuoteCharacter, class TrimPolicy>
-bool validate_csv(const char *buffer, std::size_t size, parse_error &error) noexcept {
-  enum state { field_start, unquoted, quoted, after_quote } current = field_start;
-  std::size_t row = 1;
-  std::size_t column = 1;
-  std::size_t opening_quote = 0;
-
+bool validate_csv(const char *buffer, std::size_t size,
+                  parse_error &error) noexcept(noexcept(TrimPolicy::trim(buffer, std::size_t(),
+                                                                         std::size_t()))) {
   error = parse_error();
-  for (std::size_t i = 0; i < size;) {
-    const char character = buffer[i];
-    if (current == quoted) {
-      if (character == QuoteCharacter::value) {
-        if (i + 1 < size && buffer[i + 1] == QuoteCharacter::value) {
-          i += 2;
-          continue;
-        }
-        current = after_quote;
-      }
-      ++i;
-      continue;
-    }
+  if (!buffer || size == 0)
+    return true;
 
-    if (current == field_start && character == QuoteCharacter::value) {
-      current = quoted;
-      opening_quote = i;
-      ++i;
-      continue;
-    }
-    if (current == after_quote && character == QuoteCharacter::value)
-      return validation_failure(error, parse_errc::invalid_doubled_quote, i, row, column);
-
-    if (character == Delimiter::value) {
+  std::size_t row = 1;
+  std::size_t record_start = 0;
+  while (record_start < size) {
+    const record_bounds record = find_record_bounds<QuoteCharacter>(buffer, size, record_start);
+    std::size_t column = 1;
+    std::size_t cell_start = record_start;
+    while (cell_start <= record.content_end) {
+      const cell_bounds cell =
+          find_cell_bounds<Delimiter, QuoteCharacter>(buffer, cell_start, record.content_end);
+      if (!validate_cell<QuoteCharacter, TrimPolicy>(buffer, cell_start, cell.content_end, error,
+                                                     row, column))
+        return false;
+      if (cell.content_end >= record.content_end)
+        break;
+      cell_start = cell.content_end + 1;
       ++column;
-      current = field_start;
-      ++i;
-      continue;
     }
-    if (character == '\r') {
-      if (i + 1 >= size || buffer[i + 1] != '\n')
-        return validation_failure(error, parse_errc::bare_carriage_return, i, row, column);
-      ++row;
-      column = 1;
-      current = field_start;
-      i += 2;
-      continue;
-    }
-    if (character == '\n') {
-      ++row;
-      column = 1;
-      current = field_start;
-      ++i;
-      continue;
-    }
-
-    if (current == field_start && is_trim_character<TrimPolicy>(buffer, i)) {
-      ++i;
-      continue;
-    }
-
-    if (current == unquoted && character == QuoteCharacter::value)
-      return validation_failure(error, parse_errc::unexpected_quote, i, row, column);
-    if (current == after_quote && is_trim_character<TrimPolicy>(buffer, i)) {
-      ++i;
-      continue;
-    }
-    if (current == after_quote)
-      return validation_failure(error, parse_errc::characters_after_closing_quote, i, row, column);
-    current = unquoted;
-    ++i;
+    if (record.next_start >= size)
+      break;
+    record_start = record.next_start;
+    ++row;
   }
-
-  if (current == quoted)
-    return validation_failure(error, parse_errc::unclosed_quote, opening_quote, row, column);
   return true;
 }
 
@@ -787,6 +822,11 @@ bool validate_csv(const char *buffer, std::size_t size, parse_error &error) noex
 
 #if CSV2_HAS_MMAP
 // #include <csv2/mio.hpp>
+
+// #include <csv2/detail/config.hpp>
+
+#if CSV2_HAS_MMAP
+
 /* Copyright 2017 https://github.com/mandreyel
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy of this
@@ -1401,33 +1441,49 @@ struct char_type_helper {
   using type = typename C::value_type;
 };
 
-template <class T> struct char_type { using type = typename char_type_helper<T>::type; };
+template <class T> struct char_type {
+  using type = typename char_type_helper<T>::type;
+};
 
 // TODO: can we avoid this brute force approach?
-template <> struct char_type<char *> { using type = char; };
+template <> struct char_type<char *> {
+  using type = char;
+};
 
-template <> struct char_type<const char *> { using type = char; };
+template <> struct char_type<const char *> {
+  using type = char;
+};
 
-template <size_t N> struct char_type<char[N]> { using type = char; };
+template <size_t N> struct char_type<char[N]> {
+  using type = char;
+};
 
-template <size_t N> struct char_type<const char[N]> { using type = char; };
+template <size_t N> struct char_type<const char[N]> {
+  using type = char;
+};
 
 #ifdef _WIN32
-template <> struct char_type<wchar_t *> { using type = wchar_t; };
+template <> struct char_type<wchar_t *> {
+  using type = wchar_t;
+};
 
-template <> struct char_type<const wchar_t *> { using type = wchar_t; };
+template <> struct char_type<const wchar_t *> {
+  using type = wchar_t;
+};
 
-template <size_t N> struct char_type<wchar_t[N]> { using type = wchar_t; };
+template <size_t N> struct char_type<wchar_t[N]> {
+  using type = wchar_t;
+};
 
-template <size_t N> struct char_type<const wchar_t[N]> { using type = wchar_t; };
+template <size_t N> struct char_type<const wchar_t[N]> {
+  using type = wchar_t;
+};
 #endif // _WIN32
 
 template <typename CharT, typename S> struct is_c_str_helper {
-  static constexpr bool value =
-      std::is_same<CharT *,
-                   // TODO: I'm so sorry for this... Can this be made cleaner?
-                   typename std::add_pointer<typename std::remove_cv<typename std::remove_pointer<
-                       typename std::decay<S>::type>::type>::type>::type>::value;
+  using decayed_type = typename std::decay<S>::type;
+  static constexpr bool value = std::is_pointer<decayed_type>::value &&
+                                std::is_convertible<decayed_type, const CharT *>::value;
 };
 
 template <typename S> struct is_c_str {
@@ -1448,12 +1504,37 @@ template <typename S> struct is_c_str_or_c_wstr {
       ;
 };
 
+template <typename T> struct is_basic_string : std::false_type {};
+
+template <typename CharT, typename Traits, typename Allocator>
+struct is_basic_string<std::basic_string<CharT, Traits, Allocator>>
+    : std::integral_constant<bool, std::is_same<CharT, char>::value
+#ifdef _WIN32
+                                       || std::is_same<CharT, wchar_t>::value
+#endif
+                             > {
+};
+
+template <typename T, typename = void> struct is_sized_char_range : std::false_type {};
+
+template <typename T>
+struct is_sized_char_range<
+    T,
+    typename std::enable_if<
+        (std::is_same<typename std::decay<T>::type::value_type, char>::value
+#ifdef _WIN32
+         || std::is_same<typename std::decay<T>::type::value_type, wchar_t>::value
+#endif
+         ) &&
+        std::is_convertible<decltype(std::declval<const typename std::decay<T>::type &>().data()),
+                            const typename std::decay<T>::type::value_type *>::value &&
+        std::is_convertible<decltype(std::declval<const typename std::decay<T>::type &>().size()),
+                            size_t>::value>::type> : std::true_type {
+};
+
 template <typename S> struct is_object_path {
   using type = typename std::decay<S>::type;
-  static constexpr bool value = std::is_same<type, std::string>::value
-#ifdef _WIN32
-                                || std::is_same<type, std::wstring>::value
-#endif
+  static constexpr bool value = is_basic_string<type>::value
 #if CSV2_HAS_FILESYSTEM
                                 || std::is_same<type, std::filesystem::path>::value
 #endif
@@ -1464,22 +1545,51 @@ template <typename S> struct is_path {
   static constexpr bool value = is_c_str_or_c_wstr<S>::value || is_object_path<S>::value;
 };
 
+template <typename S> struct is_range_path {
+  using type = typename std::decay<S>::type;
+  static constexpr bool value = is_sized_char_range<type>::value && !is_object_path<type>::value
+#if CSV2_HAS_STRING_VIEW
+                                && !std::is_same<type, std::string_view>::value
+#ifdef _WIN32
+                                && !std::is_same<type, std::wstring_view>::value
+#endif
+#endif
+      ;
+};
+
+template <typename S> struct is_mapping_token {
+  using type = typename std::decay<S>::type;
+  static constexpr bool value = is_path<S>::value || is_range_path<S>::value
+#ifdef _WIN32
+                                || std::is_same<type, file_handle_type>::value
+#endif
+      ;
+};
+
 #if CSV2_HAS_FILESYSTEM
 template <> struct char_type<std::filesystem::path> {
   using type = std::filesystem::path::value_type;
 };
 #endif
 
-template <typename String,
-          typename = typename std::enable_if<is_object_path<String>::value>::type>
+template <typename String, typename = typename std::enable_if<is_object_path<String>::value>::type>
 auto c_str(const String &path) -> decltype(path.c_str()) {
   return path.c_str();
 }
 
-template <typename String,
-          typename = typename std::enable_if<is_object_path<String>::value>::type>
-bool empty(const String &path) {
+template <typename String>
+typename std::enable_if<is_object_path<String>::value, bool>::type empty(const String &path) {
   return path.empty();
+}
+
+template <typename Range, typename = typename std::enable_if<is_range_path<Range>::value>::type>
+auto c_str(const Range &path) -> decltype(path.data()) {
+  return path.data();
+}
+
+template <typename Range>
+typename std::enable_if<is_range_path<Range>::value, bool>::type empty(const Range &path) {
+  return path.size() <= 1 || path.data() == nullptr || path.data()[0] == 0;
 }
 
 template <typename String,
@@ -1488,9 +1598,8 @@ const typename char_type<String>::type *c_str(String path) {
   return path;
 }
 
-template <typename String,
-          typename = typename std::enable_if<is_c_str_or_c_wstr<String>::value>::type>
-bool empty(String path) {
+template <typename String>
+typename std::enable_if<is_c_str_or_c_wstr<String>::value, bool>::type empty(String path) {
   return !path || (*path == 0);
 }
 
@@ -1499,21 +1608,41 @@ size_t path_size(const std::basic_string<CharT, Traits, Allocator> &path) {
   return path.size();
 }
 
-#if CSV2_HAS_FILESYSTEM
-inline size_t path_size(const std::filesystem::path &path) { return path.native().size(); }
-#endif
-
-template <typename String,
-          typename = typename std::enable_if<is_object_path<String>::value>::type>
-bool has_embedded_null(const String &path) {
+template <typename String>
+typename std::enable_if<is_basic_string<typename std::decay<String>::type>::value, bool>::type
+has_embedded_null(const String &path) {
   typedef typename char_type<String>::type char_type;
   return std::char_traits<char_type>::length(c_str(path)) != path_size(path);
 }
 
-template <typename String,
-          typename = typename std::enable_if<is_c_str_or_c_wstr<String>::value>::type>
-bool has_embedded_null(String) {
+#if CSV2_HAS_FILESYSTEM
+inline size_t path_size(const std::filesystem::path &path) { return path.native().size(); }
+#endif
+
+template <typename String>
+typename std::enable_if<is_object_path<String>::value &&
+                            !is_basic_string<typename std::decay<String>::type>::value,
+                        bool>::type
+has_embedded_null(const String &path) {
+  typedef typename char_type<String>::type char_type;
+  return std::char_traits<char_type>::length(c_str(path)) != path_size(path);
+}
+
+template <typename String>
+typename std::enable_if<is_c_str_or_c_wstr<String>::value, bool>::type has_embedded_null(String) {
   return false;
+}
+
+template <typename Range>
+typename std::enable_if<is_range_path<Range>::value, bool>::type
+has_embedded_null(const Range &path) {
+  typedef typename std::decay<Range>::type range_type;
+  typedef typename range_type::value_type char_type;
+  const size_t size = static_cast<size_t>(path.size());
+  const char_type *const data = path.data();
+  if (!data || size == 0 || data[size - 1] != char_type())
+    return true;
+  return std::char_traits<char_type>::length(data) != size - 1;
 }
 
 } // namespace detail
@@ -2439,6 +2568,8 @@ using shared_ummap_sink = basic_shared_mmap_sink<unsigned char>;
 
 #endif // MIO_SHARED_MMAP_HEADER
 
+#endif // CSV2_HAS_MMAP
+
 #endif
 // #include <csv2/parameters.hpp>
 
@@ -2453,7 +2584,7 @@ namespace trim_policy {
 struct no_trimming {
 public:
   static std::pair<std::size_t, std::size_t> trim(const char *buffer, std::size_t start,
-                                                  std::size_t end) {
+                                                  std::size_t end) noexcept {
     (void)(buffer); // to silence unused parameter warning
     return {start, end};
   }
@@ -2469,7 +2600,7 @@ private:
 
 public:
   static std::pair<std::size_t, std::size_t> trim(const char *buffer, std::size_t start,
-                                                  std::size_t end) {
+                                                  std::size_t end) noexcept {
     std::size_t new_start = start, new_end = end;
     while (new_start != new_end && is_trim_char(buffer[new_start], character_list...))
       ++new_start;
@@ -2521,13 +2652,38 @@ template <bool flag> struct first_row_is_header {
 
 namespace csv2 {
 
+namespace detail {
+
+#if CSV2_HAS_RANGES
+template <class T>
+concept marked_row_view = requires {
+  typename std::remove_cv_t<T>::csv2_row_view_marker;
+  requires std::is_same_v<typename std::remove_cv_t<T>::csv2_row_view_marker, std::remove_cv_t<T>>;
+};
+#endif
+
+template <class T> class arrow_proxy {
+  T value_;
+
+public:
+  explicit arrow_proxy(T value) : value_(std::move(value)) {}
+  const T *operator->() const noexcept { return std::addressof(value_); }
+};
+
+template <class Delimiter>
+struct is_record_compatible_delimiter
+    : std::integral_constant<bool, Delimiter::value != '\r' && Delimiter::value != '\n'> {};
+
+} // namespace detail
+
 template <class quote_character, class trim_policy> class basic_cell {
   const char *buffer_{nullptr};
   size_t start_{0};
   size_t end_{0};
   bool escaped_{false};
 
-  std::pair<size_t, size_t> content_bounds_() const noexcept {
+  std::pair<size_t, size_t> content_bounds_() const
+      noexcept(noexcept(trim_policy::trim(buffer_, start_, end_))) {
     std::pair<size_t, size_t> bounds = trim_policy::trim(buffer_, start_, end_);
     if (bounds.second - bounds.first >= 2 && buffer_[bounds.first] == quote_character::value &&
         buffer_[bounds.second - 1] == quote_character::value) {
@@ -2547,20 +2703,24 @@ public:
   bool has_escaped_quotes() const noexcept { return escaped_; }
 
 #if CSV2_HAS_STRING_VIEW
-  std::string_view raw_trimmed_view() const noexcept {
+  std::string_view raw_trimmed_view() const
+      noexcept(noexcept(trim_policy::trim(buffer_, start_, end_))) {
     if (!buffer_)
       return std::string_view();
     const auto bounds = trim_policy::trim(buffer_, start_, end_);
     return std::string_view(buffer_ + bounds.first, bounds.second - bounds.first);
   }
 
-  std::string_view read_view() const noexcept { return raw_trimmed_view(); }
+  std::string_view read_view() const noexcept(noexcept(raw_trimmed_view())) {
+    return raw_trimmed_view();
+  }
 #endif
 
   template <typename Container> void read_raw_value(Container &result) const {
+    if (start_ >= end_)
+      return;
     detail::reserve_for_append(result, raw_size());
-    if (start_ < end_)
-      detail::append_optimized_range(result, buffer_ + start_, buffer_ + end_);
+    detail::append_optimized_range(result, buffer_ + start_, buffer_ + end_);
   }
 
   template <typename Container> void read_value(Container &result) const {
@@ -2617,7 +2777,8 @@ public:
 
   template <class Integer>
   typename std::enable_if<detail::is_csv_integer<Integer>::value, bool>::type
-  try_parse(Integer &output, conversion_error &error, int base = 10) const noexcept {
+  try_parse(Integer &output, conversion_error &error, int base = 10) const
+      noexcept(noexcept(trim_policy::trim(buffer_, start_, end_))) {
     if (!buffer_ || escaped_)
       return detail::conversion_failure(error, conversion_errc::invalid_argument, 0);
     const std::pair<size_t, size_t> bounds = content_bounds_();
@@ -2629,7 +2790,7 @@ public:
   template <class Integer>
   typename std::enable_if<detail::is_csv_integer<Integer>::value,
                           std::expected<Integer, conversion_error>>::type
-  parse_expected(int base = 10) const noexcept {
+  parse_expected(int base = 10) const noexcept(noexcept(trim_policy::trim(buffer_, start_, end_))) {
     Integer result{};
     conversion_error error;
     if (try_parse(result, error, base))
@@ -2657,9 +2818,10 @@ public:
   size_t length() const noexcept { return raw_size(); }
 
   template <typename Container> void read_raw_value(Container &result) const {
+    if (start_ >= end_)
+      return;
     detail::reserve_for_append(result, raw_size());
-    if (start_ < end_)
-      detail::append_optimized_range(result, buffer_ + start_, buffer_ + end_);
+    detail::append_optimized_range(result, buffer_ + start_, buffer_ + end_);
   }
 
   class CellIterator {
@@ -2686,7 +2848,7 @@ public:
     using value_type = Cell;
     using difference_type = std::ptrdiff_t;
     using reference = Cell;
-    using pointer = void;
+    using pointer = detail::arrow_proxy<Cell>;
     using iterator_category = std::input_iterator_tag;
 #if CSV2_HAS_RANGES
     using iterator_concept = std::forward_iterator_tag;
@@ -2698,6 +2860,11 @@ public:
         : buffer_(buffer), current_(start), end_(end), content_end_(end), escaped_(false),
           at_end_(start >= end) {
       update_bounds_();
+    }
+
+    CellIterator(const char *buffer, size_t buffer_size, size_t start, size_t end)
+        : CellIterator(buffer, start, end) {
+      (void)buffer_size;
     }
 
     CellIterator &operator++() {
@@ -2720,6 +2887,7 @@ public:
     }
 
     Cell operator*() const { return Cell(buffer_, current_, content_end_, escaped_); }
+    pointer operator->() const { return pointer(operator*()); }
 
     bool operator==(const CellIterator &rhs) const noexcept {
       return buffer_ == rhs.buffer_ && current_ == rhs.current_ && end_ == rhs.end_ &&
@@ -2733,40 +2901,47 @@ public:
   CellIterator end() const { return CellIterator(buffer_, end_, end_); }
 };
 
-template <class delimiter_type, class quote_character_type, class trim_policy_type> class RowIndex {
+template <class delimiter_type, class quote_character_type, class trim_policy_type,
+          class row_type = basic_row<delimiter_type, quote_character_type, trim_policy_type>>
+class RowIndex {
+  static_assert(detail::is_record_compatible_delimiter<delimiter_type>::value,
+                "csv2 record separators cannot also be field delimiters");
+
 public:
-  using Row = basic_row<delimiter_type, quote_character_type, trim_policy_type>;
+  using Row = row_type;
 
 private:
+  struct row_bounds {
+    size_t start;
+    size_t end;
+  };
+
   const char *buffer_{nullptr};
-  size_t buffer_size_{0};
-  std::vector<size_t> offsets_;
+  std::vector<row_bounds> rows_;
 
   Row row_at_(size_t position) const noexcept {
-    const size_t start = offsets_[position];
-    const detail::record_bounds bounds =
-        detail::find_record_bounds<quote_character_type>(buffer_, buffer_size_, start);
-    return Row(buffer_, start, bounds.content_end);
+    const row_bounds bounds = rows_[position];
+    return Row(buffer_, bounds.start, bounds.end);
   }
 
 public:
   RowIndex() = default;
 
   RowIndex(const char *buffer, size_t buffer_size, size_t start, bool ignore_empty_lines)
-      : buffer_(buffer), buffer_size_(buffer_size) {
+      : buffer_(buffer) {
     if (!buffer_)
       return;
-    while (start < buffer_size_) {
+    while (start < buffer_size) {
       const detail::record_bounds bounds =
-          detail::find_record_bounds<quote_character_type>(buffer_, buffer_size_, start);
+          detail::find_record_bounds<quote_character_type>(buffer_, buffer_size, start);
       if (!ignore_empty_lines || bounds.content_end != start)
-        offsets_.push_back(start);
+        rows_.push_back({start, bounds.content_end});
       start = bounds.next_start;
     }
   }
 
-  size_t size() const noexcept { return offsets_.size(); }
-  bool empty() const noexcept { return offsets_.empty(); }
+  size_t size() const noexcept { return rows_.size(); }
+  bool empty() const noexcept { return rows_.empty(); }
   Row operator[](size_t position) const noexcept { return row_at_(position); }
 
   class iterator {
@@ -2777,8 +2952,8 @@ public:
     using value_type = Row;
     using difference_type = std::ptrdiff_t;
     using reference = Row;
-    using pointer = void;
-    using iterator_category = std::random_access_iterator_tag;
+    using pointer = detail::arrow_proxy<Row>;
+    using iterator_category = std::input_iterator_tag;
 #if CSV2_HAS_RANGES
     using iterator_concept = std::random_access_iterator_tag;
 #endif
@@ -2788,6 +2963,7 @@ public:
         : index_(index), position_(position) {}
 
     Row operator*() const noexcept { return (*index_)[position_]; }
+    pointer operator->() const { return pointer(operator*()); }
     Row operator[](difference_type offset) const noexcept {
       return (*index_)[static_cast<size_t>(static_cast<difference_type>(position_) + offset)];
     }
@@ -2866,6 +3042,12 @@ inline constexpr bool enable_view<csv2::basic_row<delimiter, quote_character, tr
 template <class delimiter, class quote_character, class trim_policy>
 inline constexpr bool
     enable_borrowed_range<csv2::basic_row<delimiter, quote_character, trim_policy>> = true;
+template <class T>
+  requires csv2::detail::marked_row_view<T>
+inline constexpr bool enable_view<T> = true;
+template <class T>
+  requires csv2::detail::marked_row_view<T>
+inline constexpr bool enable_borrowed_range<T> = true;
 } // namespace ranges
 } // namespace std
 
@@ -2876,6 +3058,9 @@ template <class delimiter = delimiter<','>, class quote_character = quote_charac
           class first_row_is_header = first_row_is_header<true>,
           class trim_policy = trim_policy::trim_whitespace>
 class Reader {
+  static_assert(detail::is_record_compatible_delimiter<delimiter>::value,
+                "csv2 record separators cannot also be field delimiters");
+
 #if CSV2_HAS_MMAP
   mio::mmap_source mmap_;
 #endif
@@ -2941,7 +3126,9 @@ class Reader {
   }
 
   template <typename StringType> bool parse_dispatch_(StringType &&contents, std::true_type) {
-    return parse_borrowed(contents.c_str(), contents.size());
+    const char *const data = contents.c_str();
+    const size_t size = contents.size();
+    return parse_borrowed(data, size);
   }
 
   template <typename StringType> bool parse_owned_(StringType &&contents, std::true_type) {
@@ -2973,6 +3160,86 @@ class Reader {
   }
 
 public:
+  class Cell : public basic_cell<quote_character, trim_policy> {
+    using base_type = basic_cell<quote_character, trim_policy>;
+
+  public:
+    Cell() = default;
+    explicit Cell(const base_type &cell) noexcept : base_type(cell) {}
+    Cell(const char *buffer, size_t start, size_t end, bool escaped) noexcept
+        : base_type(buffer, start, end, escaped) {}
+
+#if CSV2_HAS_STRING_VIEW
+    std::string_view read_view() const { return base_type::read_view(); }
+#endif
+
+    template <typename Container> void read_raw_value(Container &result) const {
+      base_type::read_raw_value(result);
+    }
+
+    template <typename Container> void read_value(Container &result) const {
+      base_type::read_value(result);
+    }
+  };
+
+  class Row : public basic_row<delimiter, quote_character, trim_policy> {
+    using base_type = basic_row<delimiter, quote_character, trim_policy>;
+
+  public:
+    using csv2_row_view_marker = Row;
+    using Cell = typename Reader::Cell;
+    Row() = default;
+    Row(const char *buffer, size_t start, size_t end) noexcept : base_type(buffer, start, end) {}
+
+    const char *address() const noexcept { return base_type::address(); }
+    size_t length() const { return base_type::length(); }
+
+    template <typename Container> void read_raw_value(Container &result) const {
+      base_type::read_raw_value(result);
+    }
+
+    class CellIterator {
+      typename base_type::CellIterator iterator_;
+
+    public:
+      using value_type = Cell;
+      using difference_type = std::ptrdiff_t;
+      using reference = Cell;
+      using pointer = detail::arrow_proxy<Cell>;
+      using iterator_category = std::input_iterator_tag;
+#if CSV2_HAS_RANGES
+      using iterator_concept = std::forward_iterator_tag;
+#endif
+
+      CellIterator() = default;
+      explicit CellIterator(typename base_type::CellIterator iterator) : iterator_(iterator) {}
+      CellIterator(const char *buffer, size_t start, size_t end) : iterator_(buffer, start, end) {}
+      CellIterator(const char *buffer, size_t buffer_size, size_t start, size_t end)
+          : iterator_(buffer, buffer_size, start, end) {}
+
+      CellIterator &operator++() {
+        ++iterator_;
+        return *this;
+      }
+      CellIterator operator++(int) {
+        CellIterator previous(*this);
+        ++(*this);
+        return previous;
+      }
+
+      Cell operator*() const { return Cell(*iterator_); }
+      pointer operator->() const { return pointer(operator*()); }
+
+      bool operator==(const CellIterator &other) const noexcept {
+        return iterator_ == other.iterator_;
+      }
+      bool operator!=(const CellIterator &other) const noexcept { return !(*this == other); }
+    };
+
+    CellIterator begin() const { return CellIterator(base_type::begin()); }
+    CellIterator end() const { return CellIterator(base_type::end()); }
+  };
+
   Reader() = default;
   Reader(const Reader &) = delete;
   Reader &operator=(const Reader &) = delete;
@@ -3011,7 +3278,9 @@ public:
 #if CSV2_HAS_MMAP
   // Memory-map a file. A failed mapping clears any previous source.
   template <typename StringType>
-  typename std::enable_if<mio::detail::is_path<StringType>::value, bool>::type
+  typename std::enable_if<mio::detail::is_path<StringType>::value ||
+                              mio::detail::is_range_path<StringType>::value,
+                          bool>::type
   mmap(StringType &&filename, std::error_code &error) {
     // Map through a temporary so a C-string path may safely point into this
     // Reader's current owned or mapped source until the OS consumes it.
@@ -3030,16 +3299,48 @@ public:
     return true;
   }
 
+  template <typename Handle>
+  typename std::enable_if<std::is_same<typename std::decay<Handle>::type,
+                                       typename mio::mmap_source::handle_type>::value,
+                          bool>::type
+  mmap(Handle handle, std::error_code &error) {
+    mio::mmap_source new_mapping;
+    new_mapping.map(handle, 0, mio::map_entire_file, error);
+    reset_source_();
+    if (error || !new_mapping.is_open() || !new_mapping.is_mapped() || new_mapping.size() == 0) {
+      if (!error)
+        error = std::make_error_code(std::errc::invalid_argument);
+      new_mapping.unmap();
+      return false;
+    }
+    mmap_ = std::move(new_mapping);
+    buffer_ = mmap_.data();
+    buffer_size_ = mmap_.size();
+    return true;
+  }
+
   template <typename StringType>
-  typename std::enable_if<mio::detail::is_path<StringType>::value, bool>::type
+  typename std::enable_if<mio::detail::is_path<StringType>::value ||
+                              mio::detail::is_range_path<StringType>::value,
+                          bool>::type
   mmap(StringType &&filename) {
     std::error_code error;
     return mmap(std::forward<StringType>(filename), error);
   }
 
+  template <typename Handle>
+  typename std::enable_if<std::is_same<typename std::decay<Handle>::type,
+                                       typename mio::mmap_source::handle_type>::value,
+                          bool>::type
+  mmap(Handle handle) {
+    std::error_code error;
+    return mmap(handle, error);
+  }
+
 #if CSV2_HAS_EXPECTED
   template <typename StringType>
-  typename std::enable_if<mio::detail::is_path<StringType>::value,
+  typename std::enable_if<mio::detail::is_path<StringType>::value ||
+                              mio::detail::is_range_path<StringType>::value,
                           std::expected<void, std::error_code>>::type
   mmap_expected(StringType &&filename) {
     std::error_code error;
@@ -3047,16 +3348,29 @@ public:
       return {};
     return std::unexpected(error);
   }
+
+  template <typename Handle>
+  typename std::enable_if<std::is_same<typename std::decay<Handle>::type,
+                                       typename mio::mmap_source::handle_type>::value,
+                          std::expected<void, std::error_code>>::type
+  mmap_expected(Handle handle) {
+    std::error_code error;
+    if (mmap(handle, error))
+      return {};
+    return std::unexpected(error);
+  }
 #endif
 #endif
 
-  // Lvalue strings are borrowed. Rvalue strings are owned by this Reader.
+  // Lvalue strings are borrowed; rvalues are owned. Borrowed address and extent
+  // must remain valid. Any mutation invalidates previously acquired views and
+  // cursors, which must be discarded and reacquired from this Reader.
   template <typename StringType> bool parse(StringType &&contents) {
     return parse_dispatch_(std::forward<StringType>(contents),
                            typename std::is_lvalue_reference<StringType &&>::type());
   }
 
-  // Borrow exactly size bytes. The caller keeps the storage alive.
+  // Borrow exactly size bytes under the lifetime and mutation contract above.
   bool parse_borrowed(const char *data, size_t size) noexcept {
     if (!data || size == 0) {
       reset_source_();
@@ -3086,7 +3400,7 @@ public:
 #endif
 
 #if CSV2_HAS_STRING_VIEW
-  // Borrow a string_view. The view's storage must outlive Reader access.
+  // Borrow a string_view under the lifetime and mutation contract above.
   bool parse_view(std::string_view sv) {
     const char *const data = sv.data();
     const size_t size = sv.size();
@@ -3107,13 +3421,15 @@ public:
   }
 #endif
 
-  bool validate(parse_error &error) const noexcept {
+  bool validate(parse_error &error) const
+      noexcept(noexcept(trim_policy::trim(buffer_, size_t(), size_t()))) {
     return detail::validate_csv<delimiter, quote_character, trim_policy>(buffer_, buffer_size_,
                                                                          error);
   }
 
 #if CSV2_HAS_EXPECTED
-  std::expected<void, parse_error> validate_expected() const noexcept {
+  std::expected<void, parse_error> validate_expected() const
+      noexcept(noexcept(trim_policy::trim(buffer_, size_t(), size_t()))) {
     parse_error error;
     if (validate(error))
       return {};
@@ -3121,9 +3437,7 @@ public:
   }
 #endif
 
-  using Cell = basic_cell<quote_character, trim_policy>;
-  using Row = basic_row<delimiter, quote_character, trim_policy>;
-  using RowIndex = csv2::RowIndex<delimiter, quote_character, trim_policy>;
+  using RowIndex = csv2::RowIndex<delimiter, quote_character, trim_policy, Row>;
   class RowIterator;
 
   class RowIterator {
@@ -3138,7 +3452,7 @@ public:
     using value_type = Row;
     using difference_type = std::ptrdiff_t;
     using reference = Row;
-    using pointer = void;
+    using pointer = detail::arrow_proxy<Row>;
     using iterator_category = std::input_iterator_tag;
 #if CSV2_HAS_RANGES
     using iterator_concept = std::forward_iterator_tag;
@@ -3180,6 +3494,7 @@ public:
     }
 
     Row operator*() const { return Row(buffer_, start_, content_end_); }
+    pointer operator->() const { return pointer(operator*()); }
 
     bool operator==(const RowIterator &rhs) const noexcept {
       return buffer_ == rhs.buffer_ && buffer_size_ == rhs.buffer_size_ && start_ == rhs.start_ &&
@@ -3260,6 +3575,9 @@ public:
 #include <string>
 #include <type_traits>
 #include <utility>
+#if CSV2_HAS_STRING_VIEW
+#include <string_view>
+#endif
 
 namespace csv2 {
 
@@ -3273,6 +3591,34 @@ struct none {};
 struct minimal {};
 struct always {};
 } // namespace quote_policy
+
+namespace detail {
+
+struct direct_character_fields {};
+
+using std::begin;
+using std::end;
+
+template <typename Range>
+auto adl_begin(Range &&range) -> decltype(begin(std::forward<Range>(range))) {
+  return begin(std::forward<Range>(range));
+}
+
+template <typename Range> auto adl_end(Range &&range) -> decltype(end(std::forward<Range>(range))) {
+  return end(std::forward<Range>(range));
+}
+
+template <typename T> struct is_direct_character_field : std::false_type {};
+
+template <typename Traits, typename Allocator>
+struct is_direct_character_field<std::basic_string<char, Traits, Allocator>> : std::true_type {};
+
+#if CSV2_HAS_STRING_VIEW
+template <typename Traits>
+struct is_direct_character_field<std::basic_string_view<char, Traits>> : std::true_type {};
+#endif
+
+} // namespace detail
 
 template <typename, typename T> struct has_close : std::false_type {};
 
@@ -3292,7 +3638,15 @@ public:
 template <class delimiter = delimiter<','>, typename Stream = std::ofstream,
           typename Ownership = stream_ownership::close_on_destroy,
           typename QuotePolicy = quote_policy::none>
-class Writer {
+class basic_writer {
+  static_assert(std::is_same<Ownership, stream_ownership::close_on_destroy>::value ||
+                    std::is_same<Ownership, stream_ownership::leave_open>::value,
+                "csv2 writer ownership policy is not supported");
+  static_assert(std::is_same<QuotePolicy, quote_policy::none>::value ||
+                    std::is_same<QuotePolicy, quote_policy::minimal>::value ||
+                    std::is_same<QuotePolicy, quote_policy::always>::value,
+                "csv2 writer quote policy is not supported");
+
   Stream *stream_; // output stream for the writer
   bool active_;
 
@@ -3343,16 +3697,22 @@ class Writer {
                    static_cast<std::streamsize>(field.size()));
   }
 
-  template <typename Field>
-  auto write_raw_field_(const Field &field,
-                        int) -> decltype(static_cast<const char *>(field.data()), field.size(),
-                                         stream_->write(static_cast<const char *>(field.data()),
-                                                        static_cast<std::streamsize>(field.size())),
-                                         void()) {
+  template <typename Field> void write_raw_field_(const Field &field, std::true_type) {
     write_raw_contiguous_(field, 0);
   }
 
-  template <typename Field> void write_raw_field_(const Field &field, long) { *stream_ << field; }
+  template <typename Field>
+  auto write_raw_fallback_(const Field &field, int) -> decltype(*stream_ << field, void()) {
+    *stream_ << field;
+  }
+
+  template <typename Field> void write_raw_fallback_(const Field &field, long) {
+    write_raw_contiguous_(field, 0);
+  }
+
+  template <typename Field> void write_raw_field_(const Field &field, std::false_type) {
+    write_raw_fallback_(field, 0);
+  }
 
   static bool should_quote_(const char *, size_t, quote_policy::always) noexcept { return true; }
 
@@ -3421,38 +3781,173 @@ class Writer {
                          QuotePolicy());
   }
 
-  template <typename Field>
-  auto write_escaped_field_(const Field &field,
-                            int) -> decltype(static_cast<const char *>(field.data()), field.size(),
-                                             void()) {
+  template <typename Field> void write_escaped_field_(const Field &field, std::true_type) {
     write_escaped_contiguous_(field, 0);
   }
 
-  template <typename Field> void write_escaped_field_(const Field &field, long) {
+  template <typename Field>
+  auto write_escaped_fallback_(const Field &field,
+                               int) -> decltype(std::declval<std::ostringstream &>() << field,
+                                                void()) {
     const std::string value = format_field_(field);
     write_escaped_chars_(value.data(), value.size(), QuotePolicy());
   }
 
+  template <typename Field> void write_escaped_fallback_(const Field &field, long) {
+    write_escaped_contiguous_(field, 0);
+  }
+
+  template <typename Field> void write_escaped_field_(const Field &field, std::false_type) {
+    write_escaped_fallback_(field, 0);
+  }
+
   template <typename Field> void write_field_(const Field &field, std::true_type) {
-    write_raw_field_(field, 0);
+    typedef typename std::decay<Field>::type field_type;
+    write_raw_field_(field, typename detail::is_direct_character_field<field_type>::type());
   }
 
   template <typename Field> void write_field_(const Field &field, std::false_type) {
-    write_escaped_field_(field, 0);
+    typedef typename std::decay<Field>::type field_type;
+    write_escaped_field_(field, typename detail::is_direct_character_field<field_type>::type());
+  }
+
+  template <typename Field>
+  void write_field_(const Field &field, std::true_type, detail::direct_character_fields) {
+    write_field_(field, std::true_type());
+  }
+
+  template <typename Field>
+  void write_field_(const Field &field, std::false_type, detail::direct_character_fields) {
+    write_field_(field, std::false_type());
+  }
+
+protected:
+  template <typename Field>
+  auto write_legacy_next_field_(char separator, const Field &field,
+                                int) -> decltype((*stream_ << separator) << field, void()) {
+    (*stream_ << separator) << field;
+  }
+
+  template <typename Field>
+  void write_legacy_next_field_(char separator, const Field &field, long) {
+    *stream_ << separator;
+    write_raw_fallback_(field, 0);
+  }
+
+  template <typename Range> void write_legacy_iterable_row_(Range &strings) {
+    auto current = detail::adl_begin(strings);
+    const auto last = detail::adl_end(strings);
+    if (current != last) {
+      write_raw_fallback_(*current, 0);
+      const char separator = delimiter::value;
+      while (++current != last)
+        write_legacy_next_field_(separator, *current, 0);
+    }
+    *stream_ << '\n';
+  }
+
+  template <typename Container>
+  auto write_legacy_row_dispatch_(Container &&row, int)
+      -> decltype(detail::adl_begin(
+                      std::declval<const typename std::remove_reference<Container>::type &>()),
+                  detail::adl_end(
+                      std::declval<const typename std::remove_reference<Container>::type &>()),
+                  void()) {
+    const auto &strings = row;
+    write_legacy_iterable_row_(strings);
+  }
+
+  template <typename Container> void write_legacy_row_dispatch_(Container &&row, long) {
+    auto &&strings = std::forward<Container>(row);
+    write_legacy_iterable_row_(strings);
+  }
+
+  template <typename Container> void write_legacy_row_(Container &&row) {
+    if (!active_)
+      return;
+    write_legacy_row_dispatch_(std::forward<Container>(row), 0);
+  }
+
+  template <typename Range> void write_legacy_iterable_rows_(Range &container_of_rows) {
+    auto current = detail::adl_begin(container_of_rows);
+    const auto last = detail::adl_end(container_of_rows);
+    while (current != last) {
+      write_legacy_row_(*current);
+      ++current;
+    }
+  }
+
+  template <typename Container>
+  auto write_legacy_rows_dispatch_(Container &&rows, int)
+      -> decltype(detail::adl_begin(
+                      std::declval<const typename std::remove_reference<Container>::type &>()),
+                  detail::adl_end(
+                      std::declval<const typename std::remove_reference<Container>::type &>()),
+                  void()) {
+    const auto &container_of_rows = rows;
+    write_legacy_iterable_rows_(container_of_rows);
+  }
+
+  template <typename Container> void write_legacy_rows_dispatch_(Container &&rows, long) {
+    auto &&container_of_rows = std::forward<Container>(rows);
+    write_legacy_iterable_rows_(container_of_rows);
+  }
+
+  template <typename Container> void write_legacy_rows_(Container &&rows) {
+    if (!active_)
+      return;
+    write_legacy_rows_dispatch_(std::forward<Container>(rows), 0);
+  }
+
+  template <typename Container, typename FieldPolicy>
+  void write_row_with_policy_(Container &&row, FieldPolicy field_policy) {
+    if (!active_)
+      return;
+    auto &&strings = std::forward<Container>(row);
+    using std::begin;
+    using std::end;
+    auto current = begin(strings);
+    const auto last = end(strings);
+    if (current != last) {
+      write_field_(*current, typename std::is_same<QuotePolicy, quote_policy::none>::type(),
+                   field_policy);
+      const char separator = delimiter::value;
+      while (++current != last) {
+        *stream_ << separator;
+        write_field_(*current, typename std::is_same<QuotePolicy, quote_policy::none>::type(),
+                     field_policy);
+      }
+    }
+    *stream_ << '\n';
+  }
+
+  template <typename Container, typename FieldPolicy>
+  void write_rows_with_policy_(Container &&rows, FieldPolicy field_policy) {
+    if (!active_)
+      return;
+    auto &&container_of_rows = std::forward<Container>(rows);
+    using std::begin;
+    using std::end;
+    auto current = begin(container_of_rows);
+    const auto last = end(container_of_rows);
+    while (current != last) {
+      write_row_with_policy_(*current, field_policy);
+      ++current;
+    }
   }
 
 public:
-  Writer(Stream &stream) noexcept : stream_(&stream), active_(true) {}
+  basic_writer(Stream &stream) noexcept : stream_(&stream), active_(true) {}
 
-  Writer(const Writer &) = delete;
-  Writer &operator=(const Writer &) = delete;
+  basic_writer(const basic_writer &) = delete;
+  basic_writer &operator=(const basic_writer &) = delete;
 
-  Writer(Writer &&other) noexcept : stream_(other.stream_), active_(other.active_) {
+  basic_writer(basic_writer &&other) noexcept : stream_(other.stream_), active_(other.active_) {
     other.stream_ = nullptr;
     other.active_ = false;
   }
 
-  Writer &operator=(Writer &&other) noexcept {
+  basic_writer &operator=(basic_writer &&other) noexcept {
     if (this != &other) {
       release_noexcept_();
       stream_ = other.stream_;
@@ -3463,7 +3958,7 @@ public:
     return *this;
   }
 
-  ~Writer() noexcept { release_noexcept_(); }
+  ~basic_writer() noexcept { release_noexcept_(); }
 
   void close() {
     if (!active_)
@@ -3473,41 +3968,39 @@ public:
   }
 
   template <typename Container> void write_row(Container &&row) {
-    if (!active_)
-      return;
-    auto &&strings = std::forward<Container>(row);
-    using std::begin;
-    using std::end;
-    auto current = begin(strings);
-    const auto last = end(strings);
-    if (current != last) {
-      write_field_(*current, typename std::is_same<QuotePolicy, quote_policy::none>::type());
-      const char separator = delimiter::value;
-      while (++current != last) {
-        *stream_ << separator;
-        write_field_(*current, typename std::is_same<QuotePolicy, quote_policy::none>::type());
-      }
-    }
-    *stream_ << '\n';
+    write_row_with_policy_(std::forward<Container>(row), detail::direct_character_fields());
   }
 
   template <typename Container> void write_rows(Container &&rows) {
-    if (!active_)
-      return;
-    auto &&container_of_rows = std::forward<Container>(rows);
-    using std::begin;
-    using std::end;
-    auto current = begin(container_of_rows);
-    const auto last = end(container_of_rows);
-    while (current != last) {
-      write_row(*current);
-      ++current;
-    }
+    write_rows_with_policy_(std::forward<Container>(rows), detail::direct_character_fields());
+  }
+};
+
+// Keep the historical two-parameter class template intact. Configurable
+// ownership and quoting live on basic_writer so C++11/14 code can continue to
+// pass csv2::Writer to a template-template parameter expecting two arguments.
+template <class delimiter = delimiter<','>, typename Stream = std::ofstream>
+class Writer : public basic_writer<delimiter, Stream, stream_ownership::close_on_destroy,
+                                   quote_policy::none> {
+  using base_type =
+      basic_writer<delimiter, Stream, stream_ownership::close_on_destroy, quote_policy::none>;
+
+public:
+  Writer(Stream &stream) noexcept : base_type(stream) {}
+
+  void close() { base_type::close(); }
+
+  template <typename Container> void write_row(Container &&row) {
+    this->write_legacy_row_(std::forward<Container>(row));
+  }
+
+  template <typename Container> void write_rows(Container &&rows) {
+    this->write_legacy_rows_(std::forward<Container>(rows));
   }
 };
 
 template <class delimiter = delimiter<','>, typename Stream = std::ofstream,
           typename Ownership = stream_ownership::close_on_destroy>
-using EscapingWriter = Writer<delimiter, Stream, Ownership, quote_policy::minimal>;
+using EscapingWriter = basic_writer<delimiter, Stream, Ownership, quote_policy::minimal>;
 
 } // namespace csv2

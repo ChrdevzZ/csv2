@@ -68,6 +68,26 @@ function(csv2_register_runtime_test target test_name)
     WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
 endfunction()
 
+set(csv2_python_executable)
+if(CMAKE_VERSION VERSION_GREATER_EQUAL 3.12)
+  find_package(Python3 3.10 COMPONENTS Interpreter QUIET)
+  if(Python3_Interpreter_FOUND)
+    set(csv2_python_executable ${Python3_EXECUTABLE})
+  endif()
+else()
+  find_package(PythonInterp 3.10 QUIET)
+  if(PYTHONINTERP_FOUND)
+    set(csv2_python_executable ${PYTHON_EXECUTABLE})
+  endif()
+endif()
+if(csv2_python_executable)
+  add_test(NAME csv2.benchmark.tooling_contract
+    COMMAND ${csv2_python_executable}
+      ${csv2_SOURCE_DIR}/benchmark/test_collect_metrics.py -v)
+  set_tests_properties(csv2.benchmark.tooling_contract PROPERTIES
+    LABELS benchmark-checksum)
+endif()
+
 function(csv2_enable_test_options target)
   set(csv2_uses_doctest FALSE)
   set(csv2_disables_exceptions FALSE)
@@ -282,12 +302,38 @@ foreach(standard IN LISTS csv2_config_fallback_standards)
     csv2_config_fallback_single_cxx${standard} ${standard} TRUE)
 endforeach()
 
-csv2_filter_supported_standards(csv2_mmap_path_standards 11 17)
+csv2_filter_supported_standards(csv2_mmap_path_standards 11 17 20 23)
 foreach(standard IN LISTS csv2_mmap_path_standards)
   add_library(csv2_mmap_path_contract_cxx${standard} OBJECT mmap_path.cpp)
   target_link_libraries(csv2_mmap_path_contract_cxx${standard} PRIVATE csv2::csv2)
   csv2_set_test_standard(csv2_mmap_path_contract_cxx${standard} ${standard})
   csv2_enable_test_options(csv2_mmap_path_contract_cxx${standard})
+
+  add_library(csv2_mmap_path_contract_single_cxx${standard} OBJECT mmap_path.cpp)
+  target_compile_definitions(csv2_mmap_path_contract_single_cxx${standard} PRIVATE
+    CSV2_TEST_SINGLE_HEADER)
+  target_include_directories(csv2_mmap_path_contract_single_cxx${standard} PRIVATE
+    ${csv2_SOURCE_DIR}/single_include)
+  csv2_set_test_standard(csv2_mmap_path_contract_single_cxx${standard} ${standard})
+  csv2_enable_test_options(csv2_mmap_path_contract_single_cxx${standard})
+
+  foreach(single_header IN ITEMS FALSE TRUE)
+    if(single_header)
+      set(target csv2_mmap_path_contract_no_mmap_single_cxx${standard})
+    else()
+      set(target csv2_mmap_path_contract_no_mmap_module_cxx${standard})
+    endif()
+    add_library(${target} OBJECT mmap_path.cpp)
+    target_compile_definitions(${target} PRIVATE CSV2_HAS_MMAP=0)
+    if(single_header)
+      target_compile_definitions(${target} PRIVATE CSV2_TEST_SINGLE_HEADER)
+      target_include_directories(${target} PRIVATE ${csv2_SOURCE_DIR}/single_include)
+    else()
+      target_link_libraries(${target} PRIVATE csv2::csv2)
+    endif()
+    csv2_set_test_standard(${target} ${standard})
+    csv2_enable_test_options(${target})
+  endforeach()
 endforeach()
 
 csv2_filter_supported_standards(csv2_header_standards 11 17 20 23)
@@ -326,6 +372,149 @@ foreach(standard IN LISTS csv2_header_standards)
     CSV2_TEST_HEADER_READER ${csv2_SOURCE_DIR}/include ${standard})
   target_compile_definitions(csv2_header_reader_without_mmap${suffix} PRIVATE
     CSV2_HAS_MMAP=0 CSV2_EXPECT_NO_MIO)
+
+  csv2_add_header_self_containment(csv2_header_mio_without_mmap${suffix}
+    CSV2_TEST_HEADER_MIO ${csv2_SOURCE_DIR}/include ${standard})
+  target_compile_definitions(csv2_header_mio_without_mmap${suffix} PRIVATE
+    CSV2_HAS_MMAP=0 CSV2_EXPECT_NO_MIO)
+endforeach()
+
+function(csv2_add_degraded_standard_contract standard)
+  foreach(single_header IN ITEMS FALSE TRUE)
+    if(single_header)
+      set(target csv2_standard_contract_degraded_single_cxx${standard})
+    else()
+      set(target csv2_standard_contract_degraded_module_cxx${standard})
+    endif()
+    add_library(${target} OBJECT standard_cxx${standard}.cpp)
+    target_compile_definitions(${target} PRIVATE
+      CSV2_DETAIL_DISABLE_OPTIONAL_FACILITIES
+      CSV2_TEST_DEGRADED_OPTIONAL_FACILITIES)
+    if(single_header)
+      target_compile_definitions(${target} PRIVATE CSV2_TEST_SINGLE_HEADER)
+      target_include_directories(${target} PRIVATE ${csv2_SOURCE_DIR}/single_include)
+    else()
+      target_link_libraries(${target} PRIVATE csv2::csv2)
+    endif()
+    csv2_set_test_standard(${target} ${standard})
+    csv2_enable_test_options(${target})
+  endforeach()
+endfunction()
+
+set(csv2_degraded_headers_directory
+  "${CMAKE_CURRENT_BINARY_DIR}/degraded_standard_library")
+file(MAKE_DIRECTORY "${csv2_degraded_headers_directory}")
+file(WRITE "${csv2_degraded_headers_directory}/version"
+  "/* Deliberately empty partial <version> fixture. */\n")
+
+set(csv2_empty_headers_directory
+  "${CMAKE_CURRENT_BINARY_DIR}/empty_standard_library")
+file(MAKE_DIRECTORY "${csv2_empty_headers_directory}")
+foreach(header IN ITEMS
+    version string_view filesystem charconv memory_resource span ranges expected)
+  file(WRITE "${csv2_empty_headers_directory}/${header}"
+    "#pragma once\n#pragma GCC system_header\n#pragma GCC diagnostic push\n"
+    "#pragma GCC diagnostic ignored \"-Wpedantic\"\n"
+    "#include_next <${header}>\n#pragma GCC diagnostic pop\n")
+endforeach()
+file(APPEND "${csv2_empty_headers_directory}/version"
+  "#undef __cpp_lib_string_view\n#undef __cpp_lib_filesystem\n"
+  "#undef __cpp_lib_to_chars\n#undef __cpp_lib_memory_resource\n"
+  "#undef __cpp_lib_span\n#undef __cpp_lib_ranges\n"
+  "#undef __cpp_lib_ranges_to_container\n#undef __cpp_lib_expected\n")
+file(APPEND "${csv2_empty_headers_directory}/string_view"
+  "#undef __cpp_lib_string_view\n")
+file(APPEND "${csv2_empty_headers_directory}/filesystem"
+  "#undef __cpp_lib_filesystem\n")
+file(APPEND "${csv2_empty_headers_directory}/charconv"
+  "#undef __cpp_lib_to_chars\n")
+file(APPEND "${csv2_empty_headers_directory}/memory_resource"
+  "#undef __cpp_lib_memory_resource\n")
+file(APPEND "${csv2_empty_headers_directory}/span"
+  "#undef __cpp_lib_span\n")
+file(APPEND "${csv2_empty_headers_directory}/ranges"
+  "#undef __cpp_lib_ranges\n#undef __cpp_lib_ranges_to_container\n")
+file(APPEND "${csv2_empty_headers_directory}/expected"
+  "#undef __cpp_lib_expected\n")
+
+csv2_filter_supported_standards(csv2_degraded_standards 17 20 23)
+foreach(standard IN LISTS csv2_degraded_standards)
+  csv2_add_degraded_standard_contract(${standard})
+
+  foreach(single_header IN ITEMS FALSE TRUE)
+    if(single_header)
+      set(target csv2_standard_contract_partial_headers_single_cxx${standard})
+    else()
+      set(target csv2_standard_contract_partial_headers_module_cxx${standard})
+    endif()
+    add_library(${target} OBJECT standard_cxx${standard}.cpp)
+    target_include_directories(${target} BEFORE PRIVATE
+      ${csv2_degraded_headers_directory})
+    if(single_header)
+      target_compile_definitions(${target} PRIVATE CSV2_TEST_SINGLE_HEADER)
+      target_include_directories(${target} PRIVATE
+        ${csv2_SOURCE_DIR}/single_include)
+    else()
+      target_link_libraries(${target} PRIVATE csv2::csv2)
+    endif()
+    csv2_set_test_standard(${target} ${standard})
+    csv2_enable_test_options(${target})
+
+    if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang|AppleClang" AND
+       NOT CMAKE_CXX_COMPILER_FRONTEND_VARIANT STREQUAL "MSVC")
+      if(single_header)
+        set(degraded_target
+          csv2_standard_contract_empty_headers_single_cxx${standard})
+      else()
+        set(degraded_target
+          csv2_standard_contract_empty_headers_module_cxx${standard})
+      endif()
+      add_library(${degraded_target} OBJECT standard_cxx${standard}.cpp)
+      target_compile_definitions(${degraded_target} PRIVATE
+        CSV2_TEST_DEGRADED_OPTIONAL_FACILITIES)
+      target_include_directories(${degraded_target} BEFORE PRIVATE
+        ${csv2_empty_headers_directory})
+      if(single_header)
+        target_compile_definitions(${degraded_target} PRIVATE CSV2_TEST_SINGLE_HEADER)
+        target_include_directories(${degraded_target} PRIVATE
+          ${csv2_SOURCE_DIR}/single_include)
+      else()
+        target_link_libraries(${degraded_target} PRIVATE csv2::csv2)
+      endif()
+      csv2_set_test_standard(${degraded_target} ${standard})
+      csv2_enable_test_options(${degraded_target})
+    endif()
+  endforeach()
+endforeach()
+
+set(csv2_version_trap_directory "${CMAKE_CURRENT_BINARY_DIR}/version_trap")
+file(MAKE_DIRECTORY "${csv2_version_trap_directory}")
+file(WRITE "${csv2_version_trap_directory}/version"
+  "#error pre-C++20 translation units must not include <version>\n")
+
+function(csv2_add_version_guard_contract standard single_header)
+  if(single_header)
+    set(target csv2_version_guard_single_cxx${standard})
+  else()
+    set(target csv2_version_guard_module_cxx${standard})
+  endif()
+  add_library(${target} OBJECT config.cpp)
+  target_include_directories(${target} BEFORE PRIVATE
+    ${csv2_version_trap_directory})
+  if(single_header)
+    target_compile_definitions(${target} PRIVATE CSV2_TEST_SINGLE_HEADER)
+    target_include_directories(${target} PRIVATE ${csv2_SOURCE_DIR}/single_include)
+  else()
+    target_link_libraries(${target} PRIVATE csv2::csv2)
+  endif()
+  csv2_set_test_standard(${target} ${standard})
+  csv2_enable_test_options(${target})
+endfunction()
+
+csv2_filter_supported_standards(csv2_pre_cxx20_standards 11 14 17)
+foreach(standard IN LISTS csv2_pre_cxx20_standards)
+  csv2_add_version_guard_contract(${standard} FALSE)
+  csv2_add_version_guard_contract(${standard} TRUE)
 endforeach()
 
 function(csv2_add_no_exceptions_test target test_name standard single_header)

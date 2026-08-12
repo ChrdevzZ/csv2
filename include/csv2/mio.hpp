@@ -1,3 +1,8 @@
+#pragma once
+
+#include <csv2/detail/config.hpp>
+
+#if CSV2_HAS_MMAP
 
 /* Copyright 2017 https://github.com/mandreyel
  *
@@ -613,33 +618,49 @@ struct char_type_helper {
   using type = typename C::value_type;
 };
 
-template <class T> struct char_type { using type = typename char_type_helper<T>::type; };
+template <class T> struct char_type {
+  using type = typename char_type_helper<T>::type;
+};
 
 // TODO: can we avoid this brute force approach?
-template <> struct char_type<char *> { using type = char; };
+template <> struct char_type<char *> {
+  using type = char;
+};
 
-template <> struct char_type<const char *> { using type = char; };
+template <> struct char_type<const char *> {
+  using type = char;
+};
 
-template <size_t N> struct char_type<char[N]> { using type = char; };
+template <size_t N> struct char_type<char[N]> {
+  using type = char;
+};
 
-template <size_t N> struct char_type<const char[N]> { using type = char; };
+template <size_t N> struct char_type<const char[N]> {
+  using type = char;
+};
 
 #ifdef _WIN32
-template <> struct char_type<wchar_t *> { using type = wchar_t; };
+template <> struct char_type<wchar_t *> {
+  using type = wchar_t;
+};
 
-template <> struct char_type<const wchar_t *> { using type = wchar_t; };
+template <> struct char_type<const wchar_t *> {
+  using type = wchar_t;
+};
 
-template <size_t N> struct char_type<wchar_t[N]> { using type = wchar_t; };
+template <size_t N> struct char_type<wchar_t[N]> {
+  using type = wchar_t;
+};
 
-template <size_t N> struct char_type<const wchar_t[N]> { using type = wchar_t; };
+template <size_t N> struct char_type<const wchar_t[N]> {
+  using type = wchar_t;
+};
 #endif // _WIN32
 
 template <typename CharT, typename S> struct is_c_str_helper {
-  static constexpr bool value =
-      std::is_same<CharT *,
-                   // TODO: I'm so sorry for this... Can this be made cleaner?
-                   typename std::add_pointer<typename std::remove_cv<typename std::remove_pointer<
-                       typename std::decay<S>::type>::type>::type>::type>::value;
+  using decayed_type = typename std::decay<S>::type;
+  static constexpr bool value = std::is_pointer<decayed_type>::value &&
+                                std::is_convertible<decayed_type, const CharT *>::value;
 };
 
 template <typename S> struct is_c_str {
@@ -660,12 +681,37 @@ template <typename S> struct is_c_str_or_c_wstr {
       ;
 };
 
+template <typename T> struct is_basic_string : std::false_type {};
+
+template <typename CharT, typename Traits, typename Allocator>
+struct is_basic_string<std::basic_string<CharT, Traits, Allocator>>
+    : std::integral_constant<bool, std::is_same<CharT, char>::value
+#ifdef _WIN32
+                                       || std::is_same<CharT, wchar_t>::value
+#endif
+                             > {
+};
+
+template <typename T, typename = void> struct is_sized_char_range : std::false_type {};
+
+template <typename T>
+struct is_sized_char_range<
+    T,
+    typename std::enable_if<
+        (std::is_same<typename std::decay<T>::type::value_type, char>::value
+#ifdef _WIN32
+         || std::is_same<typename std::decay<T>::type::value_type, wchar_t>::value
+#endif
+         ) &&
+        std::is_convertible<decltype(std::declval<const typename std::decay<T>::type &>().data()),
+                            const typename std::decay<T>::type::value_type *>::value &&
+        std::is_convertible<decltype(std::declval<const typename std::decay<T>::type &>().size()),
+                            size_t>::value>::type> : std::true_type {
+};
+
 template <typename S> struct is_object_path {
   using type = typename std::decay<S>::type;
-  static constexpr bool value = std::is_same<type, std::string>::value
-#ifdef _WIN32
-                                || std::is_same<type, std::wstring>::value
-#endif
+  static constexpr bool value = is_basic_string<type>::value
 #if CSV2_HAS_FILESYSTEM
                                 || std::is_same<type, std::filesystem::path>::value
 #endif
@@ -676,22 +722,51 @@ template <typename S> struct is_path {
   static constexpr bool value = is_c_str_or_c_wstr<S>::value || is_object_path<S>::value;
 };
 
+template <typename S> struct is_range_path {
+  using type = typename std::decay<S>::type;
+  static constexpr bool value = is_sized_char_range<type>::value && !is_object_path<type>::value
+#if CSV2_HAS_STRING_VIEW
+                                && !std::is_same<type, std::string_view>::value
+#ifdef _WIN32
+                                && !std::is_same<type, std::wstring_view>::value
+#endif
+#endif
+      ;
+};
+
+template <typename S> struct is_mapping_token {
+  using type = typename std::decay<S>::type;
+  static constexpr bool value = is_path<S>::value || is_range_path<S>::value
+#ifdef _WIN32
+                                || std::is_same<type, file_handle_type>::value
+#endif
+      ;
+};
+
 #if CSV2_HAS_FILESYSTEM
 template <> struct char_type<std::filesystem::path> {
   using type = std::filesystem::path::value_type;
 };
 #endif
 
-template <typename String,
-          typename = typename std::enable_if<is_object_path<String>::value>::type>
+template <typename String, typename = typename std::enable_if<is_object_path<String>::value>::type>
 auto c_str(const String &path) -> decltype(path.c_str()) {
   return path.c_str();
 }
 
-template <typename String,
-          typename = typename std::enable_if<is_object_path<String>::value>::type>
-bool empty(const String &path) {
+template <typename String>
+typename std::enable_if<is_object_path<String>::value, bool>::type empty(const String &path) {
   return path.empty();
+}
+
+template <typename Range, typename = typename std::enable_if<is_range_path<Range>::value>::type>
+auto c_str(const Range &path) -> decltype(path.data()) {
+  return path.data();
+}
+
+template <typename Range>
+typename std::enable_if<is_range_path<Range>::value, bool>::type empty(const Range &path) {
+  return path.size() <= 1 || path.data() == nullptr || path.data()[0] == 0;
 }
 
 template <typename String,
@@ -700,9 +775,8 @@ const typename char_type<String>::type *c_str(String path) {
   return path;
 }
 
-template <typename String,
-          typename = typename std::enable_if<is_c_str_or_c_wstr<String>::value>::type>
-bool empty(String path) {
+template <typename String>
+typename std::enable_if<is_c_str_or_c_wstr<String>::value, bool>::type empty(String path) {
   return !path || (*path == 0);
 }
 
@@ -711,21 +785,41 @@ size_t path_size(const std::basic_string<CharT, Traits, Allocator> &path) {
   return path.size();
 }
 
-#if CSV2_HAS_FILESYSTEM
-inline size_t path_size(const std::filesystem::path &path) { return path.native().size(); }
-#endif
-
-template <typename String,
-          typename = typename std::enable_if<is_object_path<String>::value>::type>
-bool has_embedded_null(const String &path) {
+template <typename String>
+typename std::enable_if<is_basic_string<typename std::decay<String>::type>::value, bool>::type
+has_embedded_null(const String &path) {
   typedef typename char_type<String>::type char_type;
   return std::char_traits<char_type>::length(c_str(path)) != path_size(path);
 }
 
-template <typename String,
-          typename = typename std::enable_if<is_c_str_or_c_wstr<String>::value>::type>
-bool has_embedded_null(String) {
+#if CSV2_HAS_FILESYSTEM
+inline size_t path_size(const std::filesystem::path &path) { return path.native().size(); }
+#endif
+
+template <typename String>
+typename std::enable_if<is_object_path<String>::value &&
+                            !is_basic_string<typename std::decay<String>::type>::value,
+                        bool>::type
+has_embedded_null(const String &path) {
+  typedef typename char_type<String>::type char_type;
+  return std::char_traits<char_type>::length(c_str(path)) != path_size(path);
+}
+
+template <typename String>
+typename std::enable_if<is_c_str_or_c_wstr<String>::value, bool>::type has_embedded_null(String) {
   return false;
+}
+
+template <typename Range>
+typename std::enable_if<is_range_path<Range>::value, bool>::type
+has_embedded_null(const Range &path) {
+  typedef typename std::decay<Range>::type range_type;
+  typedef typename range_type::value_type char_type;
+  const size_t size = static_cast<size_t>(path.size());
+  const char_type *const data = path.data();
+  if (!data || size == 0 || data[size - 1] != char_type())
+    return true;
+  return std::char_traits<char_type>::length(data) != size - 1;
 }
 
 } // namespace detail
@@ -1650,3 +1744,5 @@ using shared_ummap_sink = basic_shared_mmap_sink<unsigned char>;
 } // namespace mio
 
 #endif // MIO_SHARED_MMAP_HEADER
+
+#endif // CSV2_HAS_MMAP

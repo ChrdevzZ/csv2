@@ -36,13 +36,38 @@
 
 namespace csv2 {
 
+namespace detail {
+
+#if CSV2_HAS_RANGES
+template <class T>
+concept marked_row_view = requires {
+  typename std::remove_cv_t<T>::csv2_row_view_marker;
+  requires std::is_same_v<typename std::remove_cv_t<T>::csv2_row_view_marker, std::remove_cv_t<T>>;
+};
+#endif
+
+template <class T> class arrow_proxy {
+  T value_;
+
+public:
+  explicit arrow_proxy(T value) : value_(std::move(value)) {}
+  const T *operator->() const noexcept { return std::addressof(value_); }
+};
+
+template <class Delimiter>
+struct is_record_compatible_delimiter
+    : std::integral_constant<bool, Delimiter::value != '\r' && Delimiter::value != '\n'> {};
+
+} // namespace detail
+
 template <class quote_character, class trim_policy> class basic_cell {
   const char *buffer_{nullptr};
   size_t start_{0};
   size_t end_{0};
   bool escaped_{false};
 
-  std::pair<size_t, size_t> content_bounds_() const noexcept {
+  std::pair<size_t, size_t> content_bounds_() const
+      noexcept(noexcept(trim_policy::trim(buffer_, start_, end_))) {
     std::pair<size_t, size_t> bounds = trim_policy::trim(buffer_, start_, end_);
     if (bounds.second - bounds.first >= 2 && buffer_[bounds.first] == quote_character::value &&
         buffer_[bounds.second - 1] == quote_character::value) {
@@ -62,20 +87,24 @@ public:
   bool has_escaped_quotes() const noexcept { return escaped_; }
 
 #if CSV2_HAS_STRING_VIEW
-  std::string_view raw_trimmed_view() const noexcept {
+  std::string_view raw_trimmed_view() const
+      noexcept(noexcept(trim_policy::trim(buffer_, start_, end_))) {
     if (!buffer_)
       return std::string_view();
     const auto bounds = trim_policy::trim(buffer_, start_, end_);
     return std::string_view(buffer_ + bounds.first, bounds.second - bounds.first);
   }
 
-  std::string_view read_view() const noexcept { return raw_trimmed_view(); }
+  std::string_view read_view() const noexcept(noexcept(raw_trimmed_view())) {
+    return raw_trimmed_view();
+  }
 #endif
 
   template <typename Container> void read_raw_value(Container &result) const {
+    if (start_ >= end_)
+      return;
     detail::reserve_for_append(result, raw_size());
-    if (start_ < end_)
-      detail::append_optimized_range(result, buffer_ + start_, buffer_ + end_);
+    detail::append_optimized_range(result, buffer_ + start_, buffer_ + end_);
   }
 
   template <typename Container> void read_value(Container &result) const {
@@ -132,7 +161,8 @@ public:
 
   template <class Integer>
   typename std::enable_if<detail::is_csv_integer<Integer>::value, bool>::type
-  try_parse(Integer &output, conversion_error &error, int base = 10) const noexcept {
+  try_parse(Integer &output, conversion_error &error, int base = 10) const
+      noexcept(noexcept(trim_policy::trim(buffer_, start_, end_))) {
     if (!buffer_ || escaped_)
       return detail::conversion_failure(error, conversion_errc::invalid_argument, 0);
     const std::pair<size_t, size_t> bounds = content_bounds_();
@@ -144,7 +174,7 @@ public:
   template <class Integer>
   typename std::enable_if<detail::is_csv_integer<Integer>::value,
                           std::expected<Integer, conversion_error>>::type
-  parse_expected(int base = 10) const noexcept {
+  parse_expected(int base = 10) const noexcept(noexcept(trim_policy::trim(buffer_, start_, end_))) {
     Integer result{};
     conversion_error error;
     if (try_parse(result, error, base))
@@ -172,9 +202,10 @@ public:
   size_t length() const noexcept { return raw_size(); }
 
   template <typename Container> void read_raw_value(Container &result) const {
+    if (start_ >= end_)
+      return;
     detail::reserve_for_append(result, raw_size());
-    if (start_ < end_)
-      detail::append_optimized_range(result, buffer_ + start_, buffer_ + end_);
+    detail::append_optimized_range(result, buffer_ + start_, buffer_ + end_);
   }
 
   class CellIterator {
@@ -201,7 +232,7 @@ public:
     using value_type = Cell;
     using difference_type = std::ptrdiff_t;
     using reference = Cell;
-    using pointer = void;
+    using pointer = detail::arrow_proxy<Cell>;
     using iterator_category = std::input_iterator_tag;
 #if CSV2_HAS_RANGES
     using iterator_concept = std::forward_iterator_tag;
@@ -213,6 +244,11 @@ public:
         : buffer_(buffer), current_(start), end_(end), content_end_(end), escaped_(false),
           at_end_(start >= end) {
       update_bounds_();
+    }
+
+    CellIterator(const char *buffer, size_t buffer_size, size_t start, size_t end)
+        : CellIterator(buffer, start, end) {
+      (void)buffer_size;
     }
 
     CellIterator &operator++() {
@@ -235,6 +271,7 @@ public:
     }
 
     Cell operator*() const { return Cell(buffer_, current_, content_end_, escaped_); }
+    pointer operator->() const { return pointer(operator*()); }
 
     bool operator==(const CellIterator &rhs) const noexcept {
       return buffer_ == rhs.buffer_ && current_ == rhs.current_ && end_ == rhs.end_ &&
@@ -248,40 +285,47 @@ public:
   CellIterator end() const { return CellIterator(buffer_, end_, end_); }
 };
 
-template <class delimiter_type, class quote_character_type, class trim_policy_type> class RowIndex {
+template <class delimiter_type, class quote_character_type, class trim_policy_type,
+          class row_type = basic_row<delimiter_type, quote_character_type, trim_policy_type>>
+class RowIndex {
+  static_assert(detail::is_record_compatible_delimiter<delimiter_type>::value,
+                "csv2 record separators cannot also be field delimiters");
+
 public:
-  using Row = basic_row<delimiter_type, quote_character_type, trim_policy_type>;
+  using Row = row_type;
 
 private:
+  struct row_bounds {
+    size_t start;
+    size_t end;
+  };
+
   const char *buffer_{nullptr};
-  size_t buffer_size_{0};
-  std::vector<size_t> offsets_;
+  std::vector<row_bounds> rows_;
 
   Row row_at_(size_t position) const noexcept {
-    const size_t start = offsets_[position];
-    const detail::record_bounds bounds =
-        detail::find_record_bounds<quote_character_type>(buffer_, buffer_size_, start);
-    return Row(buffer_, start, bounds.content_end);
+    const row_bounds bounds = rows_[position];
+    return Row(buffer_, bounds.start, bounds.end);
   }
 
 public:
   RowIndex() = default;
 
   RowIndex(const char *buffer, size_t buffer_size, size_t start, bool ignore_empty_lines)
-      : buffer_(buffer), buffer_size_(buffer_size) {
+      : buffer_(buffer) {
     if (!buffer_)
       return;
-    while (start < buffer_size_) {
+    while (start < buffer_size) {
       const detail::record_bounds bounds =
-          detail::find_record_bounds<quote_character_type>(buffer_, buffer_size_, start);
+          detail::find_record_bounds<quote_character_type>(buffer_, buffer_size, start);
       if (!ignore_empty_lines || bounds.content_end != start)
-        offsets_.push_back(start);
+        rows_.push_back({start, bounds.content_end});
       start = bounds.next_start;
     }
   }
 
-  size_t size() const noexcept { return offsets_.size(); }
-  bool empty() const noexcept { return offsets_.empty(); }
+  size_t size() const noexcept { return rows_.size(); }
+  bool empty() const noexcept { return rows_.empty(); }
   Row operator[](size_t position) const noexcept { return row_at_(position); }
 
   class iterator {
@@ -292,8 +336,8 @@ public:
     using value_type = Row;
     using difference_type = std::ptrdiff_t;
     using reference = Row;
-    using pointer = void;
-    using iterator_category = std::random_access_iterator_tag;
+    using pointer = detail::arrow_proxy<Row>;
+    using iterator_category = std::input_iterator_tag;
 #if CSV2_HAS_RANGES
     using iterator_concept = std::random_access_iterator_tag;
 #endif
@@ -303,6 +347,7 @@ public:
         : index_(index), position_(position) {}
 
     Row operator*() const noexcept { return (*index_)[position_]; }
+    pointer operator->() const { return pointer(operator*()); }
     Row operator[](difference_type offset) const noexcept {
       return (*index_)[static_cast<size_t>(static_cast<difference_type>(position_) + offset)];
     }
@@ -381,6 +426,12 @@ inline constexpr bool enable_view<csv2::basic_row<delimiter, quote_character, tr
 template <class delimiter, class quote_character, class trim_policy>
 inline constexpr bool
     enable_borrowed_range<csv2::basic_row<delimiter, quote_character, trim_policy>> = true;
+template <class T>
+  requires csv2::detail::marked_row_view<T>
+inline constexpr bool enable_view<T> = true;
+template <class T>
+  requires csv2::detail::marked_row_view<T>
+inline constexpr bool enable_borrowed_range<T> = true;
 } // namespace ranges
 } // namespace std
 
@@ -391,6 +442,9 @@ template <class delimiter = delimiter<','>, class quote_character = quote_charac
           class first_row_is_header = first_row_is_header<true>,
           class trim_policy = trim_policy::trim_whitespace>
 class Reader {
+  static_assert(detail::is_record_compatible_delimiter<delimiter>::value,
+                "csv2 record separators cannot also be field delimiters");
+
 #if CSV2_HAS_MMAP
   mio::mmap_source mmap_;
 #endif
@@ -456,7 +510,9 @@ class Reader {
   }
 
   template <typename StringType> bool parse_dispatch_(StringType &&contents, std::true_type) {
-    return parse_borrowed(contents.c_str(), contents.size());
+    const char *const data = contents.c_str();
+    const size_t size = contents.size();
+    return parse_borrowed(data, size);
   }
 
   template <typename StringType> bool parse_owned_(StringType &&contents, std::true_type) {
@@ -488,6 +544,86 @@ class Reader {
   }
 
 public:
+  class Cell : public basic_cell<quote_character, trim_policy> {
+    using base_type = basic_cell<quote_character, trim_policy>;
+
+  public:
+    Cell() = default;
+    explicit Cell(const base_type &cell) noexcept : base_type(cell) {}
+    Cell(const char *buffer, size_t start, size_t end, bool escaped) noexcept
+        : base_type(buffer, start, end, escaped) {}
+
+#if CSV2_HAS_STRING_VIEW
+    std::string_view read_view() const { return base_type::read_view(); }
+#endif
+
+    template <typename Container> void read_raw_value(Container &result) const {
+      base_type::read_raw_value(result);
+    }
+
+    template <typename Container> void read_value(Container &result) const {
+      base_type::read_value(result);
+    }
+  };
+
+  class Row : public basic_row<delimiter, quote_character, trim_policy> {
+    using base_type = basic_row<delimiter, quote_character, trim_policy>;
+
+  public:
+    using csv2_row_view_marker = Row;
+    using Cell = typename Reader::Cell;
+    Row() = default;
+    Row(const char *buffer, size_t start, size_t end) noexcept : base_type(buffer, start, end) {}
+
+    const char *address() const noexcept { return base_type::address(); }
+    size_t length() const { return base_type::length(); }
+
+    template <typename Container> void read_raw_value(Container &result) const {
+      base_type::read_raw_value(result);
+    }
+
+    class CellIterator {
+      typename base_type::CellIterator iterator_;
+
+    public:
+      using value_type = Cell;
+      using difference_type = std::ptrdiff_t;
+      using reference = Cell;
+      using pointer = detail::arrow_proxy<Cell>;
+      using iterator_category = std::input_iterator_tag;
+#if CSV2_HAS_RANGES
+      using iterator_concept = std::forward_iterator_tag;
+#endif
+
+      CellIterator() = default;
+      explicit CellIterator(typename base_type::CellIterator iterator) : iterator_(iterator) {}
+      CellIterator(const char *buffer, size_t start, size_t end) : iterator_(buffer, start, end) {}
+      CellIterator(const char *buffer, size_t buffer_size, size_t start, size_t end)
+          : iterator_(buffer, buffer_size, start, end) {}
+
+      CellIterator &operator++() {
+        ++iterator_;
+        return *this;
+      }
+      CellIterator operator++(int) {
+        CellIterator previous(*this);
+        ++(*this);
+        return previous;
+      }
+
+      Cell operator*() const { return Cell(*iterator_); }
+      pointer operator->() const { return pointer(operator*()); }
+
+      bool operator==(const CellIterator &other) const noexcept {
+        return iterator_ == other.iterator_;
+      }
+      bool operator!=(const CellIterator &other) const noexcept { return !(*this == other); }
+    };
+
+    CellIterator begin() const { return CellIterator(base_type::begin()); }
+    CellIterator end() const { return CellIterator(base_type::end()); }
+  };
+
   Reader() = default;
   Reader(const Reader &) = delete;
   Reader &operator=(const Reader &) = delete;
@@ -526,7 +662,9 @@ public:
 #if CSV2_HAS_MMAP
   // Memory-map a file. A failed mapping clears any previous source.
   template <typename StringType>
-  typename std::enable_if<mio::detail::is_path<StringType>::value, bool>::type
+  typename std::enable_if<mio::detail::is_path<StringType>::value ||
+                              mio::detail::is_range_path<StringType>::value,
+                          bool>::type
   mmap(StringType &&filename, std::error_code &error) {
     // Map through a temporary so a C-string path may safely point into this
     // Reader's current owned or mapped source until the OS consumes it.
@@ -545,16 +683,48 @@ public:
     return true;
   }
 
+  template <typename Handle>
+  typename std::enable_if<std::is_same<typename std::decay<Handle>::type,
+                                       typename mio::mmap_source::handle_type>::value,
+                          bool>::type
+  mmap(Handle handle, std::error_code &error) {
+    mio::mmap_source new_mapping;
+    new_mapping.map(handle, 0, mio::map_entire_file, error);
+    reset_source_();
+    if (error || !new_mapping.is_open() || !new_mapping.is_mapped() || new_mapping.size() == 0) {
+      if (!error)
+        error = std::make_error_code(std::errc::invalid_argument);
+      new_mapping.unmap();
+      return false;
+    }
+    mmap_ = std::move(new_mapping);
+    buffer_ = mmap_.data();
+    buffer_size_ = mmap_.size();
+    return true;
+  }
+
   template <typename StringType>
-  typename std::enable_if<mio::detail::is_path<StringType>::value, bool>::type
+  typename std::enable_if<mio::detail::is_path<StringType>::value ||
+                              mio::detail::is_range_path<StringType>::value,
+                          bool>::type
   mmap(StringType &&filename) {
     std::error_code error;
     return mmap(std::forward<StringType>(filename), error);
   }
 
+  template <typename Handle>
+  typename std::enable_if<std::is_same<typename std::decay<Handle>::type,
+                                       typename mio::mmap_source::handle_type>::value,
+                          bool>::type
+  mmap(Handle handle) {
+    std::error_code error;
+    return mmap(handle, error);
+  }
+
 #if CSV2_HAS_EXPECTED
   template <typename StringType>
-  typename std::enable_if<mio::detail::is_path<StringType>::value,
+  typename std::enable_if<mio::detail::is_path<StringType>::value ||
+                              mio::detail::is_range_path<StringType>::value,
                           std::expected<void, std::error_code>>::type
   mmap_expected(StringType &&filename) {
     std::error_code error;
@@ -562,16 +732,29 @@ public:
       return {};
     return std::unexpected(error);
   }
+
+  template <typename Handle>
+  typename std::enable_if<std::is_same<typename std::decay<Handle>::type,
+                                       typename mio::mmap_source::handle_type>::value,
+                          std::expected<void, std::error_code>>::type
+  mmap_expected(Handle handle) {
+    std::error_code error;
+    if (mmap(handle, error))
+      return {};
+    return std::unexpected(error);
+  }
 #endif
 #endif
 
-  // Lvalue strings are borrowed. Rvalue strings are owned by this Reader.
+  // Lvalue strings are borrowed; rvalues are owned. Borrowed address and extent
+  // must remain valid. Any mutation invalidates previously acquired views and
+  // cursors, which must be discarded and reacquired from this Reader.
   template <typename StringType> bool parse(StringType &&contents) {
     return parse_dispatch_(std::forward<StringType>(contents),
                            typename std::is_lvalue_reference<StringType &&>::type());
   }
 
-  // Borrow exactly size bytes. The caller keeps the storage alive.
+  // Borrow exactly size bytes under the lifetime and mutation contract above.
   bool parse_borrowed(const char *data, size_t size) noexcept {
     if (!data || size == 0) {
       reset_source_();
@@ -601,7 +784,7 @@ public:
 #endif
 
 #if CSV2_HAS_STRING_VIEW
-  // Borrow a string_view. The view's storage must outlive Reader access.
+  // Borrow a string_view under the lifetime and mutation contract above.
   bool parse_view(std::string_view sv) {
     const char *const data = sv.data();
     const size_t size = sv.size();
@@ -622,13 +805,15 @@ public:
   }
 #endif
 
-  bool validate(parse_error &error) const noexcept {
+  bool validate(parse_error &error) const
+      noexcept(noexcept(trim_policy::trim(buffer_, size_t(), size_t()))) {
     return detail::validate_csv<delimiter, quote_character, trim_policy>(buffer_, buffer_size_,
                                                                          error);
   }
 
 #if CSV2_HAS_EXPECTED
-  std::expected<void, parse_error> validate_expected() const noexcept {
+  std::expected<void, parse_error> validate_expected() const
+      noexcept(noexcept(trim_policy::trim(buffer_, size_t(), size_t()))) {
     parse_error error;
     if (validate(error))
       return {};
@@ -636,9 +821,7 @@ public:
   }
 #endif
 
-  using Cell = basic_cell<quote_character, trim_policy>;
-  using Row = basic_row<delimiter, quote_character, trim_policy>;
-  using RowIndex = csv2::RowIndex<delimiter, quote_character, trim_policy>;
+  using RowIndex = csv2::RowIndex<delimiter, quote_character, trim_policy, Row>;
   class RowIterator;
 
   class RowIterator {
@@ -653,7 +836,7 @@ public:
     using value_type = Row;
     using difference_type = std::ptrdiff_t;
     using reference = Row;
-    using pointer = void;
+    using pointer = detail::arrow_proxy<Row>;
     using iterator_category = std::input_iterator_tag;
 #if CSV2_HAS_RANGES
     using iterator_concept = std::forward_iterator_tag;
@@ -695,6 +878,7 @@ public:
     }
 
     Row operator*() const { return Row(buffer_, start_, content_end_); }
+    pointer operator->() const { return pointer(operator*()); }
 
     bool operator==(const RowIterator &rhs) const noexcept {
       return buffer_ == rhs.buffer_ && buffer_size_ == rhs.buffer_size_ && start_ == rhs.start_ &&

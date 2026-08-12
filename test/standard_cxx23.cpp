@@ -8,6 +8,11 @@
 #include <type_traits>
 #include <utility>
 
+#if defined(CSV2_TEST_DEGRADED_OPTIONAL_FACILITIES)
+static_assert(!CSV2_HAS_EXPECTED, "missing expected must disable its optional API");
+static_assert(!CSV2_HAS_RANGES_TO_CONTAINER, "missing ranges::to must disable its optional API");
+#endif
+
 #if CSV2_HAS_EXPECTED
 #include <expected>
 

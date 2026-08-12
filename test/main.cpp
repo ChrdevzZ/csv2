@@ -521,6 +521,7 @@ static_assert(true, "compiling this translation unit is the assertion");
 #include <limits>
 #include <list>
 #include <sstream>
+#include <stdexcept>
 #include <string>
 #include <system_error>
 #include <type_traits>
@@ -566,10 +567,21 @@ using ReaderWithHeader =
 using PublicRow = csv2::basic_row<csv2::delimiter<','>, csv2::quote_character<'"'>,
                                   csv2::trim_policy::trim_whitespace>;
 using PublicCell = csv2::basic_cell<csv2::quote_character<'"'>, csv2::trim_policy::trim_whitespace>;
-static_assert(std::is_same<ReaderWithoutHeader::Row, PublicRow>::value,
-              "Reader::Row must remain a source-compatible alias");
-static_assert(std::is_same<ReaderWithoutHeader::Cell, PublicCell>::value,
-              "Reader::Cell must remain a source-compatible alias");
+static_assert(std::is_base_of<PublicRow, ReaderWithoutHeader::Row>::value,
+              "Reader::Row must reuse the namespace-scope implementation");
+static_assert(std::is_base_of<PublicCell, ReaderWithoutHeader::Cell>::value,
+              "Reader::Cell must reuse the namespace-scope implementation");
+static_assert(sizeof(ReaderWithoutHeader::Row) == sizeof(PublicRow),
+              "the nested Row facade must add no per-row state");
+static_assert(sizeof(ReaderWithoutHeader::Cell) == sizeof(PublicCell),
+              "the nested Cell facade must add no per-cell state");
+static_assert(!std::is_same<ReaderWithoutHeader::Row, ReaderWithHeader::Row>::value,
+              "Reader specializations must retain distinct nested Row types");
+static_assert(!std::is_same<ReaderWithoutHeader::Cell, ReaderWithHeader::Cell>::value,
+              "Reader specializations must retain distinct nested Cell types");
+static_assert(std::is_same<decltype(std::declval<const ReaderWithoutHeader::RowIndex &>()[0]),
+                           ReaderWithoutHeader::Row>::value,
+              "Reader::RowIndex must return the corresponding nested Row type");
 static_assert(sizeof(ReaderWithoutHeader::RowIterator) <= 5 * sizeof(void *),
               "RowIterator must remain a five-word cursor");
 static_assert(sizeof(PublicRow::CellIterator) <= 5 * sizeof(void *),
@@ -622,6 +634,39 @@ struct StringLikeView {
   std::size_t size_in_bytes;
 };
 
+struct SequencedStringLikeView {
+  explicit SequencedStringLikeView(const std::string &value)
+      : value(value), data_observed(false), sequence_valid(true) {}
+
+  const char *c_str() const {
+    data_observed = true;
+    return value.c_str();
+  }
+  std::size_t size() const {
+    if (!data_observed)
+      sequence_valid = false;
+    return value.size();
+  }
+
+  const std::string &value;
+  mutable bool data_observed;
+  mutable bool sequence_valid;
+};
+
+struct LazyAddressStringLikeView {
+  explicit LazyAddressStringLikeView(std::string value) : value(std::move(value)) {}
+
+  const char *c_str() const {
+    if (storage.empty())
+      storage = value;
+    return storage.c_str();
+  }
+  std::size_t size() const { return value.size(); }
+
+  std::string value;
+  mutable std::string storage;
+};
+
 class LvalueCloseStream : public std::ostringstream {
 public:
   LvalueCloseStream() : closed(false) {}
@@ -630,6 +675,47 @@ public:
 
   bool closed;
 };
+
+struct AbsoluteOffsetTrim {
+  static const char *expected_buffer;
+
+  static std::pair<std::size_t, std::size_t> trim(const char *buffer, std::size_t start,
+                                                  std::size_t end) {
+    if (buffer == expected_buffer && start == 2 && start < end)
+      ++start;
+    return std::make_pair(start, end);
+  }
+};
+
+const char *AbsoluteOffsetTrim::expected_buffer = nullptr;
+
+struct ContextTrim {
+  static std::pair<std::size_t, std::size_t> trim(const char *buffer, std::size_t start,
+                                                  std::size_t end) {
+    while (start < end && buffer[start] == '~' && start + 1 < end && buffer[start + 1] == '~')
+      start += 2;
+    while (start < end && buffer[end - 1] == '~' && start + 1 < end && buffer[end - 2] == '~')
+      end -= 2;
+    return std::make_pair(start, end);
+  }
+};
+
+struct SingleByteOnlyTrim {
+  static std::pair<std::size_t, std::size_t> trim(const char *, std::size_t start,
+                                                  std::size_t end) {
+    if (end - start == 1)
+      return std::make_pair(end, end);
+    return std::make_pair(start, end);
+  }
+};
+
+#if defined(__cpp_exceptions) || defined(__EXCEPTIONS) || defined(_CPPUNWIND)
+struct ThrowingTrim {
+  static std::pair<std::size_t, std::size_t> trim(const char *, std::size_t, std::size_t) {
+    throw std::runtime_error("trim failure");
+  }
+};
+#endif
 
 class CountingCloseStream : public std::ostringstream {
 public:
@@ -664,6 +750,77 @@ public:
   std::string value;
 };
 
+class DecoratingStringStream {
+public:
+  DecoratingStringStream &write(const char *data, std::streamsize size) {
+    value.append(data, static_cast<std::size_t>(size));
+    return *this;
+  }
+
+  DecoratingStringStream &operator<<(char character) {
+    value.push_back(character);
+    return *this;
+  }
+
+  DecoratingStringStream &operator<<(const std::string &field) {
+    value += '<';
+    value += field;
+    value += '>';
+    return *this;
+  }
+
+#if CSV2_HAS_STRING_VIEW
+  DecoratingStringStream &operator<<(std::string_view field) {
+    value += '[';
+    value.append(field.data(), field.size());
+    value += ']';
+    return *this;
+  }
+#endif
+
+  std::string value;
+};
+
+class ChainedInsertionStream {
+public:
+  class Proxy {
+  public:
+    explicit Proxy(ChainedInsertionStream &stream) : stream_(stream) {}
+    Proxy &operator<<(const std::string &field) {
+      stream_.value += "P{" + field + '}';
+      return *this;
+    }
+
+  private:
+    ChainedInsertionStream &stream_;
+  };
+
+  ChainedInsertionStream &operator<<(const std::string &field) {
+    value += "S{" + field + '}';
+    return *this;
+  }
+  Proxy operator<<(char character) {
+    value.push_back(character);
+    return Proxy(*this);
+  }
+
+  std::string value;
+};
+
+class ConstSelectingRow {
+public:
+  ConstSelectingRow() : mutable_field_("mutable"), const_field_("const") {}
+
+  std::string *begin() { return &mutable_field_; }
+  std::string *end() { return &mutable_field_ + 1; }
+  const std::string *begin() const { return &const_field_; }
+  const std::string *end() const { return &const_field_ + 1; }
+
+private:
+  std::string mutable_field_;
+  std::string const_field_;
+};
+
 struct CommaFormattedValue {
   int left;
   int right;
@@ -671,6 +828,15 @@ struct CommaFormattedValue {
 
 std::ostream &operator<<(std::ostream &stream, const CommaFormattedValue &value) {
   return stream << value.left << ',' << value.right;
+}
+
+struct FormattedContiguousValue {
+  const char *data() const { return "raw"; }
+  std::size_t size() const { return 3; }
+};
+
+std::ostream &operator<<(std::ostream &stream, const FormattedContiguousValue &) {
+  return stream << "[formatted]";
 }
 
 #if !defined(CSV2_TEST_NO_EXCEPTIONS)
@@ -732,6 +898,15 @@ public:
 
   std::string value;
   std::size_t append_calls{0};
+};
+
+class RejectZeroReserveBuffer {
+public:
+  void reserve(std::size_t) { reserve_called = true; }
+  void push_back(char character) { value.push_back(character); }
+
+  std::string value;
+  bool reserve_called{false};
 };
 
 #if CSV2_HAS_MMAP && (defined(__linux__) || defined(_WIN32))
@@ -816,6 +991,196 @@ TEST_CASE("Honor delimiter, quote, and trim policies" * test_suite("Reader")) {
   REQUIRE(read_cells(*untrimmed.begin()) == std::vector<std::string>({" a ", " b "}));
 }
 
+TEST_CASE("Preserve original cell bounds for custom trim policies" * test_suite("Reader")) {
+  using AbsoluteTrimReader = csv2::Reader<csv2::delimiter<','>, csv2::quote_character<'"'>,
+                                          csv2::first_row_is_header<false>, AbsoluteOffsetTrim>;
+  AbsoluteTrimReader reader;
+  std::string input("a,xb");
+  AbsoluteOffsetTrim::expected_buffer = input.data();
+  REQUIRE(reader.parse(input));
+  REQUIRE(read_cells(*reader.begin()) == std::vector<std::string>({"a", "b"}));
+}
+
+TEST_CASE("Evaluate borrowed string address before its extent" * test_suite("Reader")) {
+  ReaderWithoutHeader reader;
+  const std::string input("a,b");
+  SequencedStringLikeView view(input);
+  REQUIRE(reader.parse(view));
+  REQUIRE(view.sequence_valid);
+  REQUIRE(read_cells(*reader.begin()) == std::vector<std::string>({"a", "b"}));
+
+  LazyAddressStringLikeView lazy("c,d");
+  REQUIRE(reader.parse(lazy));
+  REQUIRE(read_cells(*reader.begin()) == std::vector<std::string>({"c", "d"}));
+}
+
+TEST_CASE("Use a custom trim policy on complete field bounds" * test_suite("Reader")) {
+  using ContextTrimReader = csv2::Reader<csv2::delimiter<','>, csv2::quote_character<'"'>,
+                                         csv2::first_row_is_header<false>, ContextTrim>;
+  ContextTrimReader reader;
+  std::string input("~~\"a\"~~,~~b~~");
+  REQUIRE(reader.parse(input));
+  REQUIRE(read_cells(*reader.begin()) == std::vector<std::string>({"\"a\"", "b"}));
+
+  csv2::parse_error error;
+  REQUIRE(reader.validate(error));
+}
+
+TEST_CASE("Do not validate a suffix using a different trim context" * test_suite("Reader")) {
+  using SingleByteTrimReader = csv2::Reader<csv2::delimiter<','>, csv2::quote_character<'"'>,
+                                            csv2::first_row_is_header<false>, SingleByteOnlyTrim>;
+  SingleByteTrimReader reader;
+  std::string input("\"a\"x");
+  REQUIRE(reader.parse(input));
+  csv2::parse_error error;
+  REQUIRE_FALSE(reader.validate(error));
+  REQUIRE(error.code == csv2::parse_errc::characters_after_closing_quote);
+  REQUIRE(error.byte_offset == 3);
+}
+
+#if defined(__cpp_exceptions) || defined(__EXCEPTIONS) || defined(_CPPUNWIND)
+TEST_CASE("Propagate exceptions from a user trim policy" * test_suite("Reader")) {
+  using ThrowingTrimReader = csv2::Reader<csv2::delimiter<','>, csv2::quote_character<'"'>,
+                                          csv2::first_row_is_header<false>, ThrowingTrim>;
+  ThrowingTrimReader reader;
+  std::string input("value");
+  REQUIRE(reader.parse(input));
+
+  std::string value;
+  REQUIRE_THROWS_AS(reader.begin()->begin()->read_value(value), std::runtime_error);
+  csv2::parse_error error;
+  REQUIRE_THROWS_AS(reader.validate(error), std::runtime_error);
+#if CSV2_HAS_EXPECTED
+  REQUIRE_THROWS_AS(reader.begin()->begin()->parse_expected<int>(), std::runtime_error);
+  REQUIRE_THROWS_AS(reader.validate_expected(), std::runtime_error);
+#endif
+}
+#endif
+
+TEST_CASE("Keep shared delimiter and quote semantics stable across the scanner threshold" *
+          test_suite("Reader")) {
+  using SharedDelimiterQuoteReader = csv2::Reader<csv2::delimiter<'"'>, csv2::quote_character<'"'>,
+                                                  csv2::first_row_is_header<false>>;
+  const std::size_t prefix_lengths[] = {63, 64, 65};
+  for (const std::size_t prefix_length : prefix_lengths) {
+    SharedDelimiterQuoteReader reader;
+    std::string input(prefix_length, 'a');
+    input += "\"b";
+    REQUIRE(reader.parse(input));
+    const auto row = *reader.begin();
+    REQUIRE(std::distance(row.begin(), row.end()) == 1);
+    REQUIRE(row.begin()->raw_size() == prefix_length + 2);
+  }
+}
+
+TEST_CASE("Validate a shared delimiter and quote with quote precedence" * test_suite("Reader")) {
+  using SharedDelimiterQuoteReader = csv2::Reader<csv2::delimiter<'"'>, csv2::quote_character<'"'>,
+                                                  csv2::first_row_is_header<false>>;
+  SharedDelimiterQuoteReader reader;
+  std::string input("a\"b");
+  REQUIRE(reader.parse(input));
+  REQUIRE(std::distance(reader.begin()->begin(), reader.begin()->end()) == 1);
+
+  csv2::parse_error error;
+  REQUIRE_FALSE(reader.validate(error));
+  REQUIRE(error.code == csv2::parse_errc::unexpected_quote);
+  REQUIRE(error.byte_offset == 1);
+}
+
+TEST_CASE("Give a newline quote policy precedence over record boundaries" * test_suite("Reader")) {
+  using NewlineQuoteReader = csv2::Reader<csv2::delimiter<','>, csv2::quote_character<'\n'>,
+                                          csv2::first_row_is_header<false>>;
+  NewlineQuoteReader reader;
+  std::string input("\na\n,b");
+  REQUIRE(reader.parse(input));
+
+  csv2::parse_error error;
+  REQUIRE(reader.validate(error));
+  REQUIRE(reader.rows() == 1);
+  REQUIRE(reader.index().size() == 1);
+  REQUIRE(std::distance(reader.begin()->begin(), reader.begin()->end()) == 2);
+}
+
+TEST_CASE("Allow a bare carriage return inside a quoted field" * test_suite("Reader")) {
+  ReaderWithoutHeader reader;
+  std::string input("\"a\rb\",c\n");
+  REQUIRE(reader.parse(input));
+  csv2::parse_error error;
+  REQUIRE(reader.validate(error));
+}
+
+TEST_CASE("Preserve carriage-return quote bytes at record boundaries" * test_suite("Reader")) {
+  using CarriageReturnQuoteReader = csv2::Reader<csv2::delimiter<','>, csv2::quote_character<'\r'>,
+                                                 csv2::first_row_is_header<false>>;
+
+  SUBCASE("closing quote before LF") {
+    CarriageReturnQuoteReader reader;
+    std::string input("\ra\r\nb");
+    REQUIRE(reader.parse(input));
+
+    csv2::parse_error error;
+    REQUIRE(reader.validate(error));
+    REQUIRE(reader.rows() == 2);
+    REQUIRE(reader.begin()->raw_size() == 3);
+    std::string raw;
+    reader.begin()->read_raw_value(raw);
+    REQUIRE(raw == std::string("\ra\r", 3));
+  }
+
+  SUBCASE("opening quote before LF") {
+    CarriageReturnQuoteReader reader;
+    std::string input("\r\nx\r");
+    REQUIRE(reader.parse(input));
+
+    csv2::parse_error error;
+    REQUIRE(reader.validate(error));
+    REQUIRE(reader.rows() == 1);
+    REQUIRE(reader.begin()->raw_size() == input.size());
+  }
+}
+
+TEST_CASE("Reject record-separator quotes outside a quoted field" * test_suite("Reader")) {
+  SUBCASE("newline quote") {
+    using NewlineQuoteReader = csv2::Reader<csv2::delimiter<','>, csv2::quote_character<'\n'>,
+                                            csv2::first_row_is_header<false>>;
+    NewlineQuoteReader reader;
+    std::string input("a\nb");
+    REQUIRE(reader.parse(input));
+
+    csv2::parse_error error;
+    REQUIRE_FALSE(reader.validate(error));
+    REQUIRE(error.code == csv2::parse_errc::unexpected_quote);
+    REQUIRE(error.byte_offset == 1);
+  }
+
+  SUBCASE("newline quote after carriage return") {
+    using NewlineQuoteReader = csv2::Reader<csv2::delimiter<','>, csv2::quote_character<'\n'>,
+                                            csv2::first_row_is_header<false>>;
+    NewlineQuoteReader reader;
+    std::string input("a\r\nb");
+    REQUIRE(reader.parse(input));
+
+    csv2::parse_error error;
+    REQUIRE_FALSE(reader.validate(error));
+    REQUIRE(error.code == csv2::parse_errc::bare_carriage_return);
+    REQUIRE(error.byte_offset == 1);
+  }
+
+  SUBCASE("carriage-return quote") {
+    using CarriageReturnQuoteReader =
+        csv2::Reader<csv2::delimiter<','>, csv2::quote_character<'\r'>,
+                     csv2::first_row_is_header<false>>;
+    CarriageReturnQuoteReader reader;
+    std::string input("a\rb");
+    REQUIRE(reader.parse(input));
+
+    csv2::parse_error error;
+    REQUIRE_FALSE(reader.validate(error));
+    REQUIRE(error.code == csv2::parse_errc::unexpected_quote);
+    REQUIRE(error.byte_offset == 1);
+  }
+}
+
 TEST_CASE("Scan cell boundaries through the shared fast path" * test_suite("Reader")) {
   ReaderWithoutHeader reader;
   const std::string wide_field(160, 'x');
@@ -866,6 +1231,15 @@ TEST_CASE("Validate strict CSV syntax without changing permissive traversal" *
     REQUIRE(error.column == test_case.column);
     REQUIRE(read_rows(reader).size() >= 1);
   }
+}
+
+TEST_CASE("Allow carriage returns inside a quoted field during validation" * test_suite("Reader")) {
+  ReaderWithoutHeader reader;
+  std::string input("\"a\rb\",c\n");
+  REQUIRE(reader.parse(input));
+  csv2::parse_error error;
+  REQUIRE(reader.validate(error));
+  REQUIRE(read_cells(*reader.begin()) == std::vector<std::string>({"\"a\rb\"", "c"}));
 }
 
 TEST_CASE("Validate structural characters before overlapping trim characters" *
@@ -970,6 +1344,7 @@ TEST_CASE("Convert complete integer field content without modifying failures" *
   ++cell;
   REQUIRE_FALSE((*cell).try_parse(value, error));
   REQUIRE(error.code == csv2::conversion_errc::invalid_argument);
+  REQUIRE(error.byte_offset == 0);
 
   ++cell;
   REQUIRE((*cell).try_parse(value, error, 2));
@@ -983,6 +1358,15 @@ TEST_CASE("Convert complete integer field content without modifying failures" *
   REQUIRE_FALSE((*cell).try_parse(value, error, 1));
   REQUIRE(value == 11);
   REQUIRE(error.code == csv2::conversion_errc::invalid_base);
+
+  ReaderWithoutHeader sign_reader;
+  std::string sign_input("-");
+  REQUIRE(sign_reader.parse(sign_input));
+  value = 12;
+  REQUIRE_FALSE(sign_reader.begin()->begin()->try_parse(value, error));
+  REQUIRE(value == 12);
+  REQUIRE(error.code == csv2::conversion_errc::invalid_argument);
+  REQUIRE(error.byte_offset == 0);
 }
 
 #if CSV2_HAS_EXPECTED
@@ -1145,6 +1529,18 @@ TEST_CASE("Read raw and decoded cell values by appending to the output" * test_s
   REQUIRE(decoded == "value:\"a\"b\"");
 }
 
+TEST_CASE("Do not reserve when reading an empty raw range" * test_suite("Reader")) {
+  const PublicCell cell;
+  RejectZeroReserveBuffer cell_output;
+  REQUIRE_NOTHROW(cell.read_raw_value(cell_output));
+  REQUIRE_FALSE(cell_output.reserve_called);
+
+  const PublicRow row;
+  RejectZeroReserveBuffer row_output;
+  REQUIRE_NOTHROW(row.read_raw_value(row_output));
+  REQUIRE_FALSE(row_output.reserve_called);
+}
+
 TEST_CASE("Copy fields to generic containers and output iterators" * test_suite("Reader")) {
   ReaderWithoutHeader reader;
   std::string input(" \t\"a\"\"b\"\t ");
@@ -1207,7 +1603,7 @@ TEST_CASE("Batch contiguous raw and decoded field segments" * test_suite("Reader
   REQUIRE(escaped.append_calls == 3);
 }
 
-TEST_CASE("Expose stable raw byte views and explicit source ownership" * test_suite("Reader")) {
+TEST_CASE("Expose raw byte views and explicit source ownership" * test_suite("Reader")) {
   const char borrowed[] = "  \"a\"\"b\"  ,tail";
   ReaderWithoutHeader reader;
   REQUIRE(reader.parse_borrowed(borrowed, sizeof(borrowed) - 1));
@@ -1265,6 +1661,29 @@ TEST_CASE("Borrow a span source without copying" * test_suite("Reader")) {
   REQUIRE(row == "x,b");
 }
 #endif
+
+TEST_CASE("Reacquire cursors and indexes after same-extent source mutation" *
+          test_suite("Reader")) {
+  ReaderWithoutHeader reader;
+  std::string input("a,b\nc,d");
+  REQUIRE(reader.parse(input));
+  REQUIRE(reader.index().size() == 2);
+
+  input[3] = ',';
+  REQUIRE(read_rows(reader) == std::vector<std::vector<std::string>>({{"a", "b", "c", "d"}}));
+  REQUIRE(reader.index().size() == 1);
+
+  input[1] = ';';
+  REQUIRE(read_cells(*reader.begin()) == std::vector<std::string>({"a;b", "c", "d"}));
+
+  std::string quoted("\"a,b\",c");
+  REQUIRE(reader.parse(quoted));
+  REQUIRE(read_cells(*reader.begin()) == std::vector<std::string>({"\"a,b\"", "c"}));
+  quoted[0] = 'x';
+  quoted[4] = 'x';
+  REQUIRE(read_cells(*reader.begin()) == std::vector<std::string>({"xa", "bx", "c"}));
+  REQUIRE(reader.index().size() == 1);
+}
 
 #if CSV2_HAS_RANGES
 TEST_CASE("Pipe a temporary borrowed Row view" * test_suite("Reader")) {
@@ -1518,6 +1937,43 @@ TEST_CASE("Reject mapped paths containing an embedded NUL" * test_suite("Reader"
   REQUIRE(error == std::make_error_code(std::errc::invalid_argument));
 }
 
+TEST_CASE("Validate sized character range paths before mapping" * test_suite("Reader")) {
+  ReaderWithoutHeader reader;
+  std::error_code error;
+
+  std::vector<char> terminated_path;
+  const std::string path("inputs/test_01.csv");
+  terminated_path.assign(path.begin(), path.end());
+  terminated_path.push_back('\0');
+  REQUIRE(reader.mmap(terminated_path, error));
+  REQUIRE_FALSE(error);
+
+  std::vector<char> unterminated(path.begin(), path.end());
+  REQUIRE_FALSE(reader.mmap(unterminated, error));
+  REQUIRE(error == std::errc::invalid_argument);
+
+  std::vector<char> embedded(terminated_path);
+  embedded.insert(embedded.end(), {'x', '\0'});
+  REQUIRE_FALSE(reader.mmap(embedded, error));
+  REQUIRE(error == std::errc::invalid_argument);
+}
+
+#if defined(__unix__) || defined(__APPLE__)
+TEST_CASE("Map a caller-owned file handle without closing it" * test_suite("Reader")) {
+  const int handle = ::open("inputs/test_01.csv", O_RDONLY);
+  REQUIRE(handle != -1);
+  ReaderWithoutHeader reader;
+  std::error_code error;
+  REQUIRE(reader.mmap(handle, error));
+  REQUIRE_FALSE(error);
+  REQUIRE(reader.rows() > 0);
+  reader = ReaderWithoutHeader();
+  errno = 0;
+  REQUIRE(::fcntl(handle, F_GETFD) != -1);
+  REQUIRE(::close(handle) == 0);
+}
+#endif
+
 TEST_CASE("Map a path stored in the Reader's current owned source" * test_suite("Reader")) {
   const std::string path = std::string(writer_output_path()) + ".owned-mmap-path-source";
   ScopedFileRemoval cleanup(path);
@@ -1671,6 +2127,9 @@ TEST_CASE("Use default and post-incremented iterators with classic algorithms" *
   std::string input("a,b\nc,d");
   REQUIRE(reader.parse(input));
   REQUIRE(std::distance(reader.begin(), reader.end()) == 2);
+  REQUIRE(reader.begin()->raw_size() == 3);
+  REQUIRE((*reader.begin()).begin()->raw_size() == 1);
+  REQUIRE(reader.index().begin()->raw_size() == 3);
 
   auto row = reader.begin();
   const auto first_row = row++;
@@ -1762,7 +2221,7 @@ TEST_CASE("Write empty and forward-iterable rows" * test_suite("Writer")) {
 
 TEST_CASE("Write ADL ranges and contiguous character fields directly" * test_suite("Writer")) {
   DirectWriteTrackingStream output;
-  csv2::Writer<csv2::delimiter<','>, DirectWriteTrackingStream> writer(output);
+  csv2::basic_writer<csv2::delimiter<','>, DirectWriteTrackingStream> writer(output);
   const std::string row[] = {"alpha", "beta"};
   writer.write_row(row);
 
@@ -1779,6 +2238,30 @@ TEST_CASE("Write ADL ranges and contiguous character fields directly" * test_sui
   minimal_writer.write_row(std::vector<std::string>({"alpha", "beta"}));
   REQUIRE(minimal_stream.value == "alpha,beta\n");
 
+  DecoratingStringStream decorating_stream;
+  csv2::Writer<csv2::delimiter<','>, DecoratingStringStream> decorating_writer(decorating_stream);
+  decorating_writer.write_row(std::vector<std::string>({"alpha", "beta"}));
+  REQUIRE(decorating_stream.value == "<alpha>,<beta>\n");
+
+  ChainedInsertionStream chained_stream;
+  csv2::Writer<csv2::delimiter<','>, ChainedInsertionStream> chained_writer(chained_stream);
+  chained_writer.write_row(std::vector<std::string>({"alpha", "beta"}));
+  REQUIRE(chained_stream.value == "S{alpha},P{beta}\n");
+
+  std::ostringstream const_range_output;
+  csv2::Writer<csv2::delimiter<','>, std::ostringstream> const_range_writer(const_range_output);
+  ConstSelectingRow const_selecting_row;
+  const_range_writer.write_row(const_selecting_row);
+  REQUIRE(const_range_output.str() == "const\n");
+
+#if CSV2_HAS_STRING_VIEW
+  DecoratingStringStream view_stream;
+  csv2::Writer<csv2::delimiter<','>, DecoratingStringStream> view_writer(view_stream);
+  const std::string_view views[] = {"alpha", "beta"};
+  view_writer.write_row(views);
+  REQUIRE(view_stream.value == "[alpha],[beta]\n");
+#endif
+
   MinimalWriteStream minimal_escaped_stream;
   csv2::EscapingWriter<csv2::delimiter<','>, MinimalWriteStream, csv2::stream_ownership::leave_open>
       minimal_escaped_writer(minimal_escaped_stream);
@@ -1789,16 +2272,18 @@ TEST_CASE("Write ADL ranges and contiguous character fields directly" * test_sui
 TEST_CASE("Consume stream width on the next Writer field" * test_suite("Writer")) {
   std::ostringstream raw_output;
   raw_output << std::setfill('_') << std::left << std::setw(4);
-  csv2::Writer<csv2::delimiter<','>, std::ostringstream, csv2::stream_ownership::leave_open> raw(
-      raw_output);
+  csv2::basic_writer<csv2::delimiter<','>, std::ostringstream, csv2::stream_ownership::leave_open,
+                     csv2::quote_policy::none>
+      raw(raw_output);
   raw.write_row(std::vector<std::string>({"x", "y"}));
   REQUIRE(raw_output.str() == "x___,y\n");
   REQUIRE(raw_output.width() == 0);
 
   std::ostringstream empty_output;
   empty_output << std::setfill('_') << std::right << std::setw(3);
-  csv2::Writer<csv2::delimiter<','>, std::ostringstream, csv2::stream_ownership::leave_open> empty(
-      empty_output);
+  csv2::basic_writer<csv2::delimiter<','>, std::ostringstream, csv2::stream_ownership::leave_open,
+                     csv2::quote_policy::none>
+      empty(empty_output);
   empty.write_row(std::vector<std::string>({"", "y"}));
   REQUIRE(empty_output.str() == "___,y\n");
   REQUIRE(empty_output.width() == 0);
@@ -1813,17 +2298,28 @@ TEST_CASE("Consume stream width on the next Writer field" * test_suite("Writer")
 
   std::ostringstream always_output;
   always_output << std::setfill('_') << std::right << std::setw(4);
-  csv2::Writer<csv2::delimiter<','>, std::ostringstream, csv2::stream_ownership::leave_open,
-               csv2::quote_policy::always>
+  csv2::basic_writer<csv2::delimiter<','>, std::ostringstream, csv2::stream_ownership::leave_open,
+                     csv2::quote_policy::always>
       always(always_output);
   always.write_row(std::vector<std::string>({"x", "z"}));
   REQUIRE(always_output.str() == "\"___x\",\"z\"\n");
   REQUIRE(always_output.width() == 0);
 
   DirectWriteTrackingStream direct_output;
-  csv2::Writer<csv2::delimiter<','>, DirectWriteTrackingStream> direct(direct_output);
+  csv2::basic_writer<csv2::delimiter<','>, DirectWriteTrackingStream> direct(direct_output);
   direct.write_row(std::vector<std::string>({"alpha", "beta"}));
   REQUIRE(direct_output.write_calls == 2);
+
+  std::ostringstream formatted_contiguous_output;
+  csv2::Writer<csv2::delimiter<','>, std::ostringstream> formatted_contiguous(
+      formatted_contiguous_output);
+  formatted_contiguous.write_row(std::vector<FormattedContiguousValue>(1));
+  REQUIRE(formatted_contiguous_output.str() == "[formatted]\n");
+
+  std::ostringstream raw_range_output;
+  csv2::Writer<csv2::delimiter<','>, std::ostringstream> raw_range(raw_range_output);
+  raw_range.write_row(std::vector<std::vector<char>>(1, std::vector<char>({'r', 'a', 'w'})));
+  REQUIRE(raw_range_output.str() == "raw\n");
 }
 
 TEST_CASE("Escape CSV fields with explicit minimal and always quote policies" *
@@ -1836,8 +2332,8 @@ TEST_CASE("Escape CSV fields with explicit minimal and always quote policies" *
   REQUIRE(minimal_output.str() == "plain,\"a,b\",\"a\"\"b\",\"line\nbreak\",\"car\rriage\",\n");
 
   std::ostringstream always_output;
-  csv2::Writer<csv2::delimiter<','>, std::ostringstream, csv2::stream_ownership::leave_open,
-               csv2::quote_policy::always>
+  csv2::basic_writer<csv2::delimiter<','>, std::ostringstream, csv2::stream_ownership::leave_open,
+                     csv2::quote_policy::always>
       always(always_output);
   always.write_row(std::vector<std::string>({"a", "\"b\"", ""}));
   REQUIRE(always_output.str() == "\"a\",\"\"\"b\"\"\",\"\"\n");
@@ -1862,7 +2358,8 @@ TEST_CASE("Escape CSV fields with explicit minimal and always quote policies" *
 TEST_CASE("Leave borrowed streams open unless close is explicit" * test_suite("Writer")) {
   CountingCloseStream implicit_stream;
   {
-    csv2::Writer<csv2::delimiter<','>, CountingCloseStream, csv2::stream_ownership::leave_open>
+    csv2::basic_writer<csv2::delimiter<','>, CountingCloseStream,
+                       csv2::stream_ownership::leave_open, csv2::quote_policy::none>
         writer(implicit_stream);
     writer.write_row(std::vector<std::string>({"a"}));
   }
@@ -1871,7 +2368,8 @@ TEST_CASE("Leave borrowed streams open unless close is explicit" * test_suite("W
 
   CountingCloseStream explicit_stream;
   {
-    csv2::Writer<csv2::delimiter<','>, CountingCloseStream, csv2::stream_ownership::leave_open>
+    csv2::basic_writer<csv2::delimiter<','>, CountingCloseStream,
+                       csv2::stream_ownership::leave_open, csv2::quote_policy::none>
         writer(explicit_stream);
     writer.close();
   }

@@ -1,4 +1,8 @@
+#if defined(CSV2_TEST_SINGLE_HEADER)
+#include <csv2/csv2.hpp>
+#else
 #include <csv2/detail/config.hpp>
+#endif
 
 #ifndef CSV2_CPLUSPLUS
 #error "CSV2_CPLUSPLUS must report the active language mode"
@@ -14,6 +18,8 @@ static_assert(CSV2_HAS_FILESYSTEM == 0 || CSV2_HAS_FILESYSTEM == 1,
               "feature flags must be boolean preprocessor values");
 static_assert(CSV2_HAS_CHARCONV == 0 || CSV2_HAS_CHARCONV == 1,
               "feature flags must be boolean preprocessor values");
+static_assert(CSV2_HAS_MEMORY_RESOURCE == 0 || CSV2_HAS_MEMORY_RESOURCE == 1,
+              "feature flags must be boolean preprocessor values");
 static_assert(CSV2_HAS_SPAN == 0 || CSV2_HAS_SPAN == 1,
               "feature flags must be boolean preprocessor values");
 static_assert(CSV2_HAS_RANGES == 0 || CSV2_HAS_RANGES == 1,
@@ -21,6 +27,8 @@ static_assert(CSV2_HAS_RANGES == 0 || CSV2_HAS_RANGES == 1,
 static_assert(CSV2_HAS_EXPECTED == 0 || CSV2_HAS_EXPECTED == 1,
               "feature flags must be boolean preprocessor values");
 static_assert(CSV2_HAS_RANGES_TO_CONTAINER == 0 || CSV2_HAS_RANGES_TO_CONTAINER == 1,
+              "feature flags must be boolean preprocessor values");
+static_assert(CSV2_HAS_MMAP == 0 || CSV2_HAS_MMAP == 1,
               "feature flags must be boolean preprocessor values");
 
 CSV2_NODISCARD CSV2_CONSTEXPR14 int csv2_config_contract() noexcept {
