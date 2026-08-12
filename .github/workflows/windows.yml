@@ -89,7 +89,7 @@ jobs:
           -DCSV2_REQUIRE_MODERN_STANDARD_TESTS=ON
           -DCSV2_REQUIRE_CXX26_TESTS=${{ matrix.require_cxx26 }}
           -DCSV2_CI_EXPECTED_COMPILER_ID=${{ matrix.expected_id }}
-          -DCSV2_CI_EXPECTED_COMPILER_VERSION_PREFIX=${{ matrix.expected_version }}
+          "-DCSV2_CI_EXPECTED_COMPILER_VERSION_PREFIX=${{ matrix.expected_version }}"
 
       - name: Build
         run: cmake --build build --config ${{ matrix.configuration }} --parallel

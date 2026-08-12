@@ -711,10 +711,17 @@ struct SingleByteOnlyTrim {
 
 #if defined(__cpp_exceptions) || defined(__EXCEPTIONS) || defined(_CPPUNWIND)
 struct ThrowingTrim {
-  static std::pair<std::size_t, std::size_t> trim(const char *, std::size_t, std::size_t) {
-    throw std::runtime_error("trim failure");
+  static volatile bool enabled;
+
+  static std::pair<std::size_t, std::size_t> trim(const char *, std::size_t start,
+                                                  std::size_t end) {
+    if (enabled)
+      throw std::runtime_error("trim failure");
+    return std::make_pair(start, end);
   }
 };
+
+volatile bool ThrowingTrim::enabled = true;
 #endif
 
 class CountingCloseStream : public std::ostringstream {
@@ -1051,8 +1058,9 @@ TEST_CASE("Propagate exceptions from a user trim policy" * test_suite("Reader"))
   csv2::parse_error error;
   REQUIRE_THROWS_AS(reader.validate(error), std::runtime_error);
 #if CSV2_HAS_EXPECTED
-  REQUIRE_THROWS_AS(reader.begin()->begin()->parse_expected<int>(), std::runtime_error);
-  REQUIRE_THROWS_AS(reader.validate_expected(), std::runtime_error);
+  REQUIRE_THROWS_AS(static_cast<void>(reader.begin()->begin()->parse_expected<int>()),
+                    std::runtime_error);
+  REQUIRE_THROWS_AS(static_cast<void>(reader.validate_expected()), std::runtime_error);
 #endif
 }
 #endif
