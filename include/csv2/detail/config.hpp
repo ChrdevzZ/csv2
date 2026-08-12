@@ -8,9 +8,62 @@
 #define CSV2_CPLUSPLUS __cplusplus
 #endif
 
-#if defined(__has_include)
+#define CSV2_DETAIL_HAS_VERSION_HEADER 0
+
+#if defined(__has_include) && !defined(CSV2_DETAIL_FORCE_HEADER_PROBES)
 #if __has_include(<version>)
+#undef CSV2_DETAIL_HAS_VERSION_HEADER
+#define CSV2_DETAIL_HAS_VERSION_HEADER 1
 #include <version>
+#endif
+#endif
+
+// A conforming library can provide the SD-6 macros only from the facility's
+// header. Probe those headers when <version> is unavailable (or in the
+// fallback contract) and continue to gate every API on the macro value below.
+#if !CSV2_DETAIL_HAS_VERSION_HEADER && CSV2_CPLUSPLUS >= 201703L
+#if defined(__has_include)
+#if __has_include(<string_view>)
+#include <string_view>
+#endif
+#if __has_include(<filesystem>)
+#include <filesystem>
+#endif
+#if __has_include(<charconv>)
+#include <charconv>
+#endif
+#if __has_include(<memory_resource>)
+#include <memory_resource>
+#endif
+#else
+#include <charconv>
+#include <filesystem>
+#include <memory_resource>
+#include <string_view>
+#endif
+#endif
+
+#if !CSV2_DETAIL_HAS_VERSION_HEADER && CSV2_CPLUSPLUS >= 202002L
+#if defined(__has_include)
+#if __has_include(<span>)
+#include <span>
+#endif
+#if __has_include(<ranges>)
+#include <ranges>
+#endif
+#else
+#include <ranges>
+#include <span>
+#endif
+#endif
+
+#if !CSV2_DETAIL_HAS_VERSION_HEADER && CSV2_CPLUSPLUS > 202002L
+#if defined(__has_include)
+#if __has_include(<expected>)
+#include <expected>
+#endif
+#else
+#include <expected>
 #endif
 #endif
 

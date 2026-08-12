@@ -264,8 +264,27 @@ function(csv2_add_config_contract target standard)
   csv2_enable_test_options(${target})
 endfunction()
 
+function(csv2_add_config_fallback_contract target standard single_header)
+  add_library(${target} OBJECT config_fallback.cpp)
+  if(single_header)
+    target_compile_definitions(${target} PRIVATE CSV2_TEST_SINGLE_HEADER)
+    target_include_directories(${target} PRIVATE ${csv2_SOURCE_DIR}/single_include)
+  else()
+    target_link_libraries(${target} PRIVATE csv2::csv2)
+  endif()
+  csv2_set_test_standard(${target} ${standard})
+  csv2_enable_test_options(${target})
+endfunction()
+
 foreach(standard IN ITEMS 11 20 23)
   csv2_add_config_contract(csv2_config_contract_cxx${standard} ${standard})
+endforeach()
+
+foreach(standard IN ITEMS 17 20 23)
+  csv2_add_config_fallback_contract(
+    csv2_config_fallback_module_cxx${standard} ${standard} FALSE)
+  csv2_add_config_fallback_contract(
+    csv2_config_fallback_single_cxx${standard} ${standard} TRUE)
 endforeach()
 
 foreach(standard IN ITEMS 11 17)
