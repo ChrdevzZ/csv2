@@ -98,7 +98,7 @@ static_assert(!mio::detail::is_path<volatile wchar_t[4]>::value,
               "a volatile wide character array is not a path");
 #endif
 
-#if CSV2_HAS_STRING_VIEW
+#if CSV2_DETAIL_HAS_STRING_VIEW_HEADER
 #include <string_view>
 struct CustomCharTraits : std::char_traits<char> {};
 using CustomStringView = std::basic_string_view<char, CustomCharTraits>;

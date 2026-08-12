@@ -9,6 +9,19 @@
 #endif
 
 #define CSV2_DETAIL_HAS_VERSION_HEADER 0
+#define CSV2_DETAIL_HAS_STRING_VIEW_HEADER 0
+
+#if CSV2_CPLUSPLUS >= 201703L
+#if defined(__has_include)
+#if __has_include(<string_view>)
+#undef CSV2_DETAIL_HAS_STRING_VIEW_HEADER
+#define CSV2_DETAIL_HAS_STRING_VIEW_HEADER 1
+#endif
+#else
+#undef CSV2_DETAIL_HAS_STRING_VIEW_HEADER
+#define CSV2_DETAIL_HAS_STRING_VIEW_HEADER 1
+#endif
+#endif
 
 #if !defined(CSV2_DETAIL_DISABLE_OPTIONAL_FACILITIES) && CSV2_CPLUSPLUS >= 202002L &&              \
     defined(__has_include) && !defined(CSV2_DETAIL_FORCE_HEADER_PROBES)
@@ -25,7 +38,8 @@
 // resulting macro value below.
 #if !defined(CSV2_DETAIL_DISABLE_OPTIONAL_FACILITIES) && CSV2_CPLUSPLUS >= 201703L
 #if defined(__has_include)
-#if (!defined(__cpp_lib_string_view) || __cpp_lib_string_view < 201606L) && __has_include(<string_view>)
+#if (!defined(__cpp_lib_string_view) || __cpp_lib_string_view < 201606L) &&                        \
+    CSV2_DETAIL_HAS_STRING_VIEW_HEADER
 #include <string_view>
 #endif
 #if (!defined(__cpp_lib_filesystem) || __cpp_lib_filesystem < 201703L) && __has_include(<filesystem>)
