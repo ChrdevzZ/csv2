@@ -959,11 +959,11 @@ inline size_t make_offset_page_aligned(size_t offset) noexcept {
 #endif // MIO_PAGE_HEADER
 
 #include <cstdint>
+// #include <csv2/detail/config.hpp>
 #include <iterator>
 #include <limits>
 #include <string>
 #include <system_error>
-// #include <csv2/detail/config.hpp>
 #if CSV2_HAS_FILESYSTEM
 #include <filesystem>
 #endif
@@ -1567,6 +1567,13 @@ struct is_sized_char_range<
                             size_t>::value>::type> : std::true_type {
 };
 
+#if CSV2_HAS_STRING_VIEW
+template <typename T> struct is_basic_string_view : std::false_type {};
+
+template <typename CharT, typename Traits>
+struct is_basic_string_view<std::basic_string_view<CharT, Traits>> : std::true_type {};
+#endif
+
 template <typename S> struct is_object_path {
   using type = typename std::decay<S>::type;
   static constexpr bool value = is_basic_string<type>::value
@@ -1584,10 +1591,7 @@ template <typename S> struct is_range_path {
   using type = typename std::decay<S>::type;
   static constexpr bool value = is_sized_char_range<type>::value && !is_object_path<type>::value
 #if CSV2_HAS_STRING_VIEW
-                                && !std::is_same<type, std::string_view>::value
-#ifdef _WIN32
-                                && !std::is_same<type, std::wstring_view>::value
-#endif
+                                && !is_basic_string_view<type>::value
 #endif
       ;
 };

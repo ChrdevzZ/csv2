@@ -25,6 +25,15 @@ struct reader_accepts_path<Path, Reader,
                                std::declval<Path>(), std::declval<std::error_code &>()))>>
     : std::true_type {};
 
+#if CSV2_HAS_EXPECTED
+template <typename Path, typename Reader = csv2::Reader<>, typename = void>
+struct reader_accepts_expected_path : std::false_type {};
+template <typename Path, typename Reader>
+struct reader_accepts_expected_path<
+    Path, Reader, void_t<decltype(std::declval<Reader &>().mmap_expected(std::declval<Path>()))>>
+    : std::true_type {};
+#endif
+
 #if CSV2_HAS_MMAP
 static_assert(mio::detail::is_path<const char *>::value,
               "NUL-terminated narrow paths must be accepted");
@@ -91,10 +100,32 @@ static_assert(!mio::detail::is_path<volatile wchar_t[4]>::value,
 
 #if CSV2_HAS_STRING_VIEW
 #include <string_view>
+struct CustomCharTraits : std::char_traits<char> {};
+using CustomStringView = std::basic_string_view<char, CustomCharTraits>;
 static_assert(!mio::detail::is_path<std::string_view>::value,
               "string_view cannot guarantee NUL termination");
 static_assert(!reader_accepts_path<std::string_view>::value,
               "Reader must reject string_view paths");
+static_assert(!mio::detail::is_range_path<CustomStringView>::value,
+              "every narrow basic_string_view specialization must be rejected");
+static_assert(!reader_accepts_path<CustomStringView>::value,
+              "Reader must reject custom-traits narrow string_view paths");
+#if CSV2_HAS_EXPECTED
+static_assert(!reader_accepts_expected_path<CustomStringView>::value,
+              "Reader expected adapters must reject custom-traits string_view paths");
+#endif
+#if defined(_WIN32)
+struct CustomWideCharTraits : std::char_traits<wchar_t> {};
+using CustomWideStringView = std::basic_string_view<wchar_t, CustomWideCharTraits>;
+static_assert(!mio::detail::is_range_path<CustomWideStringView>::value,
+              "every wide basic_string_view specialization must be rejected on Windows");
+static_assert(!reader_accepts_path<CustomWideStringView>::value,
+              "Reader must reject custom-traits wide string_view paths on Windows");
+#if CSV2_HAS_EXPECTED
+static_assert(!reader_accepts_expected_path<CustomWideStringView>::value,
+              "Reader expected adapters must reject custom-traits wide string_view paths");
+#endif
+#endif
 #endif
 
 #if CSV2_HAS_FILESYSTEM

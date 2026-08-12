@@ -91,10 +91,11 @@ Mapped paths must provide NUL-terminated storage. Supported path types are
 accepts the corresponding wide forms. C++17 adds `std::filesystem::path`.
 Legacy sized character ranges such as `std::vector<char>` are accepted only
 when they contain exactly one NUL at the end and no embedded NUL; otherwise
-mapping fails with `std::errc::invalid_argument`. A `std::string_view` remains
-rejected because its range does not promise an accessible terminator. A native
-file handle may also be mapped; the caller retains ownership and must keep it
-open for the mapped source's lifetime.
+mapping fails with `std::errc::invalid_argument`. Every
+`std::basic_string_view` specialization remains rejected because its range does
+not promise an accessible terminator. A native file handle may also be mapped;
+the caller retains ownership and must keep it open for the mapped source's
+lifetime.
 
 `include/csv2/mio.hpp` vendors [mandreyel/mio](https://github.com/mandreyel/mio),
 first imported by csv2 commit `e51a8df` on 2020-04-23. Its MIT license remains
