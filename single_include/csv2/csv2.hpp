@@ -12,6 +12,19 @@
 #endif
 
 #define CSV2_DETAIL_HAS_VERSION_HEADER 0
+#define CSV2_DETAIL_HAS_STRING_VIEW_HEADER 0
+
+#if CSV2_CPLUSPLUS >= 201703L
+#if defined(__has_include)
+#if __has_include(<string_view>)
+#undef CSV2_DETAIL_HAS_STRING_VIEW_HEADER
+#define CSV2_DETAIL_HAS_STRING_VIEW_HEADER 1
+#endif
+#else
+#undef CSV2_DETAIL_HAS_STRING_VIEW_HEADER
+#define CSV2_DETAIL_HAS_STRING_VIEW_HEADER 1
+#endif
+#endif
 
 #if !defined(CSV2_DETAIL_DISABLE_OPTIONAL_FACILITIES) && CSV2_CPLUSPLUS >= 202002L &&              \
     defined(__has_include) && !defined(CSV2_DETAIL_FORCE_HEADER_PROBES)
@@ -28,7 +41,8 @@
 // resulting macro value below.
 #if !defined(CSV2_DETAIL_DISABLE_OPTIONAL_FACILITIES) && CSV2_CPLUSPLUS >= 201703L
 #if defined(__has_include)
-#if (!defined(__cpp_lib_string_view) || __cpp_lib_string_view < 201606L) && __has_include(<string_view>)
+#if (!defined(__cpp_lib_string_view) || __cpp_lib_string_view < 201606L) &&                        \
+    CSV2_DETAIL_HAS_STRING_VIEW_HEADER
 #include <string_view>
 #endif
 #if (!defined(__cpp_lib_filesystem) || __cpp_lib_filesystem < 201703L) && __has_include(<filesystem>)
@@ -963,6 +977,9 @@ inline size_t make_offset_page_aligned(size_t offset) noexcept {
 #include <iterator>
 #include <limits>
 #include <string>
+#if CSV2_DETAIL_HAS_STRING_VIEW_HEADER
+#include <string_view>
+#endif
 #include <system_error>
 #if CSV2_HAS_FILESYSTEM
 #include <filesystem>
@@ -1567,7 +1584,7 @@ struct is_sized_char_range<
                             size_t>::value>::type> : std::true_type {
 };
 
-#if CSV2_HAS_STRING_VIEW
+#if CSV2_DETAIL_HAS_STRING_VIEW_HEADER
 template <typename T> struct is_basic_string_view : std::false_type {};
 
 template <typename CharT, typename Traits>
@@ -1590,7 +1607,7 @@ template <typename S> struct is_path {
 template <typename S> struct is_range_path {
   using type = typename std::decay<S>::type;
   static constexpr bool value = is_sized_char_range<type>::value && !is_object_path<type>::value
-#if CSV2_HAS_STRING_VIEW
+#if CSV2_DETAIL_HAS_STRING_VIEW_HEADER
                                 && !is_basic_string_view<type>::value
 #endif
       ;
