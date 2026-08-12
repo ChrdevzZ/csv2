@@ -45,30 +45,14 @@ bool validate_csv(const char *buffer, std::size_t size, parse_error &error) noex
       continue;
     }
 
-    if (current == field_start && is_trim_character<TrimPolicy>(buffer, i)) {
-      ++i;
-      continue;
-    }
     if (current == field_start && character == QuoteCharacter::value) {
       current = quoted;
       opening_quote = i;
       ++i;
       continue;
     }
-
-    if (current == unquoted && character == QuoteCharacter::value)
-      return validation_failure(error, parse_errc::unexpected_quote, i, row, column);
-    if (current == after_quote) {
-      if (is_trim_character<TrimPolicy>(buffer, i)) {
-        ++i;
-        continue;
-      }
-      if (character == QuoteCharacter::value)
-        return validation_failure(error, parse_errc::invalid_doubled_quote, i, row, column);
-      if (character != Delimiter::value && character != '\r' && character != '\n')
-        return validation_failure(error, parse_errc::characters_after_closing_quote, i, row,
-                                  column);
-    }
+    if (current == after_quote && character == QuoteCharacter::value)
+      return validation_failure(error, parse_errc::invalid_doubled_quote, i, row, column);
 
     if (character == Delimiter::value) {
       ++column;
@@ -93,6 +77,17 @@ bool validate_csv(const char *buffer, std::size_t size, parse_error &error) noex
       continue;
     }
 
+    if (current == field_start && is_trim_character<TrimPolicy>(buffer, i)) {
+      ++i;
+      continue;
+    }
+
+    if (current == unquoted && character == QuoteCharacter::value)
+      return validation_failure(error, parse_errc::unexpected_quote, i, row, column);
+    if (current == after_quote && is_trim_character<TrimPolicy>(buffer, i)) {
+      ++i;
+      continue;
+    }
     if (current == after_quote)
       return validation_failure(error, parse_errc::characters_after_closing_quote, i, row, column);
     current = unquoted;
