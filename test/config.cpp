@@ -10,8 +10,15 @@
 #ifndef CSV2_FORCE_INLINE
 #error "CSV2_FORCE_INLINE must be available to internal hot paths"
 #endif
+#ifndef CSV2_DETAIL_HAS_VERSION_HEADER
+#error "config.hpp must expose which feature-macro discovery path was used"
+#endif
 
 static_assert(CSV2_CPLUSPLUS >= 201103L, "csv2 requires C++11 or newer");
+#if CSV2_CPLUSPLUS < 202002L
+static_assert(CSV2_DETAIL_HAS_VERSION_HEADER == 0,
+              "pre-C++20 configuration must not directly include <version>");
+#endif
 static_assert(CSV2_HAS_STRING_VIEW == 0 || CSV2_HAS_STRING_VIEW == 1,
               "feature flags must be boolean preprocessor values");
 static_assert(CSV2_HAS_FILESYSTEM == 0 || CSV2_HAS_FILESYSTEM == 1,

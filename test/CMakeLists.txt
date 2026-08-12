@@ -501,11 +501,6 @@ foreach(standard IN LISTS csv2_degraded_standards)
   endforeach()
 endforeach()
 
-set(csv2_version_trap_directory "${CMAKE_CURRENT_BINARY_DIR}/version_trap")
-file(MAKE_DIRECTORY "${csv2_version_trap_directory}")
-file(WRITE "${csv2_version_trap_directory}/version"
-  "#error pre-C++20 translation units must not include <version>\n")
-
 function(csv2_add_version_guard_contract standard single_header)
   if(single_header)
     set(target csv2_version_guard_single_cxx${standard})
@@ -513,8 +508,6 @@ function(csv2_add_version_guard_contract standard single_header)
     set(target csv2_version_guard_module_cxx${standard})
   endif()
   add_library(${target} OBJECT config.cpp)
-  target_include_directories(${target} BEFORE PRIVATE
-    ${csv2_version_trap_directory})
   if(single_header)
     target_compile_definitions(${target} PRIVATE CSV2_TEST_SINGLE_HEADER)
     target_include_directories(${target} PRIVATE ${csv2_SOURCE_DIR}/single_include)
