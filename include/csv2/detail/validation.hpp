@@ -92,15 +92,15 @@ bool validate_cell(const char *buffer, std::size_t start, std::size_t end, parse
 
   if (closing_quote + 1 < bounds.second) {
     const std::size_t first_suffix = closing_quote + 1;
-    if (buffer[first_suffix] == '\r' && QuoteCharacter::value != '\r' &&
-        (first_suffix + 1 >= bounds.second || buffer[first_suffix + 1] != '\n'))
-      return validation_failure(error, parse_errc::bare_carriage_return, first_suffix, row, column);
     std::size_t offending = first_suffix;
-    const std::pair<std::size_t, std::size_t> suffix =
-        TrimPolicy::trim(buffer, offending, bounds.second);
-    if (suffix.first <= suffix.second && suffix.first >= offending &&
-        suffix.second <= bounds.second && suffix.first < suffix.second)
+    const validation_trim_bounds suffix =
+        trim_preserving_structure<Delimiter, QuoteCharacter, TrimPolicy>(buffer, offending,
+                                                                         bounds.second);
+    if (suffix.valid && suffix.first < suffix.second)
       offending = suffix.first;
+    if (buffer[offending] == '\r' && QuoteCharacter::value != '\r' &&
+        (offending + 1 >= bounds.second || buffer[offending + 1] != '\n'))
+      return validation_failure(error, parse_errc::bare_carriage_return, offending, row, column);
     const parse_errc code = offending != first_suffix && buffer[offending] == QuoteCharacter::value
                                 ? parse_errc::invalid_doubled_quote
                                 : parse_errc::characters_after_closing_quote;
