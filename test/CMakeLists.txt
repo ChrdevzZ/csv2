@@ -406,6 +406,20 @@ set(csv2_degraded_headers_directory
 file(MAKE_DIRECTORY "${csv2_degraded_headers_directory}")
 file(WRITE "${csv2_degraded_headers_directory}/version"
   "/* Deliberately empty partial <version> fixture. */\n")
+file(WRITE "${csv2_degraded_headers_directory}/string_view"
+  "#pragma GCC system_header\n#include_next <string_view>\n"
+  "#ifndef __cpp_lib_string_view\n"
+  "#define __cpp_lib_string_view 201606L\n#endif\n")
+file(WRITE "${csv2_degraded_headers_directory}/filesystem"
+  "#pragma GCC system_header\n#include_next <filesystem>\n"
+  "#ifndef __cpp_lib_filesystem\n"
+  "#define __cpp_lib_filesystem 201703L\n#endif\n")
+file(WRITE "${csv2_degraded_headers_directory}/span"
+  "#pragma GCC system_header\n#include_next <span>\n"
+  "#ifndef __cpp_lib_span\n#define __cpp_lib_span 202002L\n#endif\n")
+file(WRITE "${csv2_degraded_headers_directory}/ranges"
+  "#pragma GCC system_header\n#include_next <ranges>\n"
+  "#ifndef __cpp_lib_ranges\n#define __cpp_lib_ranges 201911L\n#endif\n")
 
 set(csv2_empty_headers_directory
   "${CMAKE_CURRENT_BINARY_DIR}/empty_standard_library")
@@ -447,21 +461,21 @@ foreach(standard IN LISTS csv2_degraded_standards)
     else()
       set(target csv2_standard_contract_partial_headers_module_cxx${standard})
     endif()
-    add_library(${target} OBJECT standard_cxx${standard}.cpp)
-    target_include_directories(${target} BEFORE PRIVATE
-      ${csv2_degraded_headers_directory})
-    if(single_header)
-      target_compile_definitions(${target} PRIVATE CSV2_TEST_SINGLE_HEADER)
-      target_include_directories(${target} PRIVATE
-        ${csv2_SOURCE_DIR}/single_include)
-    else()
-      target_link_libraries(${target} PRIVATE csv2::csv2)
-    endif()
-    csv2_set_test_standard(${target} ${standard})
-    csv2_enable_test_options(${target})
-
     if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang|AppleClang" AND
        NOT CMAKE_CXX_COMPILER_FRONTEND_VARIANT STREQUAL "MSVC")
+      add_library(${target} OBJECT standard_cxx${standard}.cpp)
+      target_include_directories(${target} BEFORE PRIVATE
+        ${csv2_degraded_headers_directory})
+      if(single_header)
+        target_compile_definitions(${target} PRIVATE CSV2_TEST_SINGLE_HEADER)
+        target_include_directories(${target} PRIVATE
+          ${csv2_SOURCE_DIR}/single_include)
+      else()
+        target_link_libraries(${target} PRIVATE csv2::csv2)
+      endif()
+      csv2_set_test_standard(${target} ${standard})
+      csv2_enable_test_options(${target})
+
       if(single_header)
         set(degraded_target
           csv2_standard_contract_empty_headers_single_cxx${standard})
