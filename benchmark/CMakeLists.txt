@@ -1,3 +1,8 @@
+if(NOT 20 IN_LIST csv2_supported_standards)
+  message(FATAL_ERROR
+    "CSV2_BUILD_BENCHMARKS requires CMake and a compiler with C++20 support")
+endif()
+
 add_executable(csv2_benchmark main.cpp)
 add_executable(csv2_benchmark_allocations main.cpp)
 target_compile_definitions(csv2_benchmark_allocations PRIVATE

@@ -45,6 +45,22 @@ jobs:
           -DCSV2_CI_EXPECTED_COMPILER_ID=GNU
           -DCSV2_CI_EXPECTED_COMPILER_VERSION_PREFIX=14
 
+      - name: Verify reduced compiler feature matrix
+        run: |
+          cmake -S . -B build-reduced -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_CXX_COMPILER=g++-14 \
+            -DCMAKE_CXX_COMPILE_FEATURES=cxx_std_11 \
+            -DCSV2_BUILD_TESTS=ON \
+            -DCSV2_BUILD_BENCHMARKS=OFF
+          cmake --build build-reduced --target \
+            csv2_test csv2_standard_contract_module_cxx11 --parallel
+          cmake --build build-reduced --target help > build-reduced/targets.txt
+          if grep -Eq 'cxx(14|17|20|23)' build-reduced/targets.txt; then
+            grep -E 'cxx(14|17|20|23)' build-reduced/targets.txt
+            exit 1
+          fi
+
       - name: Build
         run: cmake --build build --parallel
 
@@ -193,6 +209,7 @@ jobs:
             'include/csv2/writer.hpp' \
             'benchmark/main.cpp' \
             'test/config.cpp' \
+            'test/config_fallback.cpp' \
             'test/fuzz_reader.cpp' \
             'test/main.cpp' \
             'test/mmap_path.cpp' \
