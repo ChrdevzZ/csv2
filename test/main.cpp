@@ -868,6 +868,77 @@ TEST_CASE("Validate strict CSV syntax without changing permissive traversal" *
   }
 }
 
+TEST_CASE("Validate structural characters before overlapping trim characters" *
+          test_suite("Reader")) {
+  using DelimiterTrimReader =
+      csv2::Reader<csv2::delimiter<';'>, csv2::quote_character<'"'>,
+                   csv2::first_row_is_header<false>, csv2::trim_policy::trim_characters<' ', ';'>>;
+  DelimiterTrimReader delimiter_reader;
+  std::string delimiter_input(";\"b\"x");
+  REQUIRE(delimiter_reader.parse(delimiter_input));
+  csv2::parse_error error;
+  REQUIRE_FALSE(delimiter_reader.validate(error));
+  REQUIRE(error.code == csv2::parse_errc::characters_after_closing_quote);
+  REQUIRE(error.byte_offset == 4);
+  REQUIRE(error.row == 1);
+  REQUIRE(error.column == 2);
+
+  delimiter_input = "\"a\";\"b\"x";
+  REQUIRE(delimiter_reader.parse(delimiter_input));
+  REQUIRE_FALSE(delimiter_reader.validate(error));
+  REQUIRE(error.code == csv2::parse_errc::characters_after_closing_quote);
+  REQUIRE(error.byte_offset == 7);
+  REQUIRE(error.row == 1);
+  REQUIRE(error.column == 2);
+
+  using LineEndingTrimReader = csv2::Reader<csv2::delimiter<','>, csv2::quote_character<'"'>,
+                                            csv2::first_row_is_header<false>,
+                                            csv2::trim_policy::trim_characters<' ', '\r', '\n'>>;
+  LineEndingTrimReader line_reader;
+  std::string line_input("\n\"b\"x");
+  REQUIRE(line_reader.parse(line_input));
+  REQUIRE_FALSE(line_reader.validate(error));
+  REQUIRE(error.code == csv2::parse_errc::characters_after_closing_quote);
+  REQUIRE(error.byte_offset == 4);
+  REQUIRE(error.row == 2);
+  REQUIRE(error.column == 1);
+
+  line_input = "\"a\"\r\n\"b\"x";
+  REQUIRE(line_reader.parse(line_input));
+  REQUIRE_FALSE(line_reader.validate(error));
+  REQUIRE(error.code == csv2::parse_errc::characters_after_closing_quote);
+  REQUIRE(error.byte_offset == 8);
+  REQUIRE(error.row == 2);
+  REQUIRE(error.column == 1);
+
+  line_input = "\rX";
+  REQUIRE(line_reader.parse(line_input));
+  REQUIRE_FALSE(line_reader.validate(error));
+  REQUIRE(error.code == csv2::parse_errc::bare_carriage_return);
+  REQUIRE(error.byte_offset == 0);
+  REQUIRE(error.row == 1);
+  REQUIRE(error.column == 1);
+
+  line_input = "\"a\"\rX";
+  REQUIRE(line_reader.parse(line_input));
+  REQUIRE_FALSE(line_reader.validate(error));
+  REQUIRE(error.code == csv2::parse_errc::bare_carriage_return);
+  REQUIRE(error.byte_offset == 3);
+  REQUIRE(error.row == 1);
+  REQUIRE(error.column == 1);
+
+  using SharedDelimiterQuoteReader = csv2::Reader<csv2::delimiter<'"'>, csv2::quote_character<'"'>,
+                                                  csv2::first_row_is_header<false>>;
+  SharedDelimiterQuoteReader shared_reader;
+  std::string shared_input("\"a\"x");
+  REQUIRE(shared_reader.parse(shared_input));
+  REQUIRE_FALSE(shared_reader.validate(error));
+  REQUIRE(error.code == csv2::parse_errc::characters_after_closing_quote);
+  REQUIRE(error.byte_offset == 3);
+  REQUIRE(error.row == 1);
+  REQUIRE(error.column == 1);
+}
+
 TEST_CASE("Convert complete integer field content without modifying failures" *
           test_suite("Reader")) {
   ReaderWithoutHeader reader;
