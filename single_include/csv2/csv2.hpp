@@ -727,12 +727,47 @@ inline bool validation_failure(parse_error &error, parse_errc code, std::size_t 
   return false;
 }
 
-template <class QuoteCharacter, class TrimPolicy>
+struct validation_trim_bounds {
+  std::size_t first;
+  std::size_t second;
+  bool valid;
+};
+
+template <class Delimiter, class QuoteCharacter, class TrimPolicy>
+validation_trim_bounds trim_preserving_structure(
+    const char *buffer, std::size_t start,
+    std::size_t end) noexcept(noexcept(TrimPolicy::trim(buffer, start, end))) {
+  const std::pair<std::size_t, std::size_t> trimmed = TrimPolicy::trim(buffer, start, end);
+  if (trimmed.first > trimmed.second || trimmed.first < start || trimmed.second > end)
+    return {start, end, false};
+
+  std::size_t first = trimmed.first;
+  for (std::size_t i = start; i < trimmed.first; ++i) {
+    const char character = buffer[i];
+    if (character == Delimiter::value || character == QuoteCharacter::value || character == '\r' ||
+        character == '\n') {
+      first = i;
+      break;
+    }
+  }
+
+  std::size_t second = trimmed.second;
+  for (std::size_t i = trimmed.second; i < end; ++i) {
+    const char character = buffer[i];
+    if (character == Delimiter::value || character == QuoteCharacter::value || character == '\r' ||
+        character == '\n')
+      second = i + 1;
+  }
+  return {first, second, true};
+}
+
+template <class Delimiter, class QuoteCharacter, class TrimPolicy>
 bool validate_cell(const char *buffer, std::size_t start, std::size_t end, parse_error &error,
                    std::size_t row,
                    std::size_t column) noexcept(noexcept(TrimPolicy::trim(buffer, start, end))) {
-  const std::pair<std::size_t, std::size_t> bounds = TrimPolicy::trim(buffer, start, end);
-  if (bounds.first > bounds.second || bounds.first < start || bounds.second > end)
+  const validation_trim_bounds bounds =
+      trim_preserving_structure<Delimiter, QuoteCharacter, TrimPolicy>(buffer, start, end);
+  if (!bounds.valid)
     return validation_failure(error, parse_errc::characters_after_closing_quote, start, row,
                               column);
   if (bounds.first == bounds.second)
@@ -800,8 +835,8 @@ bool validate_csv(const char *buffer, std::size_t size,
     while (cell_start <= record.content_end) {
       const cell_bounds cell =
           find_cell_bounds<Delimiter, QuoteCharacter>(buffer, cell_start, record.content_end);
-      if (!validate_cell<QuoteCharacter, TrimPolicy>(buffer, cell_start, cell.content_end, error,
-                                                     row, column))
+      if (!validate_cell<Delimiter, QuoteCharacter, TrimPolicy>(
+              buffer, cell_start, cell.content_end, error, row, column))
         return false;
       if (cell.content_end >= record.content_end)
         break;
