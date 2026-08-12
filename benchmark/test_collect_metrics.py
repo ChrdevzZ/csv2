@@ -316,7 +316,7 @@ class CollectMetricsTests(unittest.TestCase):
 
     def test_main_builds_before_hashing_or_measuring_binaries(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
+            root = Path(directory).resolve()
             executable = root / "benchmark"
             allocation_executable = root / "benchmark_allocations"
             executable.write_bytes(b"old normal")
