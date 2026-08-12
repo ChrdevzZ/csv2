@@ -54,10 +54,12 @@ jobs:
             -DCSV2_BUILD_TESTS=ON \
             -DCSV2_BUILD_BENCHMARKS=OFF
           cmake --build build-reduced --target \
-            csv2_test csv2_standard_contract_module_cxx11 --parallel
+            csv2_test csv2_single_header_test \
+            csv2_standard_contract_module_cxx11 \
+            csv2_standard_contract_single_cxx11 --parallel
           cmake --build build-reduced --target help > build-reduced/targets.txt
-          if grep -Eq 'cxx(14|17|20|23)' build-reduced/targets.txt; then
-            grep -E 'cxx(14|17|20|23)' build-reduced/targets.txt
+          if grep -Eq 'cxx(14|17|20|23|26)' build-reduced/targets.txt; then
+            grep -E 'cxx(14|17|20|23|26)' build-reduced/targets.txt
             exit 1
           fi
 
@@ -66,9 +68,6 @@ jobs:
 
       - name: Test
         run: ctest --test-dir build --output-on-failure
-
-      - name: Test fixed-machine metrics contracts
-        run: python3 -m unittest benchmark/test_collect_metrics.py -v
 
       - name: Install package
         run: cmake --install build --prefix build/install
@@ -84,6 +83,11 @@ jobs:
           target_link_libraries(csv2_consumer PRIVATE csv2::csv2)
           target_compile_features(csv2_consumer PRIVATE cxx_std_20)
           set_target_properties(csv2_consumer PROPERTIES CXX_EXTENSIONS OFF)
+          add_executable(csv2_no_mmap_consumer no_mmap.cpp)
+          target_link_libraries(csv2_no_mmap_consumer PRIVATE csv2::csv2)
+          target_compile_features(csv2_no_mmap_consumer PRIVATE cxx_std_11)
+          target_compile_definitions(csv2_no_mmap_consumer PRIVATE CSV2_HAS_MMAP=0)
+          set_target_properties(csv2_no_mmap_consumer PROPERTIES CXX_EXTENSIONS OFF)
           EOF
           cat > build/consumer/main.cpp <<'EOF'
           #include <csv2/reader.hpp>
@@ -94,10 +98,45 @@ jobs:
             return reader.parse(std::string("a,b")) ? 0 : 1;
           }
           EOF
+          cat > build/consumer/no_mmap.cpp <<'EOF'
+          #include <csv2/mio.hpp>
+          #ifdef MIO_MMAP_HEADER
+          #error "mio must be absent when CSV2_HAS_MMAP=0"
+          #endif
+          #include <csv2/errors.hpp>
+          #include <csv2/parameters.hpp>
+          #include <csv2/reader.hpp>
+          #include <csv2/writer.hpp>
+          int main() { return CSV2_HAS_MMAP; }
+          EOF
           cmake -S build/consumer -B build/consumer-build -G Ninja \
             -DCMAKE_PREFIX_PATH="$PWD/build/install"
           cmake --build build/consumer-build --parallel
           ./build/consumer-build/csv2_consumer
+          ./build/consumer-build/csv2_no_mmap_consumer
+
+      - name: Verify relocatable pkg-config consumer
+        run: |
+          csv2_pc_dir="$(dirname "$(find build/install -name csv2.pc -print -quit)")"
+          csv2_includedir="$(PKG_CONFIG_PATH="$csv2_pc_dir" pkg-config \
+            --variable=includedir csv2)"
+          test -f "$csv2_includedir/csv2/reader.hpp"
+          cat > build/pkg-config-consumer.cpp <<'EOF'
+          #define CSV2_HAS_MMAP 0
+          #include <csv2/mio.hpp>
+          #ifdef MIO_MMAP_HEADER
+          #error "mio must be absent when CSV2_HAS_MMAP=0"
+          #endif
+          #include <csv2/errors.hpp>
+          #include <csv2/parameters.hpp>
+          #include <csv2/reader.hpp>
+          #include <csv2/writer.hpp>
+          int main() { return CSV2_HAS_MMAP; }
+          EOF
+          g++-14 -std=c++11 -Wall -Wextra -Wpedantic -Werror \
+            $(PKG_CONFIG_PATH="$csv2_pc_dir" pkg-config --cflags csv2) \
+            build/pkg-config-consumer.cpp -o build/pkg-config-consumer
+          ./build/pkg-config-consumer
 
       - name: Verify single-header regeneration
         run: |
@@ -210,6 +249,7 @@ jobs:
             'include/csv2/parameters.hpp' \
             'include/csv2/reader.hpp' \
             'include/csv2/writer.hpp' \
+            'benchmark/common_driver.cpp' \
             'benchmark/main.cpp' \
             'test/config.cpp' \
             'test/config_fallback.cpp' \

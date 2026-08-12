@@ -63,8 +63,7 @@ bool parse_integer_fallback(const char *first, const char *last, Integer &output
     return conversion_failure(error, conversion_errc::invalid_argument, 0);
   }
   if (cursor == last)
-    return conversion_failure(error, conversion_errc::invalid_argument,
-                              static_cast<std::size_t>(cursor - first));
+    return conversion_failure(error, conversion_errc::invalid_argument, 0);
 
   const unsigned_type maximum = static_cast<unsigned_type>((std::numeric_limits<Integer>::max)());
   const unsigned_type limit = negative ? static_cast<unsigned_type>(maximum + 1) : maximum;
@@ -86,8 +85,7 @@ bool parse_integer_fallback(const char *first, const char *last, Integer &output
   }
 
   if (cursor == digits_begin)
-    return conversion_failure(error, conversion_errc::invalid_argument,
-                              static_cast<std::size_t>(cursor - first));
+    return conversion_failure(error, conversion_errc::invalid_argument, 0);
   if (overflow)
     return conversion_failure(error, conversion_errc::result_out_of_range,
                               static_cast<std::size_t>(cursor - first));

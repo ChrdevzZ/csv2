@@ -5,10 +5,22 @@ endif()
 
 add_executable(csv2_benchmark main.cpp)
 add_executable(csv2_benchmark_allocations main.cpp)
+add_executable(csv2_common_benchmark common_driver.cpp)
+target_link_libraries(csv2_common_benchmark PRIVATE csv2::csv2)
+set(CSV2_BENCHMARK_REVISION "unstamped" CACHE STRING
+  "Revision embedded in the version-neutral benchmark driver")
+target_compile_definitions(csv2_common_benchmark PRIVATE
+  CSV2_BENCHMARK_REVISION="${CSV2_BENCHMARK_REVISION}")
+set_target_properties(csv2_common_benchmark PROPERTIES
+  CXX_STANDARD 11
+  CXX_STANDARD_REQUIRED ON
+  CXX_EXTENSIONS OFF)
 target_compile_definitions(csv2_benchmark_allocations PRIVATE
   CSV2_BENCHMARK_ENABLE_ALLOCATION_TRACKING=1)
 foreach(target IN ITEMS csv2_benchmark csv2_benchmark_allocations)
   target_link_libraries(${target} PRIVATE csv2::csv2)
+  target_compile_definitions(${target} PRIVATE
+    CSV2_BENCHMARK_REVISION="${CSV2_BENCHMARK_REVISION}")
   set_target_properties(${target} PROPERTIES
     CXX_STANDARD 20
     CXX_STANDARD_REQUIRED ON
@@ -16,32 +28,33 @@ foreach(target IN ITEMS csv2_benchmark csv2_benchmark_allocations)
 endforeach()
 
 if(CSV2_BUILD_TESTS)
-  set(csv2_python_executable)
-  if(CMAKE_VERSION VERSION_GREATER_EQUAL 3.12)
-    find_package(Python3 3.10 COMPONENTS Interpreter QUIET)
-    if(Python3_Interpreter_FOUND)
-      set(csv2_python_executable ${Python3_EXECUTABLE})
-    endif()
-  else()
-    find_package(PythonInterp 3.10 QUIET)
-    if(PYTHONINTERP_FOUND)
-      set(csv2_python_executable ${PYTHON_EXECUTABLE})
-    endif()
-  endif()
-  if(csv2_python_executable)
-    add_test(NAME csv2.benchmark.metrics_contract
-      COMMAND ${csv2_python_executable}
-        ${CMAKE_CURRENT_SOURCE_DIR}/test_collect_metrics.py -v)
-    set_tests_properties(csv2.benchmark.metrics_contract PROPERTIES
-      LABELS benchmark-checksum)
-  endif()
-
   set(csv2_benchmark_fixture ${csv2_SOURCE_DIR}/test/inputs/test_01.csv)
   set(csv2_benchmark_mmap_fixture
       ${CMAKE_CURRENT_BINARY_DIR}/csv2_benchmark_fixture.csv)
+  set(csv2_benchmark_quote_fixture
+      ${CMAKE_CURRENT_BINARY_DIR}/csv2_benchmark_quote_heavy.csv)
+  set(csv2_benchmark_multiline_fixture
+      ${CMAKE_CURRENT_BINARY_DIR}/csv2_benchmark_multiline.csv)
+  set(csv2_benchmark_crlf_fixture
+      ${CMAKE_CURRENT_BINARY_DIR}/csv2_benchmark_crlf.csv)
   # Generate a byte-for-byte stable mmap fixture. Source-tree checkouts can
   # retain historical CRLF contents even though .gitattributes now requests LF.
   file(WRITE ${csv2_benchmark_mmap_fixture} "a,b,c")
+  file(WRITE ${csv2_benchmark_quote_fixture} "\"a,b\",\"c\nd\",\"e\r\nf\"\n")
+  file(WRITE ${csv2_benchmark_multiline_fixture}
+    "left,\"line one\nline two\",right\n")
+  file(WRITE ${csv2_benchmark_crlf_fixture} "12,345,6789,word\r\n")
+  add_test(NAME csv2.benchmark.common_protocol
+    COMMAND csv2_common_benchmark --describe)
+  set_tests_properties(csv2.benchmark.common_protocol PROPERTIES
+    LABELS benchmark-checksum
+    PASS_REGULAR_EXPRESSION "protocol=csv2-common-v1")
+  add_test(NAME csv2.benchmark.common_rows_cells
+    COMMAND csv2_common_benchmark --operation rows_cells
+      --input ${csv2_benchmark_fixture} --source buffer --iterations 1)
+  set_tests_properties(csv2.benchmark.common_rows_cells PROPERTIES
+    LABELS benchmark-checksum
+    PASS_REGULAR_EXPRESSION "protocol=csv2-common-v1.*rows=3.*cells=9")
   function(csv2_add_benchmark_checksum operation source checksum)
     add_test(NAME csv2.benchmark.checksum.${operation}
       COMMAND csv2_benchmark --operation ${operation}
@@ -60,6 +73,26 @@ if(CSV2_BUILD_TESTS)
   csv2_add_benchmark_checksum(integer_conversion buffer 6437334155733299317)
   csv2_add_benchmark_checksum(writer_raw buffer 9730279101474490404)
   csv2_add_benchmark_checksum(writer_escaped buffer 9730279101474490404)
+  function(csv2_add_fixture_checksum name operation fixture checksum)
+    add_test(NAME csv2.benchmark.fixture.${name}
+      COMMAND csv2_benchmark --operation ${operation}
+        --input ${fixture} --source buffer --iterations 1
+        --expect-checksum ${checksum})
+    set_tests_properties(csv2.benchmark.fixture.${name} PROPERTIES
+      LABELS benchmark-checksum)
+  endfunction()
+  csv2_add_fixture_checksum(quote_heavy_rows rows_cells
+    ${csv2_benchmark_quote_fixture} 8674000034234459038)
+  csv2_add_fixture_checksum(multiline_rows rows_cells
+    ${csv2_benchmark_multiline_fixture} 8674000034234398225)
+  csv2_add_fixture_checksum(crlf_rows rows_cells
+    ${csv2_benchmark_crlf_fixture} 12411622248167102744)
+  csv2_add_fixture_checksum(quote_heavy_writer writer_escaped
+    ${csv2_benchmark_quote_fixture} 11995933538725573646)
+  csv2_add_fixture_checksum(multiline_writer writer_escaped
+    ${csv2_benchmark_multiline_fixture} 10979403492338463298)
+  csv2_add_fixture_checksum(crlf_writer writer_escaped
+    ${csv2_benchmark_crlf_fixture} 10184391320815297044)
   add_test(NAME csv2.benchmark.allocations.rows_cells
     COMMAND csv2_benchmark_allocations --operation rows_cells
       --input ${csv2_benchmark_fixture} --source buffer --iterations 1

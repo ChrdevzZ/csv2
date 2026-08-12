@@ -27,6 +27,10 @@
 #include <ranges>
 #endif
 
+#ifndef CSV2_BENCHMARK_REVISION
+#define CSV2_BENCHMARK_REVISION "unstamped"
+#endif
+
 namespace csv2_benchmark_allocation {
 
 bool enabled = false;
@@ -321,6 +325,10 @@ struct RawField {
   std::size_t size() const noexcept { return length; }
 };
 
+std::ostream &operator<<(std::ostream &output, const RawField &field) {
+  return output.write(field.data(), static_cast<std::streamsize>(field.size()));
+}
+
 template <class Row> class RawRow {
   Row row_;
 
@@ -492,8 +500,9 @@ bool run_writer_operation(const std::string &operation, const BenchmarkReader &r
   std::ostream output(&buffer);
 
   if (operation == "writer_raw") {
-    csv2::Writer<csv2::delimiter<','>, std::ostream, csv2::stream_ownership::leave_open> writer(
-        output);
+    csv2::basic_writer<csv2::delimiter<','>, std::ostream, csv2::stream_ownership::leave_open,
+                       csv2::quote_policy::none>
+        writer(output);
     for (std::size_t run = 0; run < iterations; ++run)
       for (const auto row : reader)
         writer.write_row(RawRow<BenchmarkReader::Row>(row));
@@ -633,10 +642,11 @@ int main(int argc, char **argv) {
   const double seconds = std::chrono::duration<double>(stop - start).count();
   const double processed = static_cast<double>(bytes) * static_cast<double>(options.iterations);
   const double gib_per_second = processed / (1024.0 * 1024.0 * 1024.0) / seconds;
-  std::cout << std::fixed << std::setprecision(6) << "operation=" << options.operation
-            << " source=" << options.source << " bytes=" << bytes
-            << " iterations=" << options.iterations << " seconds=" << seconds
-            << " gib_per_second=" << gib_per_second
+  std::cout << std::fixed << std::setprecision(6) << "revision=" << CSV2_BENCHMARK_REVISION
+            << " operation=" << options.operation << " source=" << options.source
+            << " bytes=" << bytes << " iterations=" << options.iterations << " seconds=" << seconds
+            << " gib_per_second=" << gib_per_second << " rows=" << result.rows
+            << " cells=" << result.cells
             << " rows_per_second=" << static_cast<double>(result.rows) / seconds
             << " cells_per_second=" << static_cast<double>(result.cells) / seconds
 #if defined(CSV2_BENCHMARK_ENABLE_ALLOCATION_TRACKING)

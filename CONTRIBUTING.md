@@ -15,12 +15,13 @@ ctest --test-dir build -C Debug --output-on-failure
 ```
 
 The behavioral suite is compiled against both the modular headers and the
-single-header distribution in C++11, C++14, C++17, and, when advertised by
-CMake and the compiler, C++20, C++23, and C++26. C++26 requires CMake 3.30 or
-newer and is a forward-compatibility build mode, not a claim of complete
-compiler or standard-library conformance. Public-header self-containment is
-checked in C++11 and C++17. To reproduce the CI standard gates on a current
-toolchain, configure with `-DCSV2_REQUIRE_MODERN_STANDARD_TESTS=ON`; add
+single-header distribution in C++11, C++14, C++17, C++20, and C++23 whenever
+CMake and the compiler advertise those modes. C++26 coverage is compile-only;
+it requires CMake 3.30 or newer and is a forward-compatibility check, not a
+behavioral or complete conformance claim. Public-header self-containment is
+checked in C++11, C++17, C++20, and C++23. To reproduce the CI standard gates
+on a current toolchain, configure with
+`-DCSV2_REQUIRE_MODERN_STANDARD_TESTS=ON`; add
 `-DCSV2_REQUIRE_CXX26_TESTS=ON` only when CMake reports `cxx_std_26` for the
 selected compiler.
 

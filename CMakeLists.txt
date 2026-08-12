@@ -120,6 +120,10 @@ endif()
 if(CSV2_IS_TOP_LEVEL)
   include(CMakePackageConfigHelpers)
 
+  file(RELATIVE_PATH CSV2_PC_INCLUDEDIR_FROM_PCDIR
+    "${CMAKE_INSTALL_FULL_LIBDIR}/pkgconfig"
+    "${CMAKE_INSTALL_FULL_INCLUDEDIR}")
+
   configure_package_config_file(csv2Config.cmake.in
     ${CMAKE_CURRENT_BINARY_DIR}/csv2Config.cmake
     INSTALL_DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/csv2)

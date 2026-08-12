@@ -86,8 +86,11 @@ record_bounds find_record_bounds(const char *buffer, std::size_t buffer_size,
   const char *const newline = static_cast<const char *>(std::memchr(record_start, '\n', remaining));
   const std::size_t candidate_length =
       newline ? static_cast<std::size_t>(newline - record_start) : remaining;
+  // Include the record-separator candidate so a newline quote policy takes
+  // the same quote-first path as the scalar state machine below.
+  const std::size_t quote_length = candidate_length + (newline ? std::size_t{1} : 0);
   const char *const quote =
-      static_cast<const char *>(std::memchr(record_start, QuoteCharacter::value, candidate_length));
+      static_cast<const char *>(std::memchr(record_start, QuoteCharacter::value, quote_length));
 
   if (!quote) {
     if (!newline)
@@ -108,7 +111,11 @@ record_bounds find_record_bounds(const char *buffer, std::size_t buffer_size,
       }
       quote_opened = !quote_opened;
     } else if (buffer[i] == '\n' && !quote_opened) {
-      const std::size_t content_end = i > start && buffer[i - 1] == '\r' ? i - 1 : i;
+      // A carriage return that also served as the closing quote belongs to
+      // the record; only an ordinary CRLF terminator drops the CR byte.
+      const bool strip_carriage_return =
+          QuoteCharacter::value != '\r' && i > start && buffer[i - 1] == '\r';
+      const std::size_t content_end = strip_carriage_return ? i - 1 : i;
       return {content_end, i + 1};
     }
   }
@@ -144,8 +151,13 @@ CSV2_FORCE_INLINE cell_bounds find_cell_bounds(const char *buffer, std::size_t c
       static_cast<const char *>(std::memchr(first, Delimiter::value, tail_size));
   const std::size_t candidate_length =
       delimiter ? static_cast<std::size_t>(delimiter - first) : tail_size;
+  // Include the delimiter candidate itself in the quote probe. This matters
+  // when a supported policy deliberately assigns the same character to both
+  // roles: the scalar path gives quote handling precedence, so the fast path
+  // must fall back instead of accepting that byte as an unquoted delimiter.
+  const std::size_t quote_length = candidate_length + (delimiter ? std::size_t{1} : 0);
   const char *const quote =
-      static_cast<const char *>(std::memchr(first, QuoteCharacter::value, candidate_length));
+      static_cast<const char *>(std::memchr(first, QuoteCharacter::value, quote_length));
 
   if (!quote)
     return {delimiter ? static_cast<std::size_t>(delimiter - buffer) : end, false};
