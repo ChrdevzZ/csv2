@@ -1532,12 +1532,12 @@ TEST_CASE("Read raw and decoded cell values by appending to the output" * test_s
 TEST_CASE("Do not reserve when reading an empty raw range" * test_suite("Reader")) {
   const PublicCell cell;
   RejectZeroReserveBuffer cell_output;
-  REQUIRE_NOTHROW(cell.read_raw_value(cell_output));
+  cell.read_raw_value(cell_output);
   REQUIRE_FALSE(cell_output.reserve_called);
 
   const PublicRow row;
   RejectZeroReserveBuffer row_output;
-  REQUIRE_NOTHROW(row.read_raw_value(row_output));
+  row.read_raw_value(row_output);
   REQUIRE_FALSE(row_output.reserve_called);
 }
 
