@@ -516,6 +516,7 @@ static_assert(true, "compiling this translation unit is the assertion");
 #include <exception>
 #include <forward_list>
 #include <fstream>
+#include <iomanip>
 #include <iterator>
 #include <limits>
 #include <list>
@@ -646,6 +647,21 @@ public:
   }
 
   std::size_t write_calls{0};
+};
+
+class MinimalWriteStream {
+public:
+  MinimalWriteStream &write(const char *data, std::streamsize size) {
+    value.append(data, static_cast<std::size_t>(size));
+    return *this;
+  }
+
+  MinimalWriteStream &operator<<(char character) {
+    value.push_back(character);
+    return *this;
+  }
+
+  std::string value;
 };
 
 struct CommaFormattedValue {
@@ -1686,6 +1702,57 @@ TEST_CASE("Write ADL ranges and contiguous character fields directly" * test_sui
   csv2::Writer<csv2::delimiter<','>, std::ostringstream> number_writer(numbers);
   number_writer.write_row(std::vector<int>({1, 2}));
   REQUIRE(numbers.str() == "1,2\n");
+
+  MinimalWriteStream minimal_stream;
+  csv2::Writer<csv2::delimiter<','>, MinimalWriteStream> minimal_writer(minimal_stream);
+  minimal_writer.write_row(std::vector<std::string>({"alpha", "beta"}));
+  REQUIRE(minimal_stream.value == "alpha,beta\n");
+
+  MinimalWriteStream minimal_escaped_stream;
+  csv2::EscapingWriter<csv2::delimiter<','>, MinimalWriteStream, csv2::stream_ownership::leave_open>
+      minimal_escaped_writer(minimal_escaped_stream);
+  minimal_escaped_writer.write_row(std::vector<std::string>({"a,b"}));
+  REQUIRE(minimal_escaped_stream.value == "\"a,b\"\n");
+}
+
+TEST_CASE("Consume stream width on the next Writer field" * test_suite("Writer")) {
+  std::ostringstream raw_output;
+  raw_output << std::setfill('_') << std::left << std::setw(4);
+  csv2::Writer<csv2::delimiter<','>, std::ostringstream, csv2::stream_ownership::leave_open> raw(
+      raw_output);
+  raw.write_row(std::vector<std::string>({"x", "y"}));
+  REQUIRE(raw_output.str() == "x___,y\n");
+  REQUIRE(raw_output.width() == 0);
+
+  std::ostringstream empty_output;
+  empty_output << std::setfill('_') << std::right << std::setw(3);
+  csv2::Writer<csv2::delimiter<','>, std::ostringstream, csv2::stream_ownership::leave_open> empty(
+      empty_output);
+  empty.write_row(std::vector<std::string>({"", "y"}));
+  REQUIRE(empty_output.str() == "___,y\n");
+  REQUIRE(empty_output.width() == 0);
+
+  std::ostringstream minimal_output;
+  minimal_output << std::setfill('_') << std::left << std::setw(4);
+  csv2::EscapingWriter<csv2::delimiter<','>, std::ostringstream, csv2::stream_ownership::leave_open>
+      minimal(minimal_output);
+  minimal.write_row(std::vector<std::string>({"a,b", "z"}));
+  REQUIRE(minimal_output.str() == "\"a,b_\",z\n");
+  REQUIRE(minimal_output.width() == 0);
+
+  std::ostringstream always_output;
+  always_output << std::setfill('_') << std::right << std::setw(4);
+  csv2::Writer<csv2::delimiter<','>, std::ostringstream, csv2::stream_ownership::leave_open,
+               csv2::quote_policy::always>
+      always(always_output);
+  always.write_row(std::vector<std::string>({"x", "z"}));
+  REQUIRE(always_output.str() == "\"___x\",\"z\"\n");
+  REQUIRE(always_output.width() == 0);
+
+  DirectWriteTrackingStream direct_output;
+  csv2::Writer<csv2::delimiter<','>, DirectWriteTrackingStream> direct(direct_output);
+  direct.write_row(std::vector<std::string>({"alpha", "beta"}));
+  REQUIRE(direct_output.write_calls == 2);
 }
 
 TEST_CASE("Escape CSV fields with explicit minimal and always quote policies" *
@@ -1711,6 +1778,14 @@ TEST_CASE("Escape CSV fields with explicit minimal and always quote policies" *
   const std::vector<CommaFormattedValue> values = {{15, 16}};
   formatted.write_row(values);
   REQUIRE(formatted_output.str() == "\"f,10\"\n");
+
+  DirectWriteTrackingStream direct_output;
+  csv2::EscapingWriter<csv2::delimiter<','>, DirectWriteTrackingStream,
+                       csv2::stream_ownership::leave_open>
+      direct(direct_output);
+  direct.write_row(std::vector<std::string>({"a,b"}));
+  REQUIRE(direct_output.str() == "\"a,b\"\n");
+  REQUIRE(direct_output.write_calls == 3);
 }
 
 TEST_CASE("Leave borrowed streams open unless close is explicit" * test_suite("Writer")) {

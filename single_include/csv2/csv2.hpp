@@ -3274,14 +3274,34 @@ class Writer {
     release_noexcept_(typename std::is_same<Ownership, stream_ownership::close_on_destroy>::type());
   }
 
+  template <typename Field, typename CandidateStream = Stream>
+  auto write_raw_contiguous_(const Field &field, int)
+      -> decltype(std::declval<CandidateStream &>().width(),
+                  std::declval<CandidateStream &>()
+                      << std::string(static_cast<const char *>(field.data()),
+                                     static_cast<size_t>(field.size())),
+                  void()) {
+    if (stream_->width() != 0) {
+      *stream_ << std::string(static_cast<const char *>(field.data()),
+                              static_cast<size_t>(field.size()));
+      return;
+    }
+    stream_->write(static_cast<const char *>(field.data()),
+                   static_cast<std::streamsize>(field.size()));
+  }
+
+  template <typename Field> void write_raw_contiguous_(const Field &field, long) {
+    stream_->write(static_cast<const char *>(field.data()),
+                   static_cast<std::streamsize>(field.size()));
+  }
+
   template <typename Field>
   auto write_raw_field_(const Field &field,
                         int) -> decltype(static_cast<const char *>(field.data()), field.size(),
                                          stream_->write(static_cast<const char *>(field.data()),
                                                         static_cast<std::streamsize>(field.size())),
                                          void()) {
-    stream_->write(static_cast<const char *>(field.data()),
-                   static_cast<std::streamsize>(field.size()));
+    write_raw_contiguous_(field, 0);
   }
 
   template <typename Field> void write_raw_field_(const Field &field, long) { *stream_ << field; }
@@ -3303,34 +3323,65 @@ class Writer {
       return;
     }
 
-    *stream_ << '"';
+    stream_->write("\"", 1);
     size_t segment = 0;
     for (size_t i = 0; i < size; ++i) {
       if (data[i] != '"')
         continue;
       if (segment < i)
         stream_->write(data + segment, static_cast<std::streamsize>(i - segment));
-      *stream_ << "\"\"";
+      stream_->write("\"\"", 2);
       segment = i + 1;
     }
     if (segment < size)
       stream_->write(data + segment, static_cast<std::streamsize>(size - segment));
-    *stream_ << '"';
+    stream_->write("\"", 1);
+  }
+
+  template <typename Field> std::string format_field_(const Field &field) {
+    std::ostringstream formatted;
+    formatted.copyfmt(*stream_);
+    formatted << field;
+    stream_->width(0);
+    return formatted.str();
+  }
+
+  std::string format_field_(const char *data, size_t size) {
+    return format_field_(std::string(data, size));
+  }
+
+  template <typename Field, typename CandidateStream = Stream>
+  auto write_escaped_contiguous_(const Field &field, int)
+      -> decltype(std::declval<CandidateStream &>().width(),
+                  std::declval<std::ostringstream &>().copyfmt(std::declval<CandidateStream &>()),
+                  std::declval<CandidateStream &>()
+                      << std::string(static_cast<const char *>(field.data()),
+                                     static_cast<size_t>(field.size())),
+                  void()) {
+    const char *const data = static_cast<const char *>(field.data());
+    const size_t size = static_cast<size_t>(field.size());
+    if (stream_->width() == 0) {
+      write_escaped_chars_(data, size, QuotePolicy());
+      return;
+    }
+    const std::string value = format_field_(data, size);
+    write_escaped_chars_(value.data(), value.size(), QuotePolicy());
+  }
+
+  template <typename Field> void write_escaped_contiguous_(const Field &field, long) {
+    write_escaped_chars_(static_cast<const char *>(field.data()), static_cast<size_t>(field.size()),
+                         QuotePolicy());
   }
 
   template <typename Field>
   auto write_escaped_field_(const Field &field,
                             int) -> decltype(static_cast<const char *>(field.data()), field.size(),
                                              void()) {
-    write_escaped_chars_(static_cast<const char *>(field.data()), static_cast<size_t>(field.size()),
-                         QuotePolicy());
+    write_escaped_contiguous_(field, 0);
   }
 
   template <typename Field> void write_escaped_field_(const Field &field, long) {
-    std::ostringstream formatted;
-    formatted.copyfmt(*stream_);
-    formatted << field;
-    const std::string value = formatted.str();
+    const std::string value = format_field_(field);
     write_escaped_chars_(value.data(), value.size(), QuotePolicy());
   }
 
