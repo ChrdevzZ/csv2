@@ -32,18 +32,14 @@ if(CSV2_BUILD_TESTS)
   set(csv2_benchmark_mmap_fixture
       ${CMAKE_CURRENT_BINARY_DIR}/csv2_benchmark_fixture.csv)
   set(csv2_benchmark_quote_fixture
-      ${CMAKE_CURRENT_BINARY_DIR}/csv2_benchmark_quote_heavy.csv)
+      ${CMAKE_CURRENT_SOURCE_DIR}/fixtures/quote_heavy.csv)
   set(csv2_benchmark_multiline_fixture
-      ${CMAKE_CURRENT_BINARY_DIR}/csv2_benchmark_multiline.csv)
+      ${CMAKE_CURRENT_SOURCE_DIR}/fixtures/multiline.csv)
   set(csv2_benchmark_crlf_fixture
-      ${CMAKE_CURRENT_BINARY_DIR}/csv2_benchmark_crlf.csv)
-  # Generate a byte-for-byte stable mmap fixture. Source-tree checkouts can
-  # retain historical CRLF contents even though .gitattributes now requests LF.
+      ${CMAKE_CURRENT_SOURCE_DIR}/fixtures/crlf.csv)
+  # The newline-sensitive source fixtures are excluded from text normalization;
+  # keep this no-newline mmap fixture byte-for-byte stable as well.
   file(WRITE ${csv2_benchmark_mmap_fixture} "a,b,c")
-  file(WRITE ${csv2_benchmark_quote_fixture} "\"a,b\",\"c\nd\",\"e\r\nf\"\n")
-  file(WRITE ${csv2_benchmark_multiline_fixture}
-    "left,\"line one\nline two\",right\n")
-  file(WRITE ${csv2_benchmark_crlf_fixture} "12,345,6789,word\r\n")
   add_test(NAME csv2.benchmark.common_protocol
     COMMAND csv2_common_benchmark --describe)
   set_tests_properties(csv2.benchmark.common_protocol PROPERTIES

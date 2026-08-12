@@ -310,7 +310,20 @@ class CollectMetricsTests(unittest.TestCase):
             result = METRICS.run_benchmark(args)
 
         self.assertEqual(result["bytes"], "4")
-        self.assertIn("fake_benchmark", result["_command"])
+        self.assertEqual(
+            json.loads(result["_command"]),
+            [
+                "fake_benchmark",
+                "--operation",
+                "rows_cells",
+                "--input",
+                "input.csv",
+                "--source",
+                "buffer",
+                "--iterations",
+                "2",
+            ],
+        )
         self.assertEqual(result["_stdout"], output)
         self.assertEqual(result["_stderr"], "warning")
 
@@ -1069,7 +1082,21 @@ class RunSuiteTests(unittest.TestCase):
             )
 
         self.assertEqual(result["checksum"], "9")
-        self.assertIn(str(script), result["_command"])
+        self.assertEqual(
+            json.loads(result["_command"]),
+            [
+                sys.executable,
+                str(script),
+                "--operation",
+                "rows_cells",
+                "--input",
+                "input.csv",
+                "--source",
+                "buffer",
+                "--iterations",
+                "2",
+            ],
+        )
         self.assertEqual(result["_stderr"], "diagnostic")
 
 
