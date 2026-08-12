@@ -1045,6 +1045,61 @@ TEST_CASE("Do not validate a suffix using a different trim context" * test_suite
   REQUIRE(error.byte_offset == 3);
 }
 
+TEST_CASE("Preserve quote structure when the trim policy includes quotes" * test_suite("Reader")) {
+  using QuoteTrimReader =
+      csv2::Reader<csv2::delimiter<','>, csv2::quote_character<'"'>,
+                   csv2::first_row_is_header<false>, csv2::trim_policy::trim_characters<'"'>>;
+  using MixedTrimReader =
+      csv2::Reader<csv2::delimiter<','>, csv2::quote_character<'"'>,
+                   csv2::first_row_is_header<false>, csv2::trim_policy::trim_characters<' ', '"'>>;
+
+  SUBCASE("A lone opening quote remains visible") {
+    QuoteTrimReader reader;
+    std::string input("\"");
+    REQUIRE(reader.parse(input));
+    csv2::parse_error error;
+    REQUIRE_FALSE(reader.validate(error));
+    REQUIRE(error.code == csv2::parse_errc::unclosed_quote);
+    REQUIRE(error.byte_offset == 0);
+    REQUIRE(error.row == 1);
+    REQUIRE(error.column == 1);
+  }
+
+  SUBCASE("A quoted empty field remains valid") {
+    QuoteTrimReader reader;
+    std::string input("\"\"");
+    REQUIRE(reader.parse(input));
+    csv2::parse_error error;
+    REQUIRE(reader.validate(error));
+  }
+
+  SUBCASE("A quoted value remains valid") {
+    QuoteTrimReader reader;
+    std::string input("\"a\"");
+    REQUIRE(reader.parse(input));
+    csv2::parse_error error;
+    REQUIRE(reader.validate(error));
+  }
+
+  SUBCASE("A trailing quote in an unquoted field remains visible") {
+    QuoteTrimReader reader;
+    std::string input("a\"");
+    REQUIRE(reader.parse(input));
+    csv2::parse_error error;
+    REQUIRE_FALSE(reader.validate(error));
+    REQUIRE(error.code == csv2::parse_errc::unexpected_quote);
+    REQUIRE(error.byte_offset == 1);
+  }
+
+  SUBCASE("Non-structural trim bytes can still surround a quoted field") {
+    MixedTrimReader reader;
+    std::string input("  \"a\"  ");
+    REQUIRE(reader.parse(input));
+    csv2::parse_error error;
+    REQUIRE(reader.validate(error));
+  }
+}
+
 #if defined(__cpp_exceptions) || defined(__EXCEPTIONS) || defined(_CPPUNWIND)
 TEST_CASE("Propagate exceptions from a user trim policy" * test_suite("Reader")) {
   using ThrowingTrimReader = csv2::Reader<csv2::delimiter<','>, csv2::quote_character<'"'>,
