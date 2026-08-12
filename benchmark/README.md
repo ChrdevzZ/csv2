@@ -11,6 +11,11 @@ outputs. Its command line, output protocol, and timed scope have changed. The
 common driver must be the same source file and use the same compiler and flags
 for both header trees.
 
+Numeric command-line values use canonical unsigned ASCII decimal syntax. Signs,
+whitespace, non-digits, and values outside the destination type are rejected
+before any input preparation or measurement begins. `--iterations` must be
+greater than zero; checksum and allocation expectations may be zero.
+
 ## Current-tree operation checks
 
 `csv2_benchmark` prepares buffer or mmap sources before starting the operation

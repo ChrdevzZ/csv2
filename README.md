@@ -148,7 +148,9 @@ header trees. See
 [`benchmark/README.md`](benchmark/README.md) for reproducible extraction and
 build commands, A/A calibration, paired execution, raw-sample retention, and
 the provenance required for a reviewable result. No comparative performance
-number is published without its machine-specific JSON report.
+number is published without its machine-specific JSON report. Benchmark
+numeric options accept unsigned ASCII decimal digits only; signs, whitespace,
+overflow, and zero iterations are rejected before measurement.
 
 ### Reader API
 

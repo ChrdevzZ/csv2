@@ -51,6 +51,25 @@ if(CSV2_BUILD_TESTS)
   set_tests_properties(csv2.benchmark.common_rows_cells PROPERTIES
     LABELS benchmark-checksum
     PASS_REGULAR_EXPRESSION "protocol=csv2-common-v1.*rows=3.*cells=9")
+  function(csv2_add_common_benchmark_rejection name value)
+    add_test(NAME csv2.benchmark.common_reject.${name}
+      COMMAND ${CMAKE_COMMAND}
+        -DCSV2_BENCHMARK_EXECUTABLE=$<TARGET_FILE:csv2_common_benchmark>
+        -DCSV2_BENCHMARK_INPUT=${csv2_benchmark_fixture}
+        -DCSV2_BENCHMARK_VALUE=${value}
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/check_common_cli_rejection.cmake)
+    set_tests_properties(csv2.benchmark.common_reject.${name} PROPERTIES
+      LABELS benchmark-checksum
+      TIMEOUT 5)
+  endfunction()
+
+  csv2_add_common_benchmark_rejection(iterations_negative -1)
+  csv2_add_common_benchmark_rejection(iterations_positive_sign +1)
+  csv2_add_common_benchmark_rejection(iterations_zero 0)
+  csv2_add_common_benchmark_rejection(iterations_nondigit 1x)
+  csv2_add_common_benchmark_rejection(iterations_leading_space <leading-space>)
+  csv2_add_common_benchmark_rejection(iterations_trailing_space <trailing-space>)
+  csv2_add_common_benchmark_rejection(iterations_overflow 18446744073709551616)
   function(csv2_add_benchmark_checksum operation source checksum)
     add_test(NAME csv2.benchmark.checksum.${operation}
       COMMAND csv2_benchmark --operation ${operation}
