@@ -16,6 +16,26 @@ foreach(target IN ITEMS csv2_benchmark csv2_benchmark_allocations)
 endforeach()
 
 if(CSV2_BUILD_TESTS)
+  set(csv2_python_executable)
+  if(CMAKE_VERSION VERSION_GREATER_EQUAL 3.12)
+    find_package(Python3 3.10 COMPONENTS Interpreter QUIET)
+    if(Python3_Interpreter_FOUND)
+      set(csv2_python_executable ${Python3_EXECUTABLE})
+    endif()
+  else()
+    find_package(PythonInterp 3.10 QUIET)
+    if(PYTHONINTERP_FOUND)
+      set(csv2_python_executable ${PYTHON_EXECUTABLE})
+    endif()
+  endif()
+  if(csv2_python_executable)
+    add_test(NAME csv2.benchmark.metrics_contract
+      COMMAND ${csv2_python_executable}
+        ${CMAKE_CURRENT_SOURCE_DIR}/test_collect_metrics.py -v)
+    set_tests_properties(csv2.benchmark.metrics_contract PROPERTIES
+      LABELS benchmark-checksum)
+  endif()
+
   set(csv2_benchmark_fixture ${csv2_SOURCE_DIR}/test/inputs/test_01.csv)
   set(csv2_benchmark_mmap_fixture
       ${CMAKE_CURRENT_BINARY_DIR}/csv2_benchmark_fixture.csv)

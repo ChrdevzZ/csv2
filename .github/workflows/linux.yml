@@ -67,6 +67,9 @@ jobs:
       - name: Test
         run: ctest --test-dir build --output-on-failure
 
+      - name: Test fixed-machine metrics contracts
+        run: python3 -m unittest benchmark/test_collect_metrics.py -v
+
       - name: Install package
         run: cmake --install build --prefix build/install
 

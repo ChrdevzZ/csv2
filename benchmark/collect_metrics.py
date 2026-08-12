@@ -5,17 +5,17 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 import platform
 import shlex
 import shutil
+import statistics
 import subprocess
 import tempfile
 import time
 from pathlib import Path
 
 
-PERF_EVENTS = ("cycles", "instructions", "branch-misses")
+COUNTER_FIELDS = ("cycles", "instructions", "branch_misses")
 
 
 def require_tool(name: str) -> str:
@@ -35,6 +35,7 @@ def parse_benchmark_output(output: str) -> dict[str, str]:
 def benchmark_command(
     args: argparse.Namespace,
     track_allocations: bool = False,
+    track_hardware_counters: bool = False,
     executable: Path | None = None,
 ) -> list[str]:
     command = [
@@ -50,16 +51,19 @@ def benchmark_command(
     ]
     if track_allocations:
         command.append("--track-allocations")
+    if track_hardware_counters:
+        command.append("--track-counters")
     return command
 
 
 def run_benchmark(
     args: argparse.Namespace,
     track_allocations: bool = False,
+    track_hardware_counters: bool = False,
     executable: Path | None = None,
 ) -> dict[str, str]:
     completed = subprocess.run(
-        benchmark_command(args, track_allocations, executable),
+        benchmark_command(args, track_allocations, track_hardware_counters, executable),
         check=True,
         capture_output=True,
         text=True,
@@ -67,49 +71,67 @@ def run_benchmark(
     return parse_benchmark_output(completed.stdout)
 
 
-def collect_perf(args: argparse.Namespace, processed_bytes: int) -> dict[str, float]:
-    perf = require_tool("perf")
-    environment = dict(os.environ)
-    environment["LC_ALL"] = "C"
-    completed = subprocess.run(
-        [
-            perf,
-            "stat",
-            "--no-big-num",
-            "-x",
-            ";",
-            "-r",
-            str(args.runs),
-            "-e",
-            ",".join(PERF_EVENTS),
-            "--",
-            *benchmark_command(args),
-        ],
-        check=True,
-        capture_output=True,
-        text=True,
-        env=environment,
-    )
+def median_absolute_deviation(values: list[float]) -> float:
+    center = statistics.median(values)
+    return statistics.median(abs(value - center) for value in values)
 
-    counters: dict[str, float] = {}
-    for line in completed.stderr.splitlines():
-        fields = line.split(";")
-        if len(fields) < 3:
-            continue
-        event = fields[2].strip()
-        if event not in PERF_EVENTS:
-            continue
-        value = fields[0].strip()
-        if value.startswith("<"):
-            raise RuntimeError(f"perf could not count {event}: {value}")
-        counters[event] = float(value)
-    missing = sorted(set(PERF_EVENTS) - set(counters))
-    if missing:
-        raise RuntimeError(f"perf did not report: {', '.join(missing)}")
 
-    counters["cycles_per_byte"] = counters["cycles"] / processed_bytes
-    counters["instructions_per_byte"] = counters["instructions"] / processed_bytes
-    return counters
+def summarize_counter_samples(
+    samples: list[dict[str, str]], processed_bytes: int, expected_checksum: str
+) -> dict[str, object]:
+    if not samples or processed_bytes <= 0:
+        raise RuntimeError("hardware counter samples and processed bytes must be positive")
+    checksums = {sample.get("checksum") for sample in samples}
+    if len(checksums) != 1:
+        raise RuntimeError("hardware counter samples produced different checksums")
+    if checksums != {expected_checksum}:
+        raise RuntimeError("hardware counter tracking changed the benchmark checksum")
+
+    normalized: list[dict[str, object]] = []
+    values: dict[str, list[float]] = {
+        "cycles": [],
+        "instructions": [],
+        "branch_misses": [],
+        "cycles_per_byte": [],
+        "instructions_per_byte": [],
+    }
+    for sample in samples:
+        if sample.get("hardware_counter_scope") != "timed_operation":
+            raise RuntimeError("hardware counters must cover timed_operation")
+        time_enabled = int(sample["hardware_counter_time_enabled"])
+        time_running = int(sample["hardware_counter_time_running"])
+        if time_enabled <= 0 or time_running <= 0:
+            raise RuntimeError("hardware counter timing values must be positive")
+        scale = time_enabled / time_running
+        scaled = {name: int(sample[name]) * scale for name in COUNTER_FIELDS}
+        scaled["cycles_per_byte"] = scaled["cycles"] / processed_bytes
+        scaled["instructions_per_byte"] = scaled["instructions"] / processed_bytes
+        normalized.append(
+            {
+                "time_enabled": time_enabled,
+                "time_running": time_running,
+                "scale": scale,
+                "raw": {name: int(sample[name]) for name in COUNTER_FIELDS},
+                "scaled": scaled,
+            }
+        )
+        for name in values:
+            values[name].append(float(scaled[name]))
+
+    return {
+        "scope": "timed_operation",
+        "runs": len(normalized),
+        "samples": normalized,
+        "median": {name: statistics.median(data) for name, data in values.items()},
+        "mad": {name: median_absolute_deviation(data) for name, data in values.items()},
+    }
+
+
+def collect_hardware_counters(
+    args: argparse.Namespace, processed_bytes: int, expected_checksum: str
+) -> dict[str, object]:
+    samples = [run_benchmark(args, track_hardware_counters=True) for _ in range(args.runs)]
+    return summarize_counter_samples(samples, processed_bytes, expected_checksum)
 
 
 def collect_peak_rss(args: argparse.Namespace) -> int:
@@ -160,7 +182,20 @@ def time_build(command: str) -> float:
 
 
 def numeric_result(values: dict[str, str]) -> dict[str, object]:
-    integer_fields = {"bytes", "iterations", "rows", "cells", "allocations", "allocated_bytes", "checksum"}
+    integer_fields = {
+        "bytes",
+        "iterations",
+        "rows",
+        "cells",
+        "allocations",
+        "allocated_bytes",
+        "hardware_counter_time_enabled",
+        "hardware_counter_time_running",
+        "cycles",
+        "instructions",
+        "branch_misses",
+        "checksum",
+    }
     float_fields = {"seconds", "gib_per_second", "rows_per_second", "cells_per_second"}
     result: dict[str, object] = dict(values)
     for name in integer_fields & values.keys():
@@ -180,14 +215,16 @@ def main() -> None:
     parser.add_argument("--iterations", type=int, default=20)
     parser.add_argument("--runs", type=int, default=20)
     parser.add_argument("--build-command")
-    parser.add_argument("--skip-perf", action="store_true")
+    parser.add_argument(
+        "--skip-counters", "--skip-perf", dest="skip_counters", action="store_true"
+    )
     parser.add_argument("--skip-rss", action="store_true")
     parser.add_argument("--skip-size", action="store_true")
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
     if args.iterations <= 0:
         parser.error("--iterations must be positive")
-    if args.runs < 20 and not args.skip_perf:
+    if args.runs < 20 and not args.skip_counters:
         parser.error("--runs must be at least 20 for fixed-machine counter collection")
     args.executable = args.executable.resolve()
     if args.allocation_executable is None:
@@ -230,10 +267,12 @@ def main() -> None:
             "allocated_bytes": int(allocations["allocated_bytes"]),
         },
     }
-    if not args.skip_perf:
-        report["perf"] = collect_perf(args, processed_bytes)
+    if not args.skip_counters:
+        report["hardware_counters"] = collect_hardware_counters(
+            args, processed_bytes, benchmark["checksum"]
+        )
     if not args.skip_rss:
-        report["peak_rss_kib"] = collect_peak_rss(args)
+        report["peak_rss"] = {"scope": "whole_process", "kib": collect_peak_rss(args)}
     if not args.skip_size:
         report["code_size"] = collect_code_size(args.executable)
     if args.build_command:

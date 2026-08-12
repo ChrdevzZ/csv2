@@ -44,10 +44,14 @@ interval is below parity. Retain an optimization only when its target case
 improves under the same rule and short unquoted, quote-heavy, multiline, and
 CRLF cases show no significant regression.
 
-On Linux, `collect_metrics.py` records `perf stat` counters, cycles/byte,
-instructions/byte, branch misses, peak RSS, allocation counts, and executable
-text/data/BSS sizes in one JSON report. It can also time a quoted clean build
-command:
+On Linux, `collect_metrics.py` records operation-scoped hardware counters,
+cycles/byte, instructions/byte, branch misses, peak RSS, allocation counts, and
+executable text/data/BSS sizes in one JSON report. The benchmark opens a
+disabled `perf_event_open` group and enables it only around the same operation
+measured by the throughput timer; source preparation and result formatting are
+excluded. Reports retain every raw sample, its multiplexing scale, the median,
+and the MAD. Peak RSS is explicitly labeled `whole_process` because it includes
+source preparation. The script can also time a quoted clean build command:
 
 ```bash
 python3 benchmark/collect_metrics.py \
@@ -60,3 +64,7 @@ python3 benchmark/collect_metrics.py \
 
 Hosted CI only compiles this suite and verifies the small-fixture checksums; it
 never enforces timing thresholds.
+
+Use `--skip-counters` (the legacy spelling `--skip-perf` remains accepted),
+`--skip-rss`, or `--skip-size` only for smoke-testing on machines without the
+corresponding Linux facilities.
