@@ -1100,6 +1100,44 @@ TEST_CASE("Preserve quote structure when the trim policy includes quotes" * test
   }
 }
 
+TEST_CASE("Preserve structural diagnostics after a quoted-field suffix" * test_suite("Reader")) {
+  using TrimmedReader =
+      csv2::Reader<csv2::delimiter<','>, csv2::quote_character<'"'>,
+                   csv2::first_row_is_header<false>, csv2::trim_policy::trim_whitespace>;
+
+  SUBCASE("A bare carriage return follows trimmable bytes") {
+    TrimmedReader reader;
+    std::string input("\"a\" \r");
+    REQUIRE(reader.parse(input));
+    csv2::parse_error error;
+    REQUIRE_FALSE(reader.validate(error));
+    REQUIRE(error.code == csv2::parse_errc::bare_carriage_return);
+    REQUIRE(error.byte_offset == 4);
+    REQUIRE(error.row == 1);
+    REQUIRE(error.column == 1);
+  }
+
+  SUBCASE("A quote follows trimmable bytes") {
+    TrimmedReader reader;
+    std::string input("\"a\"  \"b\"");
+    REQUIRE(reader.parse(input));
+    csv2::parse_error error;
+    REQUIRE_FALSE(reader.validate(error));
+    REQUIRE(error.code == csv2::parse_errc::invalid_doubled_quote);
+    REQUIRE(error.byte_offset == 5);
+  }
+
+  SUBCASE("Ordinary content follows trimmable bytes") {
+    TrimmedReader reader;
+    std::string input("\"a\"  x");
+    REQUIRE(reader.parse(input));
+    csv2::parse_error error;
+    REQUIRE_FALSE(reader.validate(error));
+    REQUIRE(error.code == csv2::parse_errc::characters_after_closing_quote);
+    REQUIRE(error.byte_offset == 5);
+  }
+}
+
 #if defined(__cpp_exceptions) || defined(__EXCEPTIONS) || defined(_CPPUNWIND)
 TEST_CASE("Propagate exceptions from a user trim policy" * test_suite("Reader")) {
   using ThrowingTrimReader = csv2::Reader<csv2::delimiter<','>, csv2::quote_character<'"'>,
