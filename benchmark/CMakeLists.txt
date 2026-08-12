@@ -77,6 +77,30 @@ if(CSV2_BUILD_TESTS)
     set_tests_properties(csv2.benchmark.fixture.${name} PROPERTIES
       LABELS benchmark-checksum)
   endfunction()
+
+  function(csv2_add_benchmark_rejection name argument value)
+    add_test(NAME csv2.benchmark.reject.${name}
+      COMMAND ${CMAKE_COMMAND}
+        -DCSV2_BENCHMARK_EXECUTABLE=$<TARGET_FILE:csv2_benchmark>
+        -DCSV2_BENCHMARK_INPUT=${csv2_benchmark_fixture}
+        -DCSV2_BENCHMARK_ARGUMENT=${argument}
+        -DCSV2_BENCHMARK_VALUE=${value}
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/check_cli_rejection.cmake)
+    set_tests_properties(csv2.benchmark.reject.${name} PROPERTIES
+      LABELS benchmark-checksum
+      TIMEOUT 5)
+  endfunction()
+
+  csv2_add_benchmark_rejection(iterations_negative --iterations -1)
+  csv2_add_benchmark_rejection(iterations_positive_sign --iterations +1)
+  csv2_add_benchmark_rejection(iterations_zero --iterations 0)
+  csv2_add_benchmark_rejection(iterations_nondigit --iterations 1x)
+  csv2_add_benchmark_rejection(iterations_leading_space --iterations <leading-space>)
+  csv2_add_benchmark_rejection(iterations_trailing_space --iterations <trailing-space>)
+  csv2_add_benchmark_rejection(iterations_overflow --iterations 18446744073709551616)
+  csv2_add_benchmark_rejection(checksum_negative --expect-checksum -1)
+  csv2_add_benchmark_rejection(checksum_positive_sign --expect-checksum +1)
+  csv2_add_benchmark_rejection(allocations_negative --expect-allocations -1)
   csv2_add_fixture_checksum(quote_heavy_rows rows_cells
     ${csv2_benchmark_quote_fixture} 8674000034234459038)
   csv2_add_fixture_checksum(multiline_rows rows_cells
