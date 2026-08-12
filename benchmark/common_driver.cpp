@@ -5,7 +5,7 @@
 #include <fstream>
 #include <iostream>
 #include <iterator>
-#include <sstream>
+#include <limits>
 #include <string>
 
 #ifndef CSV2_BENCHMARK_REVISION
@@ -38,10 +38,20 @@ void mix(std::uint64_t &checksum, std::uint64_t value) noexcept {
 }
 
 bool parse_size(const char *text, std::size_t &value) {
-  std::istringstream input(text);
+  if (!text || *text == '\0')
+    return false;
+
   std::size_t parsed = 0;
-  input >> parsed;
-  if (!input || !input.eof() || parsed == 0)
+  const std::size_t maximum = (std::numeric_limits<std::size_t>::max)();
+  for (const char *current = text; *current != '\0'; ++current) {
+    if (*current < '0' || *current > '9')
+      return false;
+    const std::size_t digit = static_cast<std::size_t>(*current - '0');
+    if (parsed > (maximum - digit) / std::size_t(10))
+      return false;
+    parsed = parsed * std::size_t(10) + digit;
+  }
+  if (parsed == 0)
     return false;
   value = parsed;
   return true;
