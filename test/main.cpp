@@ -837,6 +837,44 @@ std::ostream &operator<<(std::ostream &stream, const CommaFormattedValue &value)
   return stream << value.left << ',' << value.right;
 }
 
+struct StatefulFormattedValue {
+  explicit StatefulFormattedValue(std::ios_base::iostate state) : state(state) {}
+
+  std::ios_base::iostate state;
+};
+
+std::ostream &operator<<(std::ostream &stream, const StatefulFormattedValue &value) {
+  stream.write("a,b", 3);
+  stream.setstate(value.state);
+  return stream;
+}
+
+#if !defined(CSV2_TEST_NO_EXCEPTIONS)
+struct WriterUserError {};
+
+struct ConsumingThrowValue {};
+
+std::ostream &operator<<(std::ostream &stream, const ConsumingThrowValue &) {
+  stream << "x";
+  throw WriterUserError();
+}
+
+struct UnformattedThrowValue {};
+
+std::ostream &operator<<(std::ostream &stream, const UnformattedThrowValue &) {
+  stream.write("x", 1);
+  throw WriterUserError();
+}
+
+struct StatefulThrowValue {};
+
+std::ostream &operator<<(std::ostream &stream, const StatefulThrowValue &) {
+  stream.write("x", 1);
+  stream.setstate(std::ios_base::failbit);
+  throw WriterUserError();
+}
+#endif
+
 struct FormattedContiguousValue {
   const char *data() const { return "raw"; }
   std::size_t size() const { return 3; }
@@ -2454,6 +2492,59 @@ TEST_CASE("Consume stream width on the next Writer field" * test_suite("Writer")
   csv2::Writer<csv2::delimiter<','>, std::ostringstream> raw_range(raw_range_output);
   raw_range.write_row(std::vector<std::vector<char>>(1, std::vector<char>({'r', 'a', 'w'})));
   REQUIRE(raw_range_output.str() == "raw\n");
+}
+
+TEST_CASE("Propagate formatted Writer state and preserve insertion exceptions" *
+          test_suite("Writer")) {
+  typedef csv2::EscapingWriter<csv2::delimiter<';'>, std::ostringstream,
+                               csv2::stream_ownership::leave_open>
+      EscapingSemicolonWriter;
+
+  std::ostringstream fail_output;
+  EscapingSemicolonWriter fail_writer(fail_output);
+  fail_writer.write_row(
+      std::vector<StatefulFormattedValue>(1, StatefulFormattedValue(std::ios_base::failbit)));
+  REQUIRE(fail_output.str() == "a,b");
+  REQUIRE(fail_output.fail());
+  REQUIRE_FALSE(fail_output.bad());
+
+  std::ostringstream bad_output;
+  EscapingSemicolonWriter bad_writer(bad_output);
+  bad_writer.write_row(
+      std::vector<StatefulFormattedValue>(1, StatefulFormattedValue(std::ios_base::badbit)));
+  REQUIRE(bad_output.str() == "a,b");
+  REQUIRE(bad_output.bad());
+
+#if !defined(CSV2_TEST_NO_EXCEPTIONS)
+  std::ostringstream throwing_output;
+  throwing_output.exceptions(std::ios_base::failbit);
+  EscapingSemicolonWriter throwing_writer(throwing_output);
+  CHECK_THROWS_AS(throwing_writer.write_row(std::vector<StatefulFormattedValue>(
+                      1, StatefulFormattedValue(std::ios_base::failbit))),
+                  std::ios_base::failure);
+  REQUIRE(throwing_output.str() == "a,b");
+  REQUIRE(throwing_output.fail());
+
+  std::ostringstream consuming_output;
+  consuming_output << std::setw(4);
+  EscapingSemicolonWriter consuming_writer(consuming_output);
+  CHECK_THROWS_AS(consuming_writer.write_row(std::vector<ConsumingThrowValue>(1)), WriterUserError);
+  REQUIRE(consuming_output.width() == 0);
+
+  std::ostringstream unformatted_output;
+  unformatted_output << std::setw(4);
+  EscapingSemicolonWriter unformatted_writer(unformatted_output);
+  CHECK_THROWS_AS(unformatted_writer.write_row(std::vector<UnformattedThrowValue>(1)),
+                  WriterUserError);
+  REQUIRE(unformatted_output.width() == 4);
+
+  std::ostringstream stateful_throw_output;
+  stateful_throw_output.exceptions(std::ios_base::failbit);
+  EscapingSemicolonWriter stateful_throw_writer(stateful_throw_output);
+  CHECK_THROWS_AS(stateful_throw_writer.write_row(std::vector<StatefulThrowValue>(1)),
+                  WriterUserError);
+  REQUIRE(stateful_throw_output.fail());
+#endif
 }
 
 TEST_CASE("Escape CSV fields with explicit minimal and always quote policies" *

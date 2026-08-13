@@ -3802,16 +3802,49 @@ class basic_writer {
     stream_->write("\"", 1);
   }
 
-  template <typename Field> std::string format_field_(const Field &field) {
+  template <typename Field> void write_formatted_field_(const Field &field) {
     std::ostringstream formatted;
     formatted.copyfmt(*stream_);
+    formatted.exceptions(std::ios_base::goodbit);
+#if defined(__cpp_exceptions) || defined(__EXCEPTIONS) || defined(_CPPUNWIND)
+    struct formatted_state_guard {
+      Stream *target;
+      std::ostringstream *source;
+      bool active;
+
+      formatted_state_guard(Stream &target_stream, std::ostringstream &source_stream) noexcept
+          : target(&target_stream), source(&source_stream), active(true) {}
+
+      ~formatted_state_guard() noexcept {
+        if (!active)
+          return;
+        try {
+          target->width(source->width());
+          if (source->rdstate() != std::ios_base::goodbit)
+            target->setstate(source->rdstate());
+        } catch (...) {
+        }
+      }
+
+      void release() noexcept { active = false; }
+    } guard(*stream_, formatted);
+
     formatted << field;
-    stream_->width(0);
-    return formatted.str();
+    guard.release();
+#else
+    formatted << field;
+#endif
+
+    stream_->width(formatted.width());
+    const std::ios_base::iostate state = formatted.rdstate();
+    const std::string value = formatted.str();
+    write_escaped_chars_(value.data(), value.size(), QuotePolicy());
+    if (state != std::ios_base::goodbit)
+      stream_->setstate(state);
   }
 
-  std::string format_field_(const char *data, size_t size) {
-    return format_field_(std::string(data, size));
+  void write_formatted_field_(const char *data, size_t size) {
+    write_formatted_field_(std::string(data, size));
   }
 
   template <typename Field, typename CandidateStream = Stream>
@@ -3828,8 +3861,7 @@ class basic_writer {
       write_escaped_chars_(data, size, QuotePolicy());
       return;
     }
-    const std::string value = format_field_(data, size);
-    write_escaped_chars_(value.data(), value.size(), QuotePolicy());
+    write_formatted_field_(data, size);
   }
 
   template <typename Field> void write_escaped_contiguous_(const Field &field, long) {
@@ -3845,8 +3877,7 @@ class basic_writer {
   auto write_escaped_fallback_(const Field &field,
                                int) -> decltype(std::declval<std::ostringstream &>() << field,
                                                 void()) {
-    const std::string value = format_field_(field);
-    write_escaped_chars_(value.data(), value.size(), QuotePolicy());
+    write_formatted_field_(field);
   }
 
   template <typename Field> void write_escaped_fallback_(const Field &field, long) {
