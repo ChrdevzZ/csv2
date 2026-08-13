@@ -2,6 +2,9 @@ cmake_minimum_required(VERSION 3.16)
 
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
 include(Csv2TestDependencies)
+include(Csv2TestManifest)
+include(Csv2TestMatrix)
+include(Csv2TestRegistration)
 
 if(CSV2_BUILD_TESTS AND 14 IN_LIST csv2_supported_standards)
   csv2_load_catch2()
@@ -48,6 +51,10 @@ if(NOT CSV2_BUILD_TESTS)
   endif()
   return()
 endif()
+
+add_subdirectory(support)
+add_subdirectory(runtime)
+csv2_add_runtime_matrix()
 
 function(csv2_register_runtime_test target test_name)
   add_test(NAME ${test_name} COMMAND ${target})
