@@ -31,15 +31,25 @@ std::string safe_component(std::string value) {
   return value.empty() ? "unnamed" : value;
 }
 
+unsigned selected_sources(const Operation &operation, const Options &options) {
+  unsigned selected = source_none;
+  const Source sources[] = {Source::file, Source::buffer, Source::mmap};
+  for (const Source source : sources) {
+    if (source_enabled(operation.sources, source) && source_selected(options.source, source))
+      selected |= source == Source::file
+                      ? source_file
+                      : (source == Source::buffer ? source_buffer : source_mmap);
+  }
+  return selected;
+}
+
 template <typename Function>
 std::size_t for_each_selected_source(const Operation &operation, const Options &options,
-                                     const Context *context, Function function) {
+                                     Function function) {
   std::size_t selected = 0;
   const Source sources[] = {Source::file, Source::buffer, Source::mmap};
   for (const Source source : sources) {
     if (!source_enabled(operation.sources, source) || !source_selected(options.source, source))
-      continue;
-    if (source == Source::mmap && context && !context->mmap_ready())
       continue;
     ++selected;
     function(source);
@@ -52,8 +62,9 @@ int list_operations(const Registry &registry, const Options &options) {
   for (const Operation &operation : registry.operations()) {
     if (!options.operation.empty() && options.operation != operation.id)
       continue;
-    selected += for_each_selected_source(operation, options, nullptr, [&](Source source) {
+    selected += for_each_selected_source(operation, options, [&](Source source) {
       std::cout << operation.id << " source=" << source_name(source)
+                << " scope=" << operation_scope_name(operation.scope)
                 << " zero_allocations=" << (operation.expect_zero_allocations ? "true" : "false")
                 << '\n';
     });
@@ -65,6 +76,34 @@ int list_operations(const Registry &registry, const Options &options) {
   return 0;
 }
 
+bool load_selected_context(const Registry &registry, Context &context, const Options &options,
+                           std::string &error) {
+  unsigned requirements = prepare_none;
+  unsigned sources = source_none;
+  for (const Operation &operation : registry.operations()) {
+    if (!options.operation.empty() && options.operation != operation.id)
+      continue;
+    const unsigned operation_sources = selected_sources(operation, options);
+    if (operation_sources == source_none)
+      continue;
+    requirements |= operation.preparations;
+    sources |= operation_sources;
+  }
+  if (sources == source_none) {
+    error = "no operation/source combination matched the request";
+    return false;
+  }
+  return context.load(options.input, requirements, sources, error);
+}
+
+int audit_preparation(const Context &context) {
+  std::cout << "prepared=" << context.preparation_description()
+            << " decoded_rows=" << context.decoded_rows().size()
+            << " streamable_rows=" << context.streamable_rows().size()
+            << " output_capacity=" << context.output_buffer().capacity() << '\n';
+  return 0;
+}
+
 int verify_operations(Registry &registry, Context &context, const Options &options) {
   bool selected = false;
   bool allocation_failure = false;
@@ -72,7 +111,7 @@ int verify_operations(Registry &registry, Context &context, const Options &optio
   for (const Operation &operation : registry.operations()) {
     if (!options.operation.empty() && options.operation != operation.id)
       continue;
-    for_each_selected_source(operation, options, &context, [&](Source source) {
+    for_each_selected_source(operation, options, [&](Source source) {
       selected = true;
       allocation::reset(true);
       TimedObserver unused_observer;
@@ -120,7 +159,7 @@ int audit_observers(Registry &registry, Context &context, const Options &options
   for (const Operation &operation : registry.operations()) {
     if (!options.operation.empty() && options.operation != operation.id)
       continue;
-    for_each_selected_source(operation, options, &context, [&](Source source) {
+    for_each_selected_source(operation, options, [&](Source source) {
       selected = true;
       TimedObserver observer;
       Result result = operation.timed_kernel(context, source, observer);
@@ -161,7 +200,7 @@ std::size_t register_timing_benchmarks(Registry &registry, Context &context,
     if (!options.operation.empty() && options.operation != operation.id)
       continue;
     const Operation *const selected_operation = &operation;
-    selected += for_each_selected_source(operation, options, &context, [&](Source source) {
+    selected += for_each_selected_source(operation, options, [&](Source source) {
       const std::string name = "csv2/" + operation.id + "/" + source_name(source) + "/" + dataset;
       benchmark::RegisterBenchmark(name, [&context, selected_operation,
                                           source](benchmark::State &state) {
@@ -214,7 +253,7 @@ int main(int argc, char **argv) {
       return list_operations(registry, options);
 
     Context context;
-    if (!context.load(options.input, error)) {
+    if (!load_selected_context(registry, context, options, error)) {
       std::cerr << error << '\n';
       return 2;
     }
@@ -224,14 +263,12 @@ int main(int argc, char **argv) {
     if (!options.input_path_after_load.empty())
       context.replace_input_path_for_test(options.input_path_after_load);
     context.force_input_read_failure_for_test(options.force_input_read_failure);
-    if (options.source == "mmap" && !context.mmap_ready()) {
-      std::cerr << "mmap source is unavailable for this build or input\n";
-      return 2;
-    }
     if (options.verify)
       return verify_operations(registry, context, options);
     if (options.observer_audit)
       return audit_observers(registry, context, options);
+    if (options.preparation_audit)
+      return audit_preparation(context);
 
     benchmark::Initialize(&argc, argv);
     if (benchmark::ReportUnrecognizedArguments(argc, argv))

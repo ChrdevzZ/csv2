@@ -63,88 +63,191 @@ std::ostream &operator<<(std::ostream &stream, const StreamableField &field) {
 }
 
 Context::Context()
-    : mmap_ready_(false), decoded_row_count_(0), decoded_cell_count_(0),
+    : input_size_(0), mmap_ready_(false), decoded_row_count_(0), decoded_cell_count_(0),
       output_stream_(&output_buffer_), force_output_stream_failure_(false),
-      force_input_read_failure_(false) {}
+      force_input_read_failure_(false), prepared_mask_(prepare_none),
+      prepared_sources_(source_none) {}
 
-bool Context::load(const std::string &path, std::string &error) {
-  std::ifstream input(path.c_str(), std::ios::binary);
+bool Context::load(const std::string &path, unsigned requirements, unsigned sources,
+                   std::string &error) {
+  input_path_ = path;
+  dataset_name_ = filename_from_path(path);
+  input_size_ = 0;
+  data_.clear();
+  mmap_ready_ = false;
+  decoded_rows_.clear();
+  streamable_rows_.clear();
+  decoded_row_count_ = 0;
+  decoded_cell_count_ = 0;
+  string_scratch_.clear();
+  vector_scratch_.clear();
+  output_buffer_.reserve(0);
+  prepared_mask_ = prepare_none;
+  prepared_sources_ = sources;
+
+  std::ifstream input(path.c_str(), std::ios::binary | std::ios::ate);
   if (!input) {
     error = "unable to open input: " + path;
     return false;
   }
-  data_.assign(std::istreambuf_iterator<char>(input), std::istreambuf_iterator<char>());
-  if (!input.eof() && input.fail()) {
-    error = "unable to read input: " + path;
+  const std::streamoff length = input.tellg();
+  if (length < 0 || static_cast<std::uintmax_t>(length) >
+                        static_cast<std::uintmax_t>((std::numeric_limits<std::size_t>::max)())) {
+    error = "unable to determine input size: " + path;
     return false;
   }
-  if (data_.empty()) {
+  input_size_ = static_cast<std::size_t>(length);
+  if (input_size_ == 0) {
     error = "benchmark input must not be empty";
     return false;
   }
-  if (!buffer_reader_.parse_borrowed(data_.data(), data_.size())) {
-    error = "unable to create borrowed reader";
-    return false;
-  }
 
-  input_path_ = path;
-  dataset_name_ = filename_from_path(path);
+  const bool buffer_reader_requested =
+      (requirements & prepare_reader) != 0 && (sources & source_buffer) != 0;
+  const bool mmap_reader_requested =
+      (requirements & prepare_reader) != 0 && (sources & source_mmap) != 0;
+  const bool data_requested = (requirements & prepare_data) != 0 || buffer_reader_requested;
+  const bool mapping_requested =
+      (requirements & prepare_mapping) != 0 || mmap_reader_requested;
+
+  if (data_requested) {
+    input.seekg(0, std::ios::beg);
+    data_.assign(std::istreambuf_iterator<char>(input), std::istreambuf_iterator<char>());
+    if ((!input.eof() && input.fail()) || data_.size() != input_size_) {
+      error = "unable to read a stable input: " + path;
+      return false;
+    }
+    prepared_mask_ |= prepare_data;
+  }
+  if (buffer_reader_requested) {
+    if (!buffer_reader_.parse_borrowed(data_.data(), data_.size())) {
+      error = "unable to create borrowed reader";
+      return false;
+    }
+    prepared_mask_ |= prepare_reader;
+  }
 
 #if CSV2_HAS_MMAP
-  std::error_code mmap_error;
-  mapping_ = mio::make_mmap_source(path, mmap_error);
-  mmap_ready_ = !mmap_error && !mapping_.empty() &&
-                mmap_reader_.parse_borrowed(mapping_.data(), mapping_.size());
-  if (!mmap_ready_ && mmap_error)
-    error = "mmap unavailable for input: " + mmap_error.message();
+  if (mapping_requested) {
+    std::error_code mmap_error;
+    mapping_ = mio::make_mmap_source(path, mmap_error);
+    mmap_ready_ = !mmap_error && !mapping_.empty();
+    if (!mmap_ready_) {
+      error = "mmap unavailable for input: " + mmap_error.message();
+      return false;
+    }
+    prepared_mask_ |= prepare_mapping;
+    if (mmap_reader_requested) {
+      if (!mmap_reader_.parse_borrowed(mapping_.data(), mapping_.size())) {
+        error = "unable to create mmap reader";
+        return false;
+      }
+      prepared_mask_ |= prepare_reader;
+    }
+  }
 #else
-  mmap_ready_ = false;
+  if (mapping_requested) {
+    error = "mmap preparation requested in a no-mmap build";
+    return false;
+  }
 #endif
 
-  decoded_rows_.clear();
-  decoded_row_count_ = 0;
-  decoded_cell_count_ = 0;
   std::size_t decoded_bytes = 0;
-  for (const BenchmarkReader::Row row : buffer_reader_) {
-    std::vector<std::string> fields;
-    for (const BenchmarkReader::Cell cell : row) {
-      fields.push_back(std::string());
-      cell.copy_content_to(std::back_inserter(fields.back()));
-      decoded_bytes += fields.back().size();
-      ++decoded_cell_count_;
+  if ((requirements & prepare_decoded_rows) != 0) {
+    if (!buffer_reader_requested) {
+      error = "decoded rows require a prepared buffer reader";
+      return false;
     }
-    decoded_rows_.push_back(std::move(fields));
-    ++decoded_row_count_;
+    for (const BenchmarkReader::Row row : buffer_reader_) {
+      std::vector<std::string> fields;
+      for (const BenchmarkReader::Cell cell : row) {
+        fields.push_back(std::string());
+        cell.copy_content_to(std::back_inserter(fields.back()));
+        decoded_bytes += fields.back().size();
+        ++decoded_cell_count_;
+      }
+      decoded_rows_.push_back(std::move(fields));
+      ++decoded_row_count_;
+    }
+    prepared_mask_ |= prepare_decoded_rows;
   }
 
-  streamable_rows_.clear();
-  streamable_rows_.reserve(decoded_rows_.size());
-  for (const std::vector<std::string> &row : decoded_rows_) {
-    std::vector<StreamableField> fields;
-    fields.reserve(row.size());
-    for (const std::string &field : row)
-      fields.push_back(StreamableField{&field});
-    streamable_rows_.push_back(std::move(fields));
+  if ((requirements & prepare_streamable_rows) != 0) {
+    if ((prepared_mask_ & prepare_decoded_rows) == 0) {
+      error = "streamable rows require decoded rows";
+      return false;
+    }
+    streamable_rows_.reserve(decoded_rows_.size());
+    for (const std::vector<std::string> &row : decoded_rows_) {
+      std::vector<StreamableField> fields;
+      fields.reserve(row.size());
+      for (const std::string &field : row)
+        fields.push_back(StreamableField{&field});
+      streamable_rows_.push_back(std::move(fields));
+    }
+    prepared_mask_ |= prepare_streamable_rows;
   }
 
-  string_scratch_.clear();
-  string_scratch_.reserve(data_.size());
-  vector_scratch_.clear();
-  vector_scratch_.reserve(data_.size());
+  if ((requirements & prepare_string_scratch) != 0) {
+    string_scratch_.reserve(input_size_);
+    prepared_mask_ |= prepare_string_scratch;
+  }
+  if ((requirements & prepare_vector_scratch) != 0) {
+    vector_scratch_.reserve(input_size_);
+    prepared_mask_ |= prepare_vector_scratch;
+  }
 
-  const std::size_t overhead = decoded_rows_.size() * 2 + 64;
-  if (decoded_bytes > (std::numeric_limits<std::size_t>::max)() - overhead) {
-    error = "input is too large to size the writer output buffer";
-    return false;
+  if ((requirements & prepare_output) != 0) {
+    const std::size_t maximum = (std::numeric_limits<std::size_t>::max)();
+    if (decoded_rows_.size() > (maximum - 64) / 2) {
+      error = "input has too many rows to size the writer output buffer";
+      return false;
+    }
+    const std::size_t overhead = decoded_rows_.size() * 2 + 64;
+    if (decoded_bytes > maximum - overhead) {
+      error = "input is too large to size the writer output buffer";
+      return false;
+    }
+    const std::size_t minimum_capacity = decoded_bytes + overhead;
+    if (input_size_ > (maximum - overhead) / 3) {
+      error = "input is too large to size the escaped writer output buffer";
+      return false;
+    }
+    const std::size_t escaped_capacity = input_size_ * 3 + overhead;
+    output_buffer_.reserve((std::max)(minimum_capacity, escaped_capacity));
+    prepared_mask_ |= prepare_output;
   }
-  const std::size_t minimum_capacity = decoded_bytes + overhead;
-  if (data_.size() > ((std::numeric_limits<std::size_t>::max)() - overhead) / 3) {
-    error = "input is too large to size the escaped writer output buffer";
-    return false;
-  }
-  const std::size_t escaped_capacity = data_.size() * 3 + overhead;
-  output_buffer_.reserve((std::max)(minimum_capacity, escaped_capacity));
   return true;
+}
+
+std::string Context::preparation_description() const {
+  if (prepared_mask_ == prepare_none)
+    return "metadata-only";
+  std::string result;
+  const auto append = [&result](const char *name) {
+    if (!result.empty())
+      result += ',';
+    result += name;
+  };
+  if ((prepared_mask_ & prepare_data) != 0)
+    append("data");
+  if ((prepared_mask_ & prepare_reader) != 0 && (prepared_sources_ & source_buffer) != 0)
+    append("buffer-reader");
+  if ((prepared_mask_ & prepare_mapping) != 0)
+    append("mapping");
+  if ((prepared_mask_ & prepare_reader) != 0 && (prepared_sources_ & source_mmap) != 0)
+    append("mmap-reader");
+  if ((prepared_mask_ & prepare_decoded_rows) != 0)
+    append("decoded-rows");
+  if ((prepared_mask_ & prepare_streamable_rows) != 0)
+    append("streamable-rows");
+  if ((prepared_mask_ & prepare_string_scratch) != 0)
+    append("string-scratch");
+  if ((prepared_mask_ & prepare_vector_scratch) != 0)
+    append("vector-scratch");
+  if ((prepared_mask_ & prepare_output) != 0)
+    append("output");
+  return result;
 }
 
 const BenchmarkReader &Context::reader(Source source) const {
@@ -179,6 +282,8 @@ bool parse_options(int &argc, char **argv, Options &options, std::string &error)
       options.list = true;
     } else if (argument == "--csv2-observer-audit") {
       options.observer_audit = true;
+    } else if (argument == "--csv2-preparation-audit") {
+      options.preparation_audit = true;
     } else if (argument == "--csv2-test-output-capacity") {
       std::string value;
       if (!take_value(index, argc, argv, "--csv2-test-output-capacity", value, error))

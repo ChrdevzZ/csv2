@@ -70,9 +70,12 @@ void register_index_operations(Registry &registry) {
 #if CSV2_HAS_MMAP
   sources |= source_mmap;
 #endif
-  registry.add("index/build", sources, build<false>, build<true>);
-  registry.add("index/sequential", sources, sequential<false>, sequential<true>);
-  registry.add("index/random", sources, random_lookup<false>, random_lookup<true>);
+  registry.add("index/build", sources, prepare_reader, OperationScope::index, build<false>,
+               build<true>);
+  registry.add("index/sequential", sources, prepare_reader, OperationScope::index,
+               sequential<false>, sequential<true>);
+  registry.add("index/random", sources, prepare_reader, OperationScope::index,
+               random_lookup<false>, random_lookup<true>);
 }
 
 } // namespace csv2_benchmark

@@ -67,10 +67,12 @@ void register_conversion_operations(Registry &registry) {
 #if CSV2_HAS_MMAP
   sources |= source_mmap;
 #endif
-  registry.add("conversion/integer-bool-error", sources, try_parse_integer<false>,
-               try_parse_integer<true>, true);
+  registry.add("conversion/integer-bool-error", sources, prepare_reader,
+               OperationScope::conversion, try_parse_integer<false>, try_parse_integer<true>,
+               true);
 #if CSV2_HAS_EXPECTED
-  registry.add("conversion/integer-expected", sources, parse_expected_integer<false>,
+  registry.add("conversion/integer-expected", sources, prepare_reader,
+               OperationScope::conversion, parse_expected_integer<false>,
                parse_expected_integer<true>, true);
 #endif
 }

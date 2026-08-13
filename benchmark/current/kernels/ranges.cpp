@@ -63,9 +63,11 @@ void register_ranges_operations(Registry &registry) {
 #if CSV2_HAS_MMAP
   sources |= source_mmap;
 #endif
-  registry.add("ranges/pipeline", sources, pipeline<false>, pipeline<true>, true);
+  registry.add("ranges/pipeline", sources, prepare_reader, OperationScope::ranges,
+               pipeline<false>, pipeline<true>, true);
 #if CSV2_HAS_RANGES_TO_CONTAINER
-  registry.add("ranges/to-container", sources, to_container<false>, to_container<true>);
+  registry.add("ranges/to-container", sources, prepare_reader, OperationScope::ranges,
+               to_container<false>, to_container<true>);
 #endif
 #else
   (void)registry;
