@@ -6,7 +6,7 @@ using namespace csv2_test;
 #if CSV2_HAS_MMAP
 CSV2_TEST_CASE("reader.source.read-a-file-its-header-rows-columns-and-cells", "reader.source") {
   ReaderWithHeader reader;
-  CSV2_REQUIRE(reader.mmap("inputs/test_01.csv"));
+  CSV2_REQUIRE(reader.mmap(fixture_path("test_01.csv")));
 
   CSV2_REQUIRE(read_cells(reader.header()) == std::vector<std::string>({"a", "b", "c"}));
   CSV2_REQUIRE(reader.cols() == 3);
@@ -205,11 +205,11 @@ CSV2_TEST_CASE("reader.source.clear-old-input-when-replacing-a-source-or-a-sourc
 
 #if CSV2_HAS_MMAP
   CSV2_REQUIRE(reader.parse(borrowed));
-  CSV2_REQUIRE_FALSE(reader.mmap("inputs/this-file-does-not-exist.csv"));
+  CSV2_REQUIRE_FALSE(reader.mmap(fixture_path("this-file-does-not-exist.csv")));
   CSV2_REQUIRE(reader.rows() == 0);
 
   CSV2_REQUIRE(reader.parse(borrowed));
-  CSV2_REQUIRE_FALSE(reader.mmap("inputs/empty.csv"));
+  CSV2_REQUIRE_FALSE(reader.mmap(fixture_path("empty.csv")));
   CSV2_REQUIRE(reader.rows() == 0);
 #endif
 }

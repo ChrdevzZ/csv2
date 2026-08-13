@@ -2,3 +2,5 @@
 
 *.png binary
 benchmark/fixtures/*.csv -text -eol whitespace=-trailing-space
+test/fixtures/**/*.csv -text
+benchmark/datasets/fixtures/**/*.csv -text
