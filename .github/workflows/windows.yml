@@ -105,7 +105,7 @@ jobs:
         run: >-
           ctest --test-dir build
           -C ${{ matrix.configuration }}
-          --output-junit build/ctest.xml
+          --output-junit ctest.xml
           --output-on-failure
 
       - name: Test with sanitizers

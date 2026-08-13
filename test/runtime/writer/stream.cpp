@@ -218,9 +218,7 @@ CSV2_TEST_CASE(
   CSV2_REQUIRE(explicit_stream.close_count == 1);
 
   ThrowingCloseStream destructor_stream;
-  {
-    ThrowingWriter writer(destructor_stream);
-  }
+  { ThrowingWriter writer(destructor_stream); }
   CSV2_REQUIRE(destructor_stream.close_count == 1);
 }
 #endif

@@ -69,7 +69,7 @@ jobs:
         run: cmake --build build --parallel
 
       - name: Test
-        run: ctest --test-dir build --output-on-failure --output-junit build/ctest.xml
+        run: ctest --test-dir build --output-on-failure --output-junit ctest.xml
 
       - name: Install package
         run: cmake --install build --prefix build/install
@@ -147,7 +147,7 @@ jobs:
           ctest --test-dir build
           -L sanitizer-runtime
           --no-tests=error
-          --output-junit build/ctest.xml
+          --output-junit ctest.xml
           --output-on-failure
 
   clang:
@@ -203,7 +203,7 @@ jobs:
         if: matrix.sanitizers == 'OFF'
         run: >-
           ctest --test-dir build --output-on-failure
-          --output-junit build/ctest.xml
+          --output-junit ctest.xml
 
       - name: Test with ASan and UBSan
         if: matrix.sanitizers == 'ON'
@@ -217,7 +217,7 @@ jobs:
           ctest --test-dir build
           -L sanitizer-runtime
           --no-tests=error
-          --output-junit build/ctest.xml
+          --output-junit ctest.xml
           --output-on-failure
 
       - name: Check first-party C++ formatting

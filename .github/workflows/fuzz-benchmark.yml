@@ -53,7 +53,7 @@ jobs:
       - name: Run deterministic fuzz smoke
         run: >-
           ctest --test-dir build -L fuzz-smoke --no-tests=error
-          --output-on-failure --output-junit build/fuzz-smoke.xml
+          --output-on-failure --output-junit fuzz-smoke.xml
 
       - name: Run libFuzzer corpus smoke
         env:
@@ -68,7 +68,7 @@ jobs:
           ctest --test-dir build
           -L benchmark-checksum
           --no-tests=error
-          --output-junit build/benchmark-checksum.xml
+          --output-junit benchmark-checksum.xml
           --output-on-failure
 
       - name: Verify no-mmap benchmark configuration
@@ -90,7 +90,7 @@ jobs:
             csv2_common_benchmark
           ctest --test-dir build-no-mmap -L benchmark-checksum \
             --no-tests=error --output-on-failure \
-            --output-junit build-no-mmap/benchmark-checksum.xml
+            --output-junit benchmark-checksum.xml
           if ctest --test-dir build-no-mmap -N | \
               grep -E 'csv2\.benchmark\.current\.mmap'; then
             echo "mmap checksum tests were registered in a no-mmap build" >&2

@@ -67,7 +67,7 @@ jobs:
         run: >-
           ctest --test-dir build --output-on-failure
           --no-tests=error
-          --output-junit build/full-ctest.xml
+          --output-junit full-ctest.xml
 
       - name: Run extended libFuzzer corpus
         if: matrix.fuzzers == 'ON'
@@ -139,7 +139,7 @@ jobs:
         run: >-
           ctest --test-dir build -C Release --output-on-failure
           --no-tests=error
-          --output-junit build/full-ctest.xml
+          --output-junit full-ctest.xml
 
       - name: Install and audit package contents
         shell: pwsh
@@ -204,7 +204,7 @@ jobs:
           cmake --build build --parallel
           ctest --test-dir build --output-on-failure \
             --no-tests=error \
-            --output-junit build/full-ctest.xml
+            --output-junit full-ctest.xml
 
       - name: Install and audit package contents
         run: |
