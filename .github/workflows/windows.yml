@@ -40,7 +40,7 @@ jobs:
             expected_version: "19.51"
             require_cxx26: "OFF"
             install: true
-          - compiler: MSVC 19.51 ASan
+          - compiler: MSVC 19.51 / ASan
             configuration: Release
             toolset: ""
             benchmarks: "OFF"
@@ -60,7 +60,7 @@ jobs:
             expected_version: "22.1"
             require_cxx26: "ON"
             install: false
-          - compiler: Clang-CL 22.1 ASan + UBSan
+          - compiler: Clang-CL 22.1 / ASan + UBSan
             configuration: Release
             toolset: -T ClangCL
             benchmarks: "OFF"
