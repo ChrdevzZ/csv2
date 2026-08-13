@@ -267,11 +267,11 @@ endforeach()
 
 csv2_add_benchmark_check(csv2.benchmark.common.protocol
   COMMAND csv2_common_benchmark --describe
-  PASS_REGEX "protocol=csv2-common-v2")
+  PASS_REGEX "protocol=csv2-common-v3.*operation_contracts=rows_cells:traversal_only:")
 csv2_add_benchmark_check(csv2.benchmark.common.rows_cells
   COMMAND csv2_common_benchmark --operation rows_cells
     --input ${csv2_check_fixture} --source buffer --iterations 1
-  PASS_REGEX "protocol=csv2-common-v2.*rows=3.*cells=9")
+  PASS_REGEX "protocol=csv2-common-v3.*rows=3.*cells=9.*timed_reader_steps=[1-9][0-9]*")
 
 foreach(csv2_common_writer_operation IN ITEMS
     legacy_writer_raw

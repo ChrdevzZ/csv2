@@ -1,6 +1,6 @@
 """CSV2 benchmark provenance, comparison, and fixed-machine tooling."""
 
-COMMON_PROTOCOL = "csv2-common-v2"
+COMMON_PROTOCOL = "csv2-common-v3"
 CURRENT_PROTOCOL = "csv2-current-v2"
 COMPARISON_SCHEMA = "csv2-benchmark-report-v3"
 METRICS_SCHEMA = "csv2-fixed-machine-metrics-v3"

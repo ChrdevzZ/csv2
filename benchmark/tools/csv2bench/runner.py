@@ -43,6 +43,7 @@ RESULT_FIELDS = {
     "cells",
     "row_bytes",
     "checksum",
+    "timed_reader_steps",
 }
 
 Executable = Path | Sequence[Path | str]
@@ -156,11 +157,6 @@ def parse_output(output: str) -> dict[str, str]:
     return result
 
 
-def validate_case_matrix(operations: Sequence[str], sources: Sequence[str]) -> None:
-    if "legacy_mmap_rows_cells" in operations and "mmap" not in sources:
-        raise ValueError("legacy_mmap_rows_cells requires source mmap")
-
-
 def run_command(command: list[str]) -> subprocess.CompletedProcess[str]:
     completed = subprocess.run(command, capture_output=True, text=True)
     if completed.returncode != 0:
@@ -206,8 +202,7 @@ def describe(executable: Executable) -> dict[str, str]:
             "revision",
             "operations",
             "sources",
-            "prepared_scope",
-            "legacy_scope",
+            "operation_contracts",
         },
     )
     if result["protocol"] != PROTOCOL:
@@ -313,15 +308,10 @@ def validate_result(
     source: str,
     iterations: int,
     *,
+    expected_scope: str,
     expected_bytes: int,
     expected_revision: str | None = None,
 ) -> float:
-    if operation == "rows_cells":
-        expected_scope = "traversal_only"
-    elif operation == "legacy_mmap_rows_cells":
-        expected_scope = "mmap_and_traversal"
-    else:
-        expected_scope = "writer_only"
     expected = {
         "protocol": PROTOCOL,
         "operation": operation,
@@ -346,6 +336,7 @@ def validate_result(
         cells = int(result["cells"])
         row_bytes = int(result["row_bytes"])
         checksum = int(result["checksum"])
+        timed_reader_steps = int(result["timed_reader_steps"])
     except (KeyError, ValueError) as error:
         raise RuntimeError("benchmark numeric fields must be integers") from error
     if (
@@ -356,12 +347,15 @@ def validate_result(
         or cells < 0
         or row_bytes < 0
         or checksum < 0
+        or timed_reader_steps < 0
         or any(
             value > UINT64_MAX
             for value in (byte_count, rows, cells, row_bytes, checksum)
         )
     ):
         raise RuntimeError("benchmark numeric fields are outside their valid range")
+    if expected_scope == "writer_only" and timed_reader_steps != 0:
+        raise RuntimeError("writer-only benchmark traversed Reader state inside the timer")
     if expected_bytes <= 0:
         raise ValueError("expected dataset byte count must be positive")
     if byte_count != expected_bytes:
@@ -390,6 +384,7 @@ def measure_case(
     runs: int,
     iterations: int,
     warmups: int,
+    expected_scope: str,
     invoke_fn: Invoke = invoke,
     calibration_noise: float = 0.0,
     baseline_revision: str | None = None,
@@ -420,6 +415,7 @@ def measure_case(
             operation,
             source,
             iterations,
+            expected_scope=expected_scope,
             expected_bytes=expected_bytes,
             expected_revision=expected_revision,
         )
@@ -733,6 +729,23 @@ def main() -> None:
         parser.error("baseline executable revision does not match --baseline-revision")
     if candidate_description["revision"] != args.candidate_revision:
         parser.error("candidate executable revision does not match --candidate-revision")
+    try:
+        baseline_contracts = wire.parse_operation_contracts(
+            baseline_description["operation_contracts"]
+        )
+        candidate_contracts = wire.parse_operation_contracts(
+            candidate_description["operation_contracts"]
+        )
+        if baseline_contracts != candidate_contracts:
+            raise RuntimeError("baseline and candidate operation contracts differ")
+        for description, contracts, side in (
+            (baseline_description, baseline_contracts, "baseline"),
+            (candidate_description, candidate_contracts, "candidate"),
+        ):
+            if set(description["operations"].split(",")) != set(contracts):
+                raise RuntimeError(f"{side} operation list and contracts differ")
+    except RuntimeError as error:
+        parser.error(str(error))
 
     baseline_artifact = artifact_metadata(args.baseline, args.baseline_revision)
     candidate_artifact = artifact_metadata(args.candidate, args.candidate_revision)
@@ -746,7 +759,6 @@ def main() -> None:
         datasets = selected(args.files, (name for name, _ in dataset_paths))
         operations = selected(args.operations, OPERATIONS)
         sources = selected(args.sources, SOURCES)
-        validate_case_matrix(operations, sources)
     except ValueError as error:
         parser.error(str(error))
 
@@ -760,6 +772,8 @@ def main() -> None:
             parser.error(f"{side} executable lacks a requested operation")
         if not set(sources) <= supported_sources:
             parser.error(f"{side} executable lacks a requested source")
+        if not set(operations) <= set(baseline_contracts):
+            parser.error(f"{side} executable lacks a requested operation contract")
 
     calibration_noise: dict[str, float] = {}
     calibration_metadata: dict[str, object] | None = None
@@ -811,7 +825,12 @@ def main() -> None:
             validate_calibration_context(calibration_report, report)
         for dataset_name in datasets:
             for operation in operations:
-                case_sources = ["mmap"] if operation == "legacy_mmap_rows_cells" else sources
+                expected_scope, supported_sources = baseline_contracts[operation]
+                case_sources = [source for source in sources if source in supported_sources]
+                if not case_sources:
+                    raise RuntimeError(
+                        f"operation contract rejects every source for {operation}"
+                    )
                 for source in case_sources:
                     key = case_key(dataset_name, operation, source)
                     if args.calibration and key not in calibration_noise:
@@ -827,6 +846,7 @@ def main() -> None:
                         args.runs,
                         args.iterations,
                         args.warmups,
+                        expected_scope,
                         calibration_noise=calibration_noise.get(key, 0.0),
                         baseline_revision=args.baseline_revision,
                         candidate_revision=args.candidate_revision,

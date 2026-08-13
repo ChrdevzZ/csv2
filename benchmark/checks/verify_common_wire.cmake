@@ -24,11 +24,15 @@ if(NOT csv2_result EQUAL 0)
 endif()
 
 set(csv2_expected_fields
-  "protocol=csv2-common-v2"
+  "protocol=csv2-common-v3"
   "operation=${CSV2_BENCHMARK_OPERATION}"
   "scope=writer_only"
   "source=buffer"
   "iterations=2"
+  "rows=2"
+  "cells=6"
+  "row_bytes=36"
+  "timed_reader_steps=0"
   "checksum=${CSV2_EXPECTED_CHECKSUM}")
 foreach(expected_field IN LISTS csv2_expected_fields)
   string(REPLACE "=" ";" field_parts "${expected_field}")

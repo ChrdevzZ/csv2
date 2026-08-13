@@ -42,6 +42,29 @@ def parse_common(output: str, required: Iterable[str]) -> dict[str, str]:
     return result
 
 
+def parse_operation_contracts(encoded: str) -> dict[str, tuple[str, frozenset[str]]]:
+    contracts: dict[str, tuple[str, frozenset[str]]] = {}
+    if not encoded:
+        raise RuntimeError("operation contracts must not be empty")
+    for entry in encoded.split(";"):
+        parts = entry.split(":")
+        if len(parts) != 3 or not all(parts):
+            raise RuntimeError(f"malformed operation contract: {entry!r}")
+        operation, scope, encoded_sources = parts
+        if operation in contracts:
+            raise RuntimeError(f"duplicate operation contract: {operation}")
+        if scope not in {"traversal_only", "mmap_and_traversal", "writer_only"}:
+            raise RuntimeError(f"unsupported operation scope: {scope}")
+        source_entries = encoded_sources.split("+")
+        if (
+            any(source not in {"buffer", "mmap"} for source in source_entries)
+            or len(source_entries) != len(set(source_entries))
+        ):
+            raise RuntimeError(f"invalid operation sources: {encoded_sources}")
+        contracts[operation] = (scope, frozenset(source_entries))
+    return contracts
+
+
 def parse_current(output: str) -> dict[str, str]:
     required = {
         "protocol",
@@ -364,7 +387,7 @@ def validate_comparison_report(report: object) -> None:
     )
 
     revisions: list[str] = []
-    capabilities: list[tuple[set[str], set[str]]] = []
+    capabilities: list[dict[str, tuple[str, frozenset[str]]]] = []
     for side in ("baseline", "candidate"):
         side_document = _object(document[side], f"comparison report.{side}")
         _required(
@@ -380,10 +403,10 @@ def validate_comparison_report(report: object) -> None:
         )
         _required(
             description,
-            {"protocol", "revision", "operations", "sources"},
+            {"protocol", "revision", "operations", "sources", "operation_contracts"},
             f"comparison report.{side}.description",
         )
-        if description["protocol"] != "csv2-common-v2":
+        if description["protocol"] != COMMON_PROTOCOL:
             raise RuntimeError(f"comparison report.{side} protocol is invalid")
         if description["revision"] != artifact["revision"]:
             raise RuntimeError(f"comparison report.{side} revision is inconsistent")
@@ -392,7 +415,21 @@ def validate_comparison_report(report: object) -> None:
         sources = {entry for entry in str(description["sources"]).split(",") if entry}
         if not operations or not sources:
             raise RuntimeError(f"comparison report.{side} capabilities are empty")
-        capabilities.append((operations, sources))
+        contracts = parse_operation_contracts(str(description["operation_contracts"]))
+        if set(contracts) != operations:
+            raise RuntimeError(
+                f"comparison report.{side} operation list and contracts differ"
+            )
+        contract_sources = {
+            source
+            for _, supported_sources in contracts.values()
+            for source in supported_sources
+        }
+        if sources != contract_sources:
+            raise RuntimeError(
+                f"comparison report.{side} source list and contracts differ"
+            )
+        capabilities.append(contracts)
         _invocation(
             side_document["description_invocation"],
             f"comparison report.{side}.description_invocation",
@@ -443,11 +480,16 @@ def validate_comparison_report(report: object) -> None:
         if case_key in case_keys:
             raise RuntimeError("comparison report contains duplicate cases")
         case_keys.add(case_key)
+        operation_capabilities = [contracts.get(operation) for contracts in capabilities]
         if any(
-            operation not in supported_operations or source not in supported_sources
-            for supported_operations, supported_sources in capabilities
+            contract is None or source not in contract[1]
+            for contract in operation_capabilities
         ):
             raise RuntimeError(f"{label} is not supported by both artifacts")
+        expected_scopes = {contract[0] for contract in operation_capabilities if contract}
+        if len(expected_scopes) != 1:
+            raise RuntimeError(f"{label} scope differs between artifacts")
+        expected_scope = next(iter(expected_scopes))
         signature_values = _array(
             case["semantic_signature"], f"{label}.semantic_signature"
         )
@@ -538,28 +580,27 @@ def validate_comparison_report(report: object) -> None:
             result_fields = {
                 "protocol", "revision", "operation", "scope", "source", "bytes",
                 "iterations", "elapsed_ns", "rows", "cells", "row_bytes", "checksum",
+                "timed_reader_steps",
             }
             _required(result, result_fields, f"{launch_label}.result")
-            if result["protocol"] != "csv2-common-v2":
+            if result["protocol"] != COMMON_PROTOCOL:
                 raise RuntimeError(f"{launch_label}.result protocol is invalid")
             expected_revision = revisions[0 if side == "baseline" else 1]
             if result["revision"] != expected_revision:
                 raise RuntimeError(f"{launch_label}.result revision is inconsistent")
             if result["operation"] != operation or result["source"] != source:
                 raise RuntimeError(f"{launch_label}.result context is inconsistent")
-            expected_scope = (
-                "traversal_only"
-                if operation == "rows_cells"
-                else "mmap_and_traversal"
-                if operation == "legacy_mmap_rows_cells"
-                else "writer_only"
-            )
             if result["scope"] != expected_scope:
                 raise RuntimeError(f"{launch_label}.result scope is inconsistent")
             for field in (
-                "bytes", "iterations", "rows", "cells", "row_bytes", "checksum"
+                "bytes", "iterations", "rows", "cells", "row_bytes", "checksum",
+                "timed_reader_steps",
             ):
                 _uint64_string(result[field], f"{launch_label}.result.{field}")
+            if expected_scope == "writer_only" and result["timed_reader_steps"] != "0":
+                raise RuntimeError(
+                    f"{launch_label}.result performed Reader work in writer-only scope"
+                )
             result_signature = tuple(
                 result[field]
                 for field in ("bytes", "iterations", "rows", "cells", "row_bytes", "checksum")

@@ -21,10 +21,11 @@ namespace {
 using CommonReader = csv2::Reader<csv2::delimiter<','>, csv2::quote_character<'"'>,
                                   csv2::first_row_is_header<false>>;
 
-const char protocol[] = "csv2-common-v2";
+const char protocol[] = "csv2-common-v3";
 volatile std::uint64_t benchmark_sink = 0;
 bool timed_phase = false;
 std::uint64_t timed_checksum_mix_calls = 0;
+std::uint64_t timed_reader_steps = 0;
 
 struct Options {
   std::string operation;
@@ -171,9 +172,13 @@ std::uint64_t file_size(const std::string &path) {
 Observation traverse(const CommonReader &reader) {
   Observation result;
   for (const auto row : reader) {
+    if (timed_phase)
+      ++timed_reader_steps;
     ++result.rows;
     result.row_bytes += static_cast<std::uint64_t>(row.length());
     for (const auto cell : row) {
+      if (timed_phase)
+        ++timed_reader_steps;
       (void)cell;
       ++result.cells;
     }
@@ -211,32 +216,35 @@ void extract_raw_rows(const CommonReader &reader, StringRows &rows) {
 }
 
 #if defined(CSV2_BENCHMARK_ENABLE_MODERN_WRITER_OPERATIONS)
-struct RawDirectField {
+struct RawFieldReference {
   const char *bytes;
   std::size_t length;
-  const char *data() const noexcept { return bytes; }
-  std::size_t size() const noexcept { return length; }
+};
+
+typedef std::vector<std::vector<RawFieldReference>> RawRows;
+
+struct RawDirectField {
+  const RawFieldReference *field;
+  const char *data() const noexcept { return field->bytes; }
+  std::size_t size() const noexcept { return field->length; }
 };
 
 struct RawStreamableField {
-  const char *bytes;
-  std::size_t length;
-  const char *data() const noexcept { return bytes; }
-  std::size_t size() const noexcept { return length; }
+  const RawFieldReference *field;
 };
 
 std::ostream &operator<<(std::ostream &output, const RawStreamableField &field) {
-  return output.write(field.data(), static_cast<std::streamsize>(field.size()));
+  return output.write(field.field->bytes, static_cast<std::streamsize>(field.field->length));
 }
 
-template <class Row, class Field> class RawRow {
-  Row row_;
+template <class Field> class PreparedRawRow {
+  const std::vector<RawFieldReference> *row_;
 
 public:
-  explicit RawRow(Row row) : row_(row) {}
+  explicit PreparedRawRow(const std::vector<RawFieldReference> &row) : row_(&row) {}
 
   class iterator {
-    typename Row::CellIterator current_;
+    std::vector<RawFieldReference>::const_iterator current_;
 
   public:
     typedef Field value_type;
@@ -246,10 +254,10 @@ public:
     typedef std::input_iterator_tag iterator_category;
 
     iterator() {}
-    explicit iterator(typename Row::CellIterator current) : current_(current) {}
+    explicit iterator(std::vector<RawFieldReference>::const_iterator current)
+        : current_(current) {}
     Field operator*() const {
-      const typename Row::Cell cell = *current_;
-      Field field = {cell.raw_data(), cell.raw_size()};
+      Field field = {&*current_};
       return field;
     }
     iterator &operator++() {
@@ -260,9 +268,21 @@ public:
     bool operator!=(const iterator &other) const { return !(*this == other); }
   };
 
-  iterator begin() const { return iterator(row_.begin()); }
-  iterator end() const { return iterator(row_.end()); }
+  iterator begin() const { return iterator(row_->begin()); }
+  iterator end() const { return iterator(row_->end()); }
 };
+
+void extract_raw_references(const CommonReader &reader, RawRows &rows) {
+  rows.clear();
+  for (const auto row : reader) {
+    rows.push_back(std::vector<RawFieldReference>());
+    std::vector<RawFieldReference> &result_row = rows.back();
+    for (const auto cell : row) {
+      RawFieldReference reference = {cell.raw_data(), cell.raw_size()};
+      result_row.push_back(reference);
+    }
+  }
+}
 
 struct StreamableStringField {
   const std::string &value;
@@ -347,6 +367,7 @@ bool run_prepared(const Options &options, Observation &result, std::uint64_t &ch
   checksum = semantic_checksum(reader);
 
   timed_checksum_mix_calls = 0;
+  timed_reader_steps = 0;
   const std::chrono::steady_clock::time_point start = std::chrono::steady_clock::now();
   timed_phase = true;
   for (std::size_t run = 0; run < options.iterations; ++run) {
@@ -377,6 +398,7 @@ bool run_legacy_mmap(const Options &options, Observation &result, std::uint64_t 
 
   elapsed_ns = 0;
   timed_checksum_mix_calls = 0;
+  timed_reader_steps = 0;
   for (std::size_t run = 0; run < options.iterations; ++run) {
     const std::chrono::steady_clock::time_point start = std::chrono::steady_clock::now();
     timed_phase = true;
@@ -414,11 +436,17 @@ bool run_writer(const Options &options, Observation &result, std::uint64_t &chec
 
   const Observation sample = traverse(reader);
   StringRows prepared_rows;
+#if defined(CSV2_BENCHMARK_ENABLE_MODERN_WRITER_OPERATIONS)
+  RawRows prepared_raw_rows;
+#endif
   if (options.operation == "legacy_writer_raw")
     extract_raw_rows(reader, prepared_rows);
 #if defined(CSV2_BENCHMARK_ENABLE_MODERN_WRITER_OPERATIONS)
   else if (is_escaped_writer_operation(options.operation))
     extract_decoded_rows(reader, prepared_rows);
+  else if (options.operation == "writer_raw_direct" ||
+           options.operation == "writer_raw_streamable")
+    extract_raw_references(reader, prepared_raw_rows);
   else if (!is_modern_writer_operation(options.operation))
     return false;
 #else
@@ -432,6 +460,7 @@ bool run_writer(const Options &options, Observation &result, std::uint64_t &chec
   FixedOutputBuffer buffer(capacity);
   std::ostream output(&buffer);
   timed_checksum_mix_calls = 0;
+  timed_reader_steps = 0;
   const std::chrono::steady_clock::time_point start = std::chrono::steady_clock::now();
   timed_phase = true;
   if (options.operation == "legacy_writer_raw") {
@@ -450,8 +479,9 @@ bool run_writer(const Options &options, Observation &result, std::uint64_t &chec
     for (std::size_t run = 0; run < options.iterations; ++run) {
       buffer.reset();
       output.clear();
-      for (const auto row : reader)
-        writer.write_row(RawRow<CommonReader::Row, RawDirectField>(row));
+      for (RawRows::const_iterator row = prepared_raw_rows.begin();
+           row != prepared_raw_rows.end(); ++row)
+        writer.write_row(PreparedRawRow<RawDirectField>(*row));
     }
   } else if (options.operation == "writer_raw_streamable") {
     csv2::basic_writer<csv2::delimiter<','>, std::ostream, csv2::stream_ownership::leave_open,
@@ -460,8 +490,9 @@ bool run_writer(const Options &options, Observation &result, std::uint64_t &chec
     for (std::size_t run = 0; run < options.iterations; ++run) {
       buffer.reset();
       output.clear();
-      for (const auto row : reader)
-        writer.write_row(RawRow<CommonReader::Row, RawStreamableField>(row));
+      for (RawRows::const_iterator row = prepared_raw_rows.begin();
+           row != prepared_raw_rows.end(); ++row)
+        writer.write_row(PreparedRawRow<RawStreamableField>(*row));
     }
   } else if (options.operation == "writer_escaped_direct") {
     csv2::EscapingWriter<csv2::delimiter<','>, std::ostream, csv2::stream_ownership::leave_open>
@@ -490,6 +521,8 @@ bool run_writer(const Options &options, Observation &result, std::uint64_t &chec
     return false;
   if (timed_checksum_mix_calls != 0)
     return false;
+  if (timed_reader_steps != 0)
+    return false;
 
   result.rows = sample.rows * options.iterations;
   result.cells = sample.cells * options.iterations;
@@ -499,12 +532,83 @@ bool run_writer(const Options &options, Observation &result, std::uint64_t &chec
   return true;
 }
 
-const char *operation_scope(const std::string &operation) {
-  if (operation == "rows_cells")
-    return "traversal_only";
-  if (operation == "legacy_mmap_rows_cells")
-    return "mmap_and_traversal";
-  return "writer_only";
+struct OperationContract {
+  const char *operation;
+  const char *scope;
+  const char *sources;
+};
+
+const OperationContract operation_contracts[] = {
+    {"rows_cells", "traversal_only",
+#if CSV2_HAS_MMAP
+     "buffer+mmap"
+#else
+     "buffer"
+#endif
+    },
+    {"legacy_writer_raw", "writer_only",
+#if CSV2_HAS_MMAP
+     "buffer+mmap"
+#else
+     "buffer"
+#endif
+    },
+#if defined(CSV2_BENCHMARK_ENABLE_MODERN_WRITER_OPERATIONS)
+    {"writer_raw_direct", "writer_only",
+#if CSV2_HAS_MMAP
+     "buffer+mmap"
+#else
+     "buffer"
+#endif
+    },
+    {"writer_raw_streamable", "writer_only",
+#if CSV2_HAS_MMAP
+     "buffer+mmap"
+#else
+     "buffer"
+#endif
+    },
+    {"writer_escaped_direct", "writer_only",
+#if CSV2_HAS_MMAP
+     "buffer+mmap"
+#else
+     "buffer"
+#endif
+    },
+    {"writer_escaped_streamable", "writer_only",
+#if CSV2_HAS_MMAP
+     "buffer+mmap"
+#else
+     "buffer"
+#endif
+    },
+#endif
+#if CSV2_HAS_MMAP
+    {"legacy_mmap_rows_cells", "mmap_and_traversal", "mmap"},
+#endif
+};
+
+const OperationContract *find_operation_contract(const std::string &operation) {
+  for (std::size_t index = 0;
+       index < sizeof(operation_contracts) / sizeof(operation_contracts[0]); ++index) {
+    if (operation == operation_contracts[index].operation)
+      return &operation_contracts[index];
+  }
+  return 0;
+}
+
+bool contract_supports_source(const OperationContract &contract, const std::string &source) {
+  const std::string sources(contract.sources);
+  std::string::size_type start = 0;
+  while (start <= sources.size()) {
+    const std::string::size_type end = sources.find('+', start);
+    if (sources.substr(start, end - start) == source)
+      return true;
+    if (end == std::string::npos)
+      break;
+    start = end + 1;
+  }
+  return false;
 }
 
 } // namespace
@@ -512,18 +616,27 @@ const char *operation_scope(const std::string &operation) {
 int main(int argc, char **argv) {
   if (argc == 2 && std::string(argv[1]) == "--describe") {
     std::cout << "protocol=" << protocol << " revision=" << CSV2_BENCHMARK_REVISION
-              << " operations=rows_cells,legacy_writer_raw"
-#if defined(CSV2_BENCHMARK_ENABLE_MODERN_WRITER_OPERATIONS)
-              << ",writer_raw_direct,writer_raw_streamable,writer_escaped_direct,"
-                 "writer_escaped_streamable"
-#endif
+              << " operations=";
+    for (std::size_t index = 0;
+         index < sizeof(operation_contracts) / sizeof(operation_contracts[0]); ++index) {
+      if (index != 0)
+        std::cout << ',';
+      std::cout << operation_contracts[index].operation;
+    }
 #if CSV2_HAS_MMAP
-              << ",legacy_mmap_rows_cells" << " sources=buffer,mmap"
+    std::cout << " sources=buffer,mmap";
 #else
-              << " sources=buffer"
+    std::cout << " sources=buffer";
 #endif
-              << " prepared_scope=traversal_only legacy_scope=mmap_and_traversal"
-                 " writer_scope=writer_only\n";
+    std::cout << " operation_contracts=";
+    for (std::size_t index = 0;
+         index < sizeof(operation_contracts) / sizeof(operation_contracts[0]); ++index) {
+      if (index != 0)
+        std::cout << ';';
+      std::cout << operation_contracts[index].operation << ':' << operation_contracts[index].scope
+                << ':' << operation_contracts[index].sources;
+    }
+    std::cout << '\n';
     return EXIT_SUCCESS;
   }
 
@@ -536,6 +649,11 @@ int main(int argc, char **argv) {
   const std::uint64_t bytes = file_size(options.input);
   if (bytes == 0) {
     std::cerr << "error: input is missing or empty\n";
+    return EXIT_FAILURE;
+  }
+  const OperationContract *const contract = find_operation_contract(options.operation);
+  if (!contract || !contract_supports_source(*contract, options.source)) {
+    std::cerr << "error: unsupported operation/source contract\n";
     return EXIT_FAILURE;
   }
 
@@ -556,10 +674,11 @@ int main(int argc, char **argv) {
     elapsed_ns = 1;
   benchmark_sink = result.rows ^ result.cells ^ result.row_bytes ^ checksum;
   std::cout << "protocol=" << protocol << " revision=" << CSV2_BENCHMARK_REVISION
-            << " operation=" << options.operation << " scope=" << operation_scope(options.operation)
+            << " operation=" << options.operation << " scope=" << contract->scope
             << " source=" << options.source << " bytes=" << bytes
             << " iterations=" << options.iterations << " elapsed_ns=" << elapsed_ns
             << " rows=" << result.rows << " cells=" << result.cells
-            << " row_bytes=" << result.row_bytes << " checksum=" << checksum << '\n';
+            << " row_bytes=" << result.row_bytes << " checksum=" << checksum
+            << " timed_reader_steps=" << timed_reader_steps << '\n';
   return EXIT_SUCCESS;
 }

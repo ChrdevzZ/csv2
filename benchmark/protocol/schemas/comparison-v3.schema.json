@@ -95,12 +95,13 @@
         "artifact": {"$ref": "#/$defs/revision_artifact"},
         "description": {
           "type": "object",
-          "required": ["protocol", "revision", "operations", "sources"],
+          "required": ["protocol", "revision", "operations", "sources", "operation_contracts"],
           "properties": {
-            "protocol": {"const": "csv2-common-v2"},
+            "protocol": {"const": "csv2-common-v3"},
             "revision": {"type": "string", "minLength": 1},
             "operations": {"type": "string", "minLength": 1},
-            "sources": {"type": "string", "minLength": 1}
+            "sources": {"type": "string", "minLength": 1},
+            "operation_contracts": {"type": "string", "minLength": 1}
           },
           "additionalProperties": true
         },
@@ -183,10 +184,11 @@
           "type": "object",
           "required": [
             "protocol", "revision", "operation", "scope", "source", "bytes",
-            "iterations", "elapsed_ns", "rows", "cells", "row_bytes", "checksum"
+            "iterations", "elapsed_ns", "rows", "cells", "row_bytes", "checksum",
+            "timed_reader_steps"
           ],
           "properties": {
-            "protocol": {"const": "csv2-common-v2"},
+            "protocol": {"const": "csv2-common-v3"},
             "revision": {"type": "string", "minLength": 1},
             "operation": {"type": "string", "minLength": 1},
             "scope": {"type": "string", "minLength": 1},
@@ -197,7 +199,8 @@
             "rows": {"type": "string", "pattern": "^(0|[1-9][0-9]*)$"},
             "cells": {"type": "string", "pattern": "^(0|[1-9][0-9]*)$"},
             "row_bytes": {"type": "string", "pattern": "^(0|[1-9][0-9]*)$"},
-            "checksum": {"type": "string", "pattern": "^(0|[1-9][0-9]*)$"}
+            "checksum": {"type": "string", "pattern": "^(0|[1-9][0-9]*)$"},
+            "timed_reader_steps": {"type": "string", "pattern": "^(0|[1-9][0-9]*)$"}
           },
           "additionalProperties": false
         }
