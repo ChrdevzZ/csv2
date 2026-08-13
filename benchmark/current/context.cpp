@@ -158,6 +158,8 @@ bool parse_options(int &argc, char **argv, Options &options, std::string &error)
       options.verify = true;
     } else if (argument == "--csv2-list") {
       options.list = true;
+    } else if (argument == "--csv2-observer-audit") {
+      options.observer_audit = true;
     } else {
       argv[output_index++] = argv[index];
     }

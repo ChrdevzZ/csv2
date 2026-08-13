@@ -5,18 +5,23 @@
 namespace csv2_benchmark {
 namespace {
 
-template <bool Verify> Result build(Context &context, Source source) {
+template <bool Verify> Result build(Context &context, Source source, TimedObserver &observer) {
   BenchmarkReader::RowIndex index = context.reader(source).index();
   Result result;
   result.rows = static_cast<std::uint64_t>(index.size());
   result.bytes = static_cast<std::uint64_t>(context.input_size());
   if (Verify)
     mix(result, result.rows);
+  else {
+    observer.value(index);
+    observe_result(observer, result);
+  }
   return result;
 }
 
-template <bool Verify> Result sequential(Context &context, Source source) {
-  const BenchmarkReader::RowIndex index = context.reader(source).index();
+template <bool Verify>
+Result sequential(Context &context, Source source, TimedObserver &observer) {
+  BenchmarkReader::RowIndex index = context.reader(source).index();
   Result result;
   result.rows = static_cast<std::uint64_t>(index.size());
   for (std::size_t position = 0; position < index.size(); ++position) {
@@ -25,11 +30,16 @@ template <bool Verify> Result sequential(Context &context, Source source) {
     if (Verify)
       mix(result, static_cast<std::uint64_t>(row.raw_size()));
   }
+  if constexpr (!Verify) {
+    observer.value(index);
+    observe_result(observer, result);
+  }
   return result;
 }
 
-template <bool Verify> Result random_lookup(Context &context, Source source) {
-  const BenchmarkReader::RowIndex index = context.reader(source).index();
+template <bool Verify>
+Result random_lookup(Context &context, Source source, TimedObserver &observer) {
+  BenchmarkReader::RowIndex index = context.reader(source).index();
   Result result;
   result.rows = static_cast<std::uint64_t>(index.size());
   std::uint32_t state = 0x43535632u;
@@ -44,6 +54,11 @@ template <bool Verify> Result random_lookup(Context &context, Source source) {
       mix(result, static_cast<std::uint64_t>(position));
       mix(result, static_cast<std::uint64_t>(row.raw_size()));
     }
+  }
+  if constexpr (!Verify) {
+    observer.value(index);
+    observer.value(state);
+    observe_result(observer, result);
   }
   return result;
 }

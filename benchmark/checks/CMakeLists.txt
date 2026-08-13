@@ -44,6 +44,37 @@ csv2_add_benchmark_check(csv2.benchmark.current.dry_run
     --csv2-source buffer --csv2-operation traversal/rows-cells
     --benchmark_min_time=0.001s --benchmark_repetitions=1)
 
+csv2_add_benchmark_check(csv2.benchmark.current.observer_audit.validation
+  COMMAND csv2_benchmark_observer_audit --csv2-input ${csv2_check_fixture}
+    --csv2-source buffer --csv2-operation validation/strict
+    --csv2-observer-audit
+  PASS_REGEX "value_observations=[1-9][0-9]*")
+
+csv2_add_benchmark_check(csv2.benchmark.current.observer_audit.parse
+  COMMAND csv2_benchmark_observer_audit --csv2-input ${csv2_check_fixture}
+    --csv2-source buffer --csv2-operation source/parse-borrowed
+    --csv2-observer-audit
+  PASS_REGEX "value_observations=[1-9][0-9]*")
+
+csv2_add_benchmark_check(csv2.benchmark.current.observer_audit.extraction
+  COMMAND csv2_benchmark_observer_audit --csv2-input ${csv2_quote_fixture}
+    --csv2-source buffer --csv2-operation extraction/cell-content/reused-string
+    --csv2-observer-audit
+  PASS_REGEX "memory_observations=[1-9][0-9]*")
+
+csv2_add_benchmark_check(csv2.benchmark.current.observer_audit.file_read
+  COMMAND csv2_benchmark_observer_audit --csv2-input ${csv2_check_fixture}
+    --csv2-source file --csv2-operation source/file-read
+    --csv2-observer-audit
+  PASS_REGEX "memory_observations=[1-9][0-9]*")
+
+csv2_add_benchmark_check(csv2.benchmark.current.observer_audit.writer
+  COMMAND csv2_benchmark_observer_audit --csv2-input ${csv2_quote_fixture}
+    --csv2-source buffer --csv2-operation writer/escaped-direct
+    --csv2-observer-audit
+  PASS_REGEX
+    "value_observations=[1-9][0-9]* memory_observations=[1-9][0-9]*")
+
 set(csv2_group_checks
   "source/parse-borrowed|buffer|${csv2_check_fixture}"
   "traversal/rows-cells|buffer|${csv2_check_fixture}"

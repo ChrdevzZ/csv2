@@ -3,10 +3,11 @@
 namespace csv2_benchmark {
 namespace {
 
-template <bool Verify> Result validate(Context &context, Source source) {
+template <bool Verify>
+Result validate(Context &context, Source source, TimedObserver &observer) {
   Result result;
   csv2::parse_error error;
-  const bool valid = context.reader(source).validate(error);
+  bool valid = context.reader(source).validate(error);
   result.bytes = static_cast<std::uint64_t>(context.input_size());
   if (Verify) {
     mix(result, valid ? 1u : 0u);
@@ -14,6 +15,13 @@ template <bool Verify> Result validate(Context &context, Source source) {
     mix(result, static_cast<std::uint64_t>(error.byte_offset));
     mix(result, static_cast<std::uint64_t>(error.row));
     mix(result, static_cast<std::uint64_t>(error.column));
+  } else {
+    observer.value(valid);
+    observer.value(error.code);
+    observer.value(error.byte_offset);
+    observer.value(error.row);
+    observer.value(error.column);
+    observe_result(observer, result);
   }
   return result;
 }

@@ -37,8 +37,9 @@ struct Options {
   std::string operation;
   bool verify;
   bool list;
+  bool observer_audit;
 
-  Options() : source("all"), verify(false), list(false) {}
+  Options() : source("all"), verify(false), list(false), observer_audit(false) {}
 };
 
 class Context {
@@ -95,6 +96,7 @@ public:
   }
 
   std::ostream &reset_output() noexcept;
+  OutputBuffer &output_buffer() noexcept { return output_buffer_; }
   const OutputBuffer &output_buffer() const noexcept { return output_buffer_; }
 };
 
