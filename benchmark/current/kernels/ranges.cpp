@@ -10,7 +10,7 @@ namespace csv2_benchmark {
 #if CSV2_HAS_RANGES
 namespace {
 
-template <bool Verify> Result pipeline(Context &context, Source source) {
+template <bool Verify> Result pipeline(Context &context, Source source, TimedObserver &observer) {
   Result result;
   const auto rows =
       context.reader(source) | std::views::transform([](BenchmarkReader::Row row) { return row; });
@@ -25,14 +25,17 @@ template <bool Verify> Result pipeline(Context &context, Source source) {
         mix(result, static_cast<std::uint64_t>(size));
     }
   }
+  if constexpr (!Verify)
+    observe_result(observer, result);
   return result;
 }
 
 #if CSV2_HAS_RANGES_TO_CONTAINER
-template <bool Verify> Result to_container(Context &context, Source source) {
+template <bool Verify>
+Result to_container(Context &context, Source source, TimedObserver &observer) {
   Result result;
   for (const BenchmarkReader::Row row : context.reader(source)) {
-    const std::vector<std::size_t> sizes =
+    std::vector<std::size_t> sizes =
         row | std::views::transform([](BenchmarkReader::Cell cell) { return cell.raw_size(); }) |
         std::ranges::to<std::vector>();
     ++result.rows;
@@ -42,7 +45,11 @@ template <bool Verify> Result to_container(Context &context, Source source) {
       if (Verify)
         mix(result, static_cast<std::uint64_t>(size));
     }
+    if constexpr (!Verify)
+      observer.memory(sizes);
   }
+  if constexpr (!Verify)
+    observe_result(observer, result);
   return result;
 }
 #endif

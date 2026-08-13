@@ -16,18 +16,21 @@
 namespace csv2_benchmark {
 namespace {
 
-template <bool Verify> Result file_read(Context &context, Source) {
+template <bool Verify> Result file_read(Context &context, Source, TimedObserver &observer) {
   std::ifstream input(context.input_path().c_str(), std::ios::binary);
-  const std::string bytes((std::istreambuf_iterator<char>(input)),
-                          std::istreambuf_iterator<char>());
+  std::string bytes((std::istreambuf_iterator<char>(input)), std::istreambuf_iterator<char>());
   Result result;
   result.bytes = static_cast<std::uint64_t>(bytes.size());
   if (Verify)
     mix_bytes(result, bytes.data(), bytes.size());
+  else {
+    observer.memory(bytes);
+    observe_result(observer, result);
+  }
   return result;
 }
 
-template <bool Verify> Result mmap_open(Context &context, Source) {
+template <bool Verify> Result mmap_open(Context &context, Source, TimedObserver &observer) {
   Result result;
 #if CSV2_HAS_MMAP
   std::error_code error;
@@ -37,13 +40,19 @@ template <bool Verify> Result mmap_open(Context &context, Source) {
     if (Verify)
       mix(result, result.bytes);
   }
+  if constexpr (!Verify) {
+    int error_value = error.value();
+    observer.value(error_value);
+    observe_result(observer, result);
+  }
 #else
   (void)context;
+  (void)observer;
 #endif
   return result;
 }
 
-template <bool Verify> Result mmap_touch(Context &context, Source) {
+template <bool Verify> Result mmap_touch(Context &context, Source, TimedObserver &observer) {
   Result result;
 #if CSV2_HAS_MMAP
   if (context.mmap_ready()) {
@@ -58,44 +67,68 @@ template <bool Verify> Result mmap_touch(Context &context, Source) {
           sink ^ static_cast<unsigned char>(context.mapped_data()[context.mapped_size() - 1]));
     if (Verify)
       mix(result, sink);
+    else {
+      unsigned char observed_sink = sink;
+      observer.value(observed_sink);
+      observe_result(observer, result);
+    }
   }
 #else
   (void)context;
+  (void)observer;
 #endif
   return result;
 }
 
-template <bool Verify> Result parse_borrowed(Context &context, Source) {
+template <bool Verify> Result parse_borrowed(Context &context, Source, TimedObserver &observer) {
   BenchmarkReader reader;
   Result result;
-  if (reader.parse_borrowed(context.data().data(), context.data().size())) {
+  bool parsed = reader.parse_borrowed(context.data().data(), context.data().size());
+  if (parsed) {
     result.bytes = static_cast<std::uint64_t>(context.input_size());
     if (Verify)
       mix(result, result.bytes);
   }
+  if constexpr (!Verify) {
+    observer.value(parsed);
+    observer.value(reader);
+    observe_result(observer, result);
+  }
   return result;
 }
 
-template <bool Verify> Result parse_owned(Context &context, Source) {
+template <bool Verify> Result parse_owned(Context &context, Source, TimedObserver &observer) {
   BenchmarkReader reader;
   Result result;
-  if (reader.parse_owned(context.data())) {
+  bool parsed = reader.parse_owned(context.data());
+  if (parsed) {
     result.bytes = static_cast<std::uint64_t>(context.input_size());
     if (Verify)
       mix(result, result.bytes);
+  }
+  if constexpr (!Verify) {
+    observer.value(parsed);
+    observer.value(reader);
+    observe_result(observer, result);
   }
   return result;
 }
 
 #if CSV2_HAS_SPAN
-template <bool Verify> Result parse_span(Context &context, Source) {
+template <bool Verify> Result parse_span(Context &context, Source, TimedObserver &observer) {
   BenchmarkReader reader;
   const std::span<const char> bytes(context.data().data(), context.data().size());
   Result result;
-  if (reader.parse_borrowed(bytes)) {
+  bool parsed = reader.parse_borrowed(bytes);
+  if (parsed) {
     result.bytes = static_cast<std::uint64_t>(bytes.size());
     if (Verify)
       mix(result, result.bytes);
+  }
+  if (!Verify) {
+    observer.value(parsed);
+    observer.value(reader);
+    observe_result(observer, result);
   }
   return result;
 }

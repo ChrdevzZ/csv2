@@ -66,7 +66,8 @@ int verify_operations(Registry &registry, Context &context, const Options &optio
     for_each_selected_source(operation, options, &context, [&](Source source) {
       selected = true;
       allocation::reset(true);
-      Result result = operation.verification_kernel(context, source);
+      TimedObserver unused_observer;
+      Result result = operation.verification_kernel(context, source, unused_observer);
       const allocation::Counts counts = allocation::counts();
       allocation::reset(false);
       result.allocations = counts.allocations;
@@ -94,6 +95,39 @@ int verify_operations(Registry &registry, Context &context, const Options &optio
   return allocation_failure ? 3 : 0;
 }
 
+int audit_observers(Registry &registry, Context &context, const Options &options) {
+#if defined(CSV2_BENCHMARK_OBSERVER_AUDIT)
+  bool selected = false;
+  bool missing_observation = false;
+  for (const Operation &operation : registry.operations()) {
+    if (!options.operation.empty() && options.operation != operation.id)
+      continue;
+    for_each_selected_source(operation, options, &context, [&](Source source) {
+      selected = true;
+      TimedObserver observer;
+      Result result = operation.timed_kernel(context, source, observer);
+      std::cout << "operation=" << operation.id << " source=" << source_name(source)
+                << " value_observations=" << observer.value_observations()
+                << " memory_observations=" << observer.memory_observations() << '\n';
+      benchmark::DoNotOptimize(result.bytes);
+      if (observer.value_observations() == 0 && observer.memory_observations() == 0)
+        missing_observation = true;
+    });
+  }
+  if (!selected) {
+    std::cerr << "no operation/source combination matched the request\n";
+    return 2;
+  }
+  return missing_observation ? 3 : 0;
+#else
+  (void)registry;
+  (void)context;
+  (void)options;
+  std::cerr << "observer audit is unavailable in this benchmark build\n";
+  return 2;
+#endif
+}
+
 void register_timing_benchmarks(Registry &registry, Context &context, const Options &options) {
   const std::string dataset = safe_component(context.dataset_name());
   for (const Operation &operation : registry.operations()) {
@@ -105,11 +139,10 @@ void register_timing_benchmarks(Registry &registry, Context &context, const Opti
       benchmark::RegisterBenchmark(name, [&context, selected_operation,
                                           source](benchmark::State &state) {
         Result result;
+        TimedObserver observer;
         for (auto ignored : state) {
           (void)ignored;
-          result = selected_operation->timed_kernel(context, source);
-          benchmark::DoNotOptimize(result.bytes);
-          benchmark::DoNotOptimize(context.output_buffer().data());
+          result = selected_operation->timed_kernel(context, source, observer);
         }
         state.SetBytesProcessed(static_cast<std::int64_t>(state.iterations()) *
                                 static_cast<std::int64_t>(context.input_size()));
@@ -157,6 +190,8 @@ int main(int argc, char **argv) {
     }
     if (options.verify)
       return verify_operations(registry, context, options);
+    if (options.observer_audit)
+      return audit_observers(registry, context, options);
 
     benchmark::Initialize(&argc, argv);
     if (benchmark::ReportUnrecognizedArguments(argc, argv))

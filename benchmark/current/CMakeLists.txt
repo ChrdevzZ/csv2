@@ -17,7 +17,10 @@ set(csv2_current_sources
   kernels/index.cpp
   kernels/writer.cpp)
 
-foreach(csv2_target IN ITEMS csv2_benchmark csv2_benchmark_allocations)
+foreach(csv2_target IN ITEMS
+    csv2_benchmark
+    csv2_benchmark_allocations
+    csv2_benchmark_observer_audit)
   add_executable(${csv2_target} ${csv2_current_sources})
   target_link_libraries(${csv2_target} PRIVATE csv2::csv2 benchmark::benchmark)
   target_include_directories(${csv2_target} PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
@@ -32,3 +35,15 @@ endforeach()
 
 target_compile_definitions(csv2_benchmark_allocations PRIVATE
   CSV2_BENCHMARK_ENABLE_ALLOCATION_TRACKING=1)
+target_compile_definitions(csv2_benchmark_observer_audit PRIVATE
+  CSV2_BENCHMARK_OBSERVER_AUDIT=1)
+
+include(CheckIPOSupported)
+check_ipo_supported(RESULT csv2_benchmark_ipo_supported
+  OUTPUT csv2_benchmark_ipo_error LANGUAGES CXX)
+if(csv2_benchmark_ipo_supported)
+  set_property(TARGET csv2_benchmark_observer_audit PROPERTY
+    INTERPROCEDURAL_OPTIMIZATION_RELEASE TRUE)
+else()
+  message(STATUS "CSV2 observer audit IPO unavailable: ${csv2_benchmark_ipo_error}")
+endif()

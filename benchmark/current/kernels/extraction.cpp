@@ -20,7 +20,8 @@ void copy_cell(const BenchmarkReader::Cell &cell, Container &output, CellMode mo
 }
 
 template <bool Verify, typename Container>
-Result extract_reused(Context &context, Source source, CellMode mode, Container &output) {
+Result extract_reused(Context &context, Source source, CellMode mode, Container &output,
+                      TimedObserver &observer) {
   Result result;
   for (const BenchmarkReader::Row row : context.reader(source)) {
     ++result.rows;
@@ -31,13 +32,17 @@ Result extract_reused(Context &context, Source source, CellMode mode, Container 
       result.bytes += static_cast<std::uint64_t>(output.size());
       if (Verify)
         mix_bytes(result, output.data(), output.size());
+      else
+        observer.memory(output);
     }
   }
+  if constexpr (!Verify)
+    observe_result(observer, result);
   return result;
 }
 
 template <bool Verify, typename Container>
-Result extract_fresh(Context &context, Source source, CellMode mode) {
+Result extract_fresh(Context &context, Source source, CellMode mode, TimedObserver &observer) {
   Result result;
   for (const BenchmarkReader::Row row : context.reader(source)) {
     ++result.rows;
@@ -48,12 +53,17 @@ Result extract_fresh(Context &context, Source source, CellMode mode) {
       result.bytes += static_cast<std::uint64_t>(output.size());
       if (Verify)
         mix_bytes(result, output.data(), output.size());
+      else
+        observer.memory(output);
     }
   }
+  if constexpr (!Verify)
+    observe_result(observer, result);
   return result;
 }
 
-template <bool Verify> Result row_raw(Context &context, Source source) {
+template <bool Verify>
+Result row_raw(Context &context, Source source, TimedObserver &observer) {
   Result result;
   std::string &output = context.reset_string_scratch();
   for (const BenchmarkReader::Row row : context.reader(source)) {
@@ -63,37 +73,47 @@ template <bool Verify> Result row_raw(Context &context, Source source) {
     result.bytes += static_cast<std::uint64_t>(output.size());
     if (Verify)
       mix_bytes(result, output.data(), output.size());
+    else
+      observer.memory(output);
   }
+  if constexpr (!Verify)
+    observe_result(observer, result);
   return result;
 }
 
-template <bool Verify> Result raw_reused_string(Context &c, Source s) {
+template <bool Verify> Result raw_reused_string(Context &c, Source s, TimedObserver &observer) {
   std::string &output = c.reset_string_scratch();
-  return extract_reused<Verify>(c, s, CellMode::raw, output);
+  return extract_reused<Verify>(c, s, CellMode::raw, output, observer);
 }
-template <bool Verify> Result raw_fresh_string(Context &c, Source s) {
-  return extract_fresh<Verify, std::string>(c, s, CellMode::raw);
+template <bool Verify> Result raw_fresh_string(Context &c, Source s, TimedObserver &observer) {
+  return extract_fresh<Verify, std::string>(c, s, CellMode::raw, observer);
 }
-template <bool Verify> Result decoded_reused_string(Context &c, Source s) {
+template <bool Verify>
+Result decoded_reused_string(Context &c, Source s, TimedObserver &observer) {
   std::string &output = c.reset_string_scratch();
-  return extract_reused<Verify>(c, s, CellMode::decoded, output);
+  return extract_reused<Verify>(c, s, CellMode::decoded, output, observer);
 }
-template <bool Verify> Result decoded_fresh_string(Context &c, Source s) {
-  return extract_fresh<Verify, std::string>(c, s, CellMode::decoded);
+template <bool Verify>
+Result decoded_fresh_string(Context &c, Source s, TimedObserver &observer) {
+  return extract_fresh<Verify, std::string>(c, s, CellMode::decoded, observer);
 }
-template <bool Verify> Result content_reused_string(Context &c, Source s) {
+template <bool Verify>
+Result content_reused_string(Context &c, Source s, TimedObserver &observer) {
   std::string &output = c.reset_string_scratch();
-  return extract_reused<Verify>(c, s, CellMode::content, output);
+  return extract_reused<Verify>(c, s, CellMode::content, output, observer);
 }
-template <bool Verify> Result content_fresh_string(Context &c, Source s) {
-  return extract_fresh<Verify, std::string>(c, s, CellMode::content);
+template <bool Verify>
+Result content_fresh_string(Context &c, Source s, TimedObserver &observer) {
+  return extract_fresh<Verify, std::string>(c, s, CellMode::content, observer);
 }
-template <bool Verify> Result decoded_reused_vector(Context &c, Source s) {
+template <bool Verify>
+Result decoded_reused_vector(Context &c, Source s, TimedObserver &observer) {
   std::vector<char> &output = c.reset_vector_scratch();
-  return extract_reused<Verify>(c, s, CellMode::decoded, output);
+  return extract_reused<Verify>(c, s, CellMode::decoded, output, observer);
 }
-template <bool Verify> Result decoded_fresh_vector(Context &c, Source s) {
-  return extract_fresh<Verify, std::vector<char>>(c, s, CellMode::decoded);
+template <bool Verify>
+Result decoded_fresh_vector(Context &c, Source s, TimedObserver &observer) {
+  return extract_fresh<Verify, std::vector<char>>(c, s, CellMode::decoded, observer);
 }
 
 } // namespace

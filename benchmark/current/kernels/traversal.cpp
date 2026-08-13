@@ -4,20 +4,25 @@
 namespace csv2_benchmark {
 namespace {
 
-template <bool Verify> Result rows(Context &context, Source source) {
+template <bool Verify> Result rows(Context &context, Source source, TimedObserver &observer) {
   Result result;
   for (const BenchmarkReader::Row row : context.reader(source))
     account_row<Verify>(result, row);
+  if constexpr (!Verify)
+    observe_result(observer, result);
   return result;
 }
 
-template <bool Verify> Result rows_cells(Context &context, Source source) {
+template <bool Verify>
+Result rows_cells(Context &context, Source source, TimedObserver &observer) {
   Result result;
   for (const BenchmarkReader::Row row : context.reader(source)) {
     ++result.rows;
     for (const BenchmarkReader::Cell cell : row)
       account_cell<Verify>(result, cell);
   }
+  if constexpr (!Verify)
+    observe_result(observer, result);
   return result;
 }
 

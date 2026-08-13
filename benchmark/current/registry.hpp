@@ -3,13 +3,20 @@
 
 #include "context.hpp"
 #include "support/result.hpp"
+#include "support/timed_observer.hpp"
 
 #include <string>
 #include <vector>
 
 namespace csv2_benchmark {
 
-using Kernel = Result (*)(Context &, Source);
+using Kernel = Result (*)(Context &, Source, TimedObserver &);
+
+inline void observe_result(TimedObserver &observer, Result &result) noexcept {
+  observer.value(result.bytes);
+  observer.value(result.rows);
+  observer.value(result.cells);
+}
 
 enum SourceMask { source_none = 0, source_file = 1, source_buffer = 2, source_mmap = 4 };
 
