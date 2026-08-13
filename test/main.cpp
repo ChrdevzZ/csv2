@@ -667,6 +667,43 @@ struct LazyAddressStringLikeView {
   mutable std::string storage;
 };
 
+struct SequencedOwnedStringLike {
+  SequencedOwnedStringLike(std::string value, bool &sequence_valid)
+      : value(std::move(value)), sequence_valid(&sequence_valid), data_observed(false) {}
+
+  const char *c_str() const {
+    storage = value;
+    data_observed = true;
+    return storage.c_str();
+  }
+  std::size_t size() const {
+    if (!data_observed) {
+      *sequence_valid = false;
+      return 0;
+    }
+    return storage.size();
+  }
+
+  std::string value;
+  bool *sequence_valid;
+  mutable bool data_observed;
+  mutable std::string storage;
+};
+
+#if !defined(CSV2_TEST_NO_EXCEPTIONS)
+struct ThrowingOwnedStringLike {
+  const char *c_str() const { throw std::runtime_error("materialization failure"); }
+  std::size_t size() const { return 3; }
+};
+
+volatile std::size_t oversized_owned_string_size = (std::numeric_limits<std::size_t>::max)();
+
+struct OversizedOwnedStringLike {
+  const char *c_str() const { return "x"; }
+  std::size_t size() const { return oversized_owned_string_size; }
+};
+#endif
+
 class LvalueCloseStream : public std::ostringstream {
 public:
   LvalueCloseStream() : closed(false) {}
@@ -1057,6 +1094,22 @@ TEST_CASE("Evaluate borrowed string address before its extent" * test_suite("Rea
   LazyAddressStringLikeView lazy("c,d");
   REQUIRE(reader.parse(lazy));
   REQUIRE(read_cells(*reader.begin()) == std::vector<std::string>({"c", "d"}));
+}
+
+TEST_CASE("Materialize an owned string address before its extent" * test_suite("Reader")) {
+  ReaderWithoutHeader reader;
+  bool sequence_valid = true;
+  REQUIRE(reader.parse(SequencedOwnedStringLike("c,d", sequence_valid)));
+  REQUIRE(sequence_valid);
+  REQUIRE(read_cells(*reader.begin()) == std::vector<std::string>({"c", "d"}));
+
+#if !defined(CSV2_TEST_NO_EXCEPTIONS)
+  REQUIRE_THROWS_AS(reader.parse(ThrowingOwnedStringLike()), std::runtime_error);
+  REQUIRE(read_cells(*reader.begin()) == std::vector<std::string>({"c", "d"}));
+
+  REQUIRE_THROWS(reader.parse(OversizedOwnedStringLike()));
+  REQUIRE(read_cells(*reader.begin()) == std::vector<std::string>({"c", "d"}));
+#endif
 }
 
 TEST_CASE("Use a custom trim policy on complete field bounds" * test_suite("Reader")) {

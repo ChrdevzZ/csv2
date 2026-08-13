@@ -3199,7 +3199,9 @@ class Reader {
   }
 
   template <typename StringType> bool parse_owned_(StringType &&contents, std::false_type) {
-    std::unique_ptr<std::string> new_buffer(new std::string(contents.c_str(), contents.size()));
+    const char *const data = contents.c_str();
+    const size_t size = contents.size();
+    std::unique_ptr<std::string> new_buffer(new std::string(data, size));
     reset_source_();
     if (new_buffer->empty())
       return false;
