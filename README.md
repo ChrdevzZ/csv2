@@ -419,11 +419,11 @@ advertise that mode. CMake 3.12 or newer is required to request C++20, CMake
 3.20 or newer is required to request C++23, and CMake 3.30 or newer is required
 to request C++26. C++11 through C++23 prove behavior; C++26 only proves that
 the public surface still compiles and does not enable any C++26-only feature.
-These modes prove that csv2 builds and behaves correctly in
-the selected language mode; they do not claim that a compiler or standard
-library completely implements every feature of that standard. Older supported
-toolchains register every mode they understand. The build also checks every
-public header independently in C++11, C++17, C++20, and C++23 modes, runs
+These standard-specific targets prove compatibility with the selected language
+mode; they do not claim that a compiler or standard library completely
+implements every feature of that standard. Older supported toolchains register
+every mode they understand. The build also checks every public header
+independently in C++11, C++17, C++20, and C++23 modes, runs
 no-mmap through C++23, runs no-exceptions in C++11/C++20/C++23, compiles
 standard-specific contract translation units, and includes deterministic fuzz
 and benchmark checksum smoke tests.
