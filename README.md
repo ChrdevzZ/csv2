@@ -109,9 +109,10 @@ Records may be terminated by LF or CRLF. LF and CRLF inside a quoted field are
 part of that field, and doubled quote characters (`""`) do not close it. A final
 record delimiter terminates the last record without creating another empty
 record; delimiters before the final one can still represent empty records.
-Standalone CR characters are treated as record content. Field delimiters are
-configurable but cannot be CR or LF because those bytes are reserved for record
-boundaries; an unsupported delimiter is rejected at compile time.
+Standalone CR characters are treated as record content. Reader field
+delimiters are configurable but cannot be CR or LF because those bytes are
+reserved for record boundaries. `Reader` and `RowIndex` reject those delimiter
+policies at compile time.
 
 A field delimiter at the end of a non-empty record creates a final empty
 `Cell`. A record containing no characters remains an empty `Row` with zero
@@ -357,6 +358,12 @@ The default `quote_policy::none` preserves the original raw behavior: values
 are emitted exactly as supplied. `EscapingWriter` selects
 `quote_policy::minimal`, quoting fields containing the delimiter, a quote, CR,
 or LF and doubling embedded quotes. `quote_policy::always` quotes every field.
+For source compatibility, `Writer` continues to accept CR and LF delimiter
+policies; `basic_writer` and `EscapingWriter` use the same delimiter domain.
+Because every Writer emits LF as the row terminator, those delimiter choices
+produce ambiguous, non-round-trippable output; quoting policies cannot remove
+that ambiguity. Use a delimiter other than CR or LF for output intended to be
+parsed as CSV.
 Contiguous character fields are scanned and written in segments; other
 streamable values are first formatted with a copy of the destination stream's
 locale, flags, precision, and fill state, then escaped. A row with zero values
