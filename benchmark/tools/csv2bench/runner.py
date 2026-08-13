@@ -229,6 +229,7 @@ def runner_source_paths() -> list[Path]:
         package_root / "__init__.py",
         package_root / "artifacts.py",
         package_root / "atomic.py",
+        package_root / "builds.py",
         package_root / "protocol.py",
         package_root / "runner.py",
         package_root / "statistics.py",
