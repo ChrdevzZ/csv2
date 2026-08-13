@@ -45,6 +45,7 @@ class CollectMetricsTests(unittest.TestCase):
             "allocations": "0",
             "allocated_bytes": "0",
             "hardware_counter_scope": "disabled",
+            "hardware_counter_domain": "disabled",
             "hardware_counter_time_enabled": "0",
             "hardware_counter_time_running": "0",
             "cycles": "0",
@@ -55,6 +56,12 @@ class CollectMetricsTests(unittest.TestCase):
             "checksum": "42",
         }
         result.update(overrides)
+        if "hardware_counter_domain" not in overrides:
+            result["hardware_counter_domain"] = (
+                METRICS.HARDWARE_COUNTER_DOMAIN
+                if result["hardware_counter_scope"] == "timed_operation"
+                else "disabled"
+            )
         return result
 
     def test_metrics_parser_rejects_duplicate_and_non_finite_fields(self) -> None:
@@ -126,6 +133,7 @@ class CollectMetricsTests(unittest.TestCase):
         )
 
         self.assertEqual(summary["scope"], "timed_operation")
+        self.assertEqual(summary["domain"], METRICS.HARDWARE_COUNTER_DOMAIN)
         self.assertEqual(summary["runs"], 3)
         self.assertEqual(summary["median"]["cycles"], 1100.0)
         self.assertEqual(summary["median"]["cycles_per_byte"], 11.0)
@@ -151,6 +159,22 @@ class CollectMetricsTests(unittest.TestCase):
             branch_misses="1",
         )
         with self.assertRaisesRegex(RuntimeError, "timed_operation"):
+            METRICS.summarize_counter_samples(
+                [sample], processed_bytes=1, reference=reference
+            )
+
+    def test_counter_summary_rejects_user_only_domain(self) -> None:
+        reference = self.benchmark_result()
+        sample = self.benchmark_result(
+            hardware_counter_scope="timed_operation",
+            hardware_counter_domain="calling_thread_user",
+            hardware_counter_time_enabled="1",
+            hardware_counter_time_running="1",
+            cycles="1",
+            instructions="1",
+            branch_misses="1",
+        )
+        with self.assertRaisesRegex(RuntimeError, "user and kernel mode"):
             METRICS.summarize_counter_samples(
                 [sample], processed_bytes=1, reference=reference
             )
