@@ -94,3 +94,11 @@ csv2_declare_test_domain(
   REQUIRES mmap
   LABELS mio runtime mapping
   TIMEOUT 30)
+
+csv2_declare_test_domain(
+  ID property.roundtrip
+  SOURCES runtime/property/roundtrip.cpp
+  MIN_STANDARD 11
+  PROFILES quick full perf
+  LABELS property runtime roundtrip
+  TIMEOUT 30)

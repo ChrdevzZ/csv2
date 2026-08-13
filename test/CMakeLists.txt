@@ -32,22 +32,7 @@ endif()
 # path until the dedicated fuzz subdirectory owns them later in the migration.
 if(NOT CSV2_BUILD_TESTS)
   if(CSV2_BUILD_FUZZERS)
-    if(NOT CMAKE_CXX_COMPILER_ID MATCHES "Clang" OR
-       CMAKE_CXX_COMPILER_FRONTEND_VARIANT STREQUAL "MSVC")
-      message(FATAL_ERROR
-        "CSV2_BUILD_FUZZERS requires Clang with the GNU frontend")
-    endif()
-    add_executable(csv2_fuzz fuzz_reader.cpp)
-    target_link_libraries(csv2_fuzz PRIVATE csv2::csv2)
-    target_compile_definitions(csv2_fuzz PRIVATE CSV2_HAS_MMAP=0)
-    target_compile_options(csv2_fuzz PRIVATE
-      -fsanitize=fuzzer,address,undefined
-      -fno-omit-frame-pointer
-      -fno-sanitize-recover=all)
-    set_property(TARGET csv2_fuzz APPEND_STRING PROPERTY LINK_FLAGS
-      " -fsanitize=fuzzer,address,undefined")
-    csv2_set_test_standard(csv2_fuzz 20)
-    csv2_enable_test_options(csv2_fuzz)
+    add_subdirectory(fuzz)
   endif()
   return()
 endif()
@@ -57,6 +42,7 @@ add_subdirectory(support)
 add_subdirectory(platform)
 add_subdirectory(runtime)
 add_subdirectory(contracts)
+add_subdirectory(fuzz)
 csv2_add_runtime_matrix()
 
 function(csv2_register_runtime_test target test_name)
@@ -504,32 +490,6 @@ endfunction()
 foreach(standard IN LISTS csv2_supported_standards)
   csv2_add_standard_contract(${standard})
 endforeach()
-
-add_executable(csv2_fuzz_smoke fuzz_reader.cpp)
-target_link_libraries(csv2_fuzz_smoke PRIVATE csv2::csv2)
-target_compile_definitions(csv2_fuzz_smoke PRIVATE CSV2_FUZZ_STANDALONE CSV2_HAS_MMAP=0)
-csv2_set_test_standard(csv2_fuzz_smoke 11)
-csv2_enable_test_options(csv2_fuzz_smoke)
-csv2_register_runtime_test(csv2_fuzz_smoke csv2.fuzz.smoke.cxx11)
-set_tests_properties(csv2.fuzz.smoke.cxx11 PROPERTIES LABELS "fuzz-smoke;sanitizer-runtime")
-
-if(CSV2_BUILD_FUZZERS)
-  if(NOT CMAKE_CXX_COMPILER_ID MATCHES "Clang" OR
-     CMAKE_CXX_COMPILER_FRONTEND_VARIANT STREQUAL "MSVC")
-    message(FATAL_ERROR "CSV2_BUILD_FUZZERS requires Clang with the GNU frontend")
-  endif()
-  add_executable(csv2_fuzz fuzz_reader.cpp)
-  target_link_libraries(csv2_fuzz PRIVATE csv2::csv2)
-  target_compile_definitions(csv2_fuzz PRIVATE CSV2_HAS_MMAP=0)
-  target_compile_options(csv2_fuzz PRIVATE
-    -fsanitize=fuzzer,address,undefined
-    -fno-omit-frame-pointer
-    -fno-sanitize-recover=all)
-  set_property(TARGET csv2_fuzz APPEND_STRING PROPERTY LINK_FLAGS
-    " -fsanitize=fuzzer,address,undefined")
-  csv2_set_test_standard(csv2_fuzz 20)
-  csv2_enable_test_options(csv2_fuzz)
-endif()
 
 add_executable(csv2_benchmark_without_mmap ../benchmark/main.cpp)
 target_link_libraries(csv2_benchmark_without_mmap PRIVATE csv2::csv2)
