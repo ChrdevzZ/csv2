@@ -68,10 +68,11 @@ iteration are not supported.
 Passing an rvalue string transfers the contents to storage owned by the reader,
 so parsing a temporary is safe. When C++17 is available, `parse_view()` remains
 a borrowed API and the `std::string_view` storage has the same address, extent,
-and mutation requirements. Calling `mmap()`, `parse()`, or `parse_view()`
-replaces the previous input source. Passing a view of the same reader's owned
-or mapped source back to `parse_view()` keeps that backing storage alive and
-selects the view without copying.
+and mutation requirements. Calling `mmap()`, `parse()`, `parse_borrowed()`,
+`parse_owned()`, or `parse_view()` replaces the previous input source. Passing
+an exact range of the same reader's owned or mapped source back to
+`parse_borrowed()` or `parse_view()` keeps that backing storage alive and
+selects the range without copying.
 
 For ownership-visible code, `parse_borrowed(const char*, size_t)` accepts an
 exact byte range and never copies, while `parse_owned(std::string)` stores an
