@@ -44,6 +44,32 @@ csv2_add_benchmark_check(csv2.benchmark.current.dry_run
     --csv2-source buffer --csv2-operation traversal/rows-cells
     --benchmark_min_time=0.001s --benchmark_repetitions=1)
 
+set(csv2_group_checks
+  "source/parse-borrowed|buffer|${csv2_check_fixture}"
+  "traversal/rows-cells|buffer|${csv2_check_fixture}"
+  "extraction/cell-content/reused-string|buffer|${csv2_quote_fixture}"
+  "validation/strict|buffer|${csv2_check_fixture}"
+  "conversion/integer-bool-error|buffer|${csv2_SOURCE_DIR}/benchmark/datasets/fixtures/numeric.csv"
+  "ranges/pipeline|buffer|${csv2_check_fixture}"
+  "index/random|buffer|${csv2_check_fixture}"
+  "writer/escaped-direct|buffer|${csv2_quote_fixture}")
+foreach(csv2_group_check IN LISTS csv2_group_checks)
+  string(REPLACE "|" ";" csv2_group_values "${csv2_group_check}")
+  list(GET csv2_group_values 0 csv2_group_operation)
+  list(GET csv2_group_values 1 csv2_group_source)
+  list(GET csv2_group_values 2 csv2_group_fixture)
+  string(REPLACE "/" "." csv2_group_name "${csv2_group_operation}")
+  csv2_add_benchmark_check(csv2.benchmark.group.${csv2_group_name}.verify
+    COMMAND csv2_benchmark --csv2-input ${csv2_group_fixture}
+      --csv2-source ${csv2_group_source}
+      --csv2-operation ${csv2_group_operation} --csv2-verify)
+  csv2_add_benchmark_check(csv2.benchmark.group.${csv2_group_name}.dry_run
+    COMMAND csv2_benchmark --csv2-input ${csv2_group_fixture}
+      --csv2-source ${csv2_group_source}
+      --csv2-operation ${csv2_group_operation}
+      --benchmark_min_time=0.001s --benchmark_repetitions=1)
+endforeach()
+
 foreach(csv2_writer_operation IN ITEMS raw-direct escaped-direct always-direct)
   csv2_add_benchmark_check(csv2.benchmark.current.allocations.${csv2_writer_operation}
     COMMAND csv2_benchmark_allocations --csv2-input ${csv2_quote_fixture}

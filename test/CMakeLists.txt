@@ -75,8 +75,8 @@ if(CSV2_REQUIRE_MODERN_STANDARD_TESTS)
   foreach(required_test IN ITEMS
       csv2.runtime.reader.scan.modular.cxx20.normal
       csv2.runtime.reader.scan.single.cxx20.normal
-      csv2.runtime.reader.scan.modular.cxx23.normal
-      csv2.runtime.reader.scan.single.cxx23.normal)
+      csv2.runtime.reader.ranges.modular.cxx23.normal
+      csv2.runtime.reader.ranges.single.cxx23.normal)
     if(NOT TEST ${required_test})
       message(FATAL_ERROR
         "Required modern-standard CTest test is not registered: ${required_test}")
