@@ -1742,6 +1742,39 @@ TEST_CASE("Reject an owned alias range that extends beyond its backing source" *
   REQUIRE(reader.rows() == 0);
 }
 
+TEST_CASE("Preserve owned storage when parse_borrowed selects a cell range" *
+          test_suite("Reader")) {
+  ReaderWithoutHeader reader;
+  const std::string first_cell(512, 'b');
+  REQUIRE(reader.parse_owned(first_cell + ",discarded"));
+
+  const auto cell = *(*reader.begin()).begin();
+  const char *const data = cell.raw_data();
+  const size_t size = cell.raw_size();
+  REQUIRE(reader.parse_borrowed(data, size));
+  REQUIRE((*reader.begin()).raw_data() == data);
+  REQUIRE(read_rows(reader) == std::vector<std::vector<std::string>>({{first_cell}}));
+}
+
+#if CSV2_HAS_MMAP
+TEST_CASE("Preserve mapped storage when parse_borrowed selects a cell range" *
+          test_suite("Reader")) {
+  const std::string path = std::string(writer_output_path()) + ".parse-borrowed-mmap-source";
+  ScopedFileRemoval cleanup(path);
+  const std::string first_cell(512, 'p');
+  write_binary_file(path, first_cell + ",discarded");
+
+  ReaderWithoutHeader reader;
+  REQUIRE(reader.mmap(path));
+  const auto cell = *(*reader.begin()).begin();
+  const char *const data = cell.raw_data();
+  const size_t size = cell.raw_size();
+  REQUIRE(reader.parse_borrowed(data, size));
+  REQUIRE((*reader.begin()).raw_data() == data);
+  REQUIRE(read_rows(reader) == std::vector<std::vector<std::string>>({{first_cell}}));
+}
+#endif
+
 #if CSV2_HAS_STRING_VIEW
 TEST_CASE("Expose an empty view from a default cell" * test_suite("Reader")) {
   const PublicCell cell;
