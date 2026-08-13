@@ -1,0 +1,27 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/p-ranav/csv2/benchmark/corpus-v2.schema.json",
+  "title": "CSV2 deterministic benchmark corpus",
+  "type": "object",
+  "required": ["schema", "generator_version", "prng", "scale", "datasets"],
+  "properties": {
+    "schema": {"const": "csv2-benchmark-corpus-v2"},
+    "generator_version": {"type": "integer", "minimum": 1},
+    "scale": {"type": "integer", "minimum": 1},
+    "prng": {
+      "type": "object",
+      "required": ["algorithm", "seed"]
+    },
+    "datasets": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "name", "path", "parameters", "size", "sha256", "rows", "cells",
+          "raw_checksum", "content_checksum", "strict_valid"
+        ]
+      }
+    }
+  },
+  "additionalProperties": false
+}

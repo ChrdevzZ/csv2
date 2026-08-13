@@ -1,0 +1,29 @@
+{
+  "protocol": "csv2-current-v2",
+  "checks": [
+    {
+      "dataset": "test/fixtures/upstream/test_01.csv",
+      "operation": "traversal/rows-cells",
+      "source": "buffer",
+      "checksum": "638386005512892526"
+    },
+    {
+      "dataset": "benchmark/datasets/fixtures/quote_heavy.csv",
+      "operation": "writer/raw-direct",
+      "source": "buffer",
+      "checksum": "12859166230996484343"
+    },
+    {
+      "dataset": "benchmark/datasets/fixtures/quote_heavy.csv",
+      "operation": "writer/escaped-direct",
+      "source": "buffer",
+      "checksum": "3103906658680031245"
+    },
+    {
+      "dataset": "benchmark/datasets/fixtures/numeric.csv",
+      "operation": "conversion/integer-bool-error",
+      "source": "buffer",
+      "checksum": "8166090483508935075"
+    }
+  ]
+}
