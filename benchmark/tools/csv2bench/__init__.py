@@ -4,10 +4,12 @@ COMMON_PROTOCOL = "csv2-common-v3"
 CURRENT_PROTOCOL = "csv2-current-v2"
 COMPARISON_SCHEMA = "csv2-benchmark-report-v3"
 METRICS_SCHEMA = "csv2-fixed-machine-metrics-v3"
+BUILD_SCHEMA = "csv2-benchmark-build-v1"
 
 __all__ = [
     "COMMON_PROTOCOL",
     "CURRENT_PROTOCOL",
     "COMPARISON_SCHEMA",
     "METRICS_SCHEMA",
+    "BUILD_SCHEMA",
 ]

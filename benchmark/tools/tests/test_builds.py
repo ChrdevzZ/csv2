@@ -1,0 +1,154 @@
+from __future__ import annotations
+
+import copy
+import hashlib
+import subprocess
+import sys
+import tempfile
+import unittest
+from pathlib import Path
+
+import _support
+from csv2bench import BUILD_SCHEMA, builds
+
+
+REPOSITORY = _support.BENCHMARK_DIR.parent
+
+
+class BuildTests(unittest.TestCase):
+    def test_git_paths_reject_cross_platform_escape_forms(self) -> None:
+        self.assertEqual(
+            builds.safe_git_path("include/csv2/reader.hpp").as_posix(),
+            "include/csv2/reader.hpp",
+        )
+        for value in (
+            "../escape",
+            "a/../escape",
+            "a//escape",
+            "a/./escape",
+            "/absolute",
+            r"..\..\escape",
+            r"C:\escape",
+            r"\\server\share\escape",
+            "file:stream",
+            "line\nbreak",
+        ):
+            with self.subTest(value=value):
+                with self.assertRaisesRegex(RuntimeError, "unsafe Git path"):
+                    builds.safe_git_path(value)
+
+    def test_tree_parser_rejects_symlink_submodule_and_unsafe_path(self) -> None:
+        object_id = b"a" * 40
+        for record in (
+            b"120000 blob " + object_id + b"\tlink\0",
+            b"160000 commit " + object_id + b"\tsubmodule\0",
+            b"100644 blob " + object_id + b"\t..\\escape\0",
+        ):
+            with self.subTest(record=record):
+                with self.assertRaises(RuntimeError):
+                    builds.parse_ls_tree(record)
+
+    def test_export_reads_exact_git_blobs_and_records_oids(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            destination = Path(directory) / "export"
+            manifest = builds.export_git_tree(
+                REPOSITORY,
+                "HEAD",
+                destination,
+                ("include", "benchmark/compare/common_driver.cpp"),
+            )
+            self.assertEqual(manifest["schema"], "csv2-git-export-v1")
+            self.assertRegex(str(manifest["commit"]), r"^[0-9a-f]{40,64}$")
+            self.assertRegex(str(manifest["tree"]), r"^[0-9a-f]{40,64}$")
+            self.assertTrue(manifest["files"])
+            for entry in manifest["files"]:
+                exported = destination.joinpath(*Path(entry["path"]).parts)
+                self.assertEqual(
+                    hashlib.sha256(exported.read_bytes()).hexdigest(), entry["sha256"]
+                )
+                blob = subprocess.run(
+                    ["git", "-C", str(REPOSITORY), "cat-file", "blob", entry["oid"]],
+                    check=True,
+                    capture_output=True,
+                ).stdout
+                self.assertEqual(exported.read_bytes(), blob)
+
+    def test_export_rejects_missing_selection_and_existing_destination(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            with self.assertRaisesRegex(RuntimeError, "selection is missing"):
+                builds.export_git_tree(REPOSITORY, "HEAD", root / "missing", ("absent",))
+            existing = root / "existing"
+            existing.mkdir()
+            with self.assertRaisesRegex(RuntimeError, "already exists"):
+                builds.export_git_tree(REPOSITORY, "HEAD", existing, ("include",))
+
+    def test_export_verification_rejects_content_drift_and_extra_files(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            changed = builds.export_git_tree(
+                REPOSITORY, "HEAD", root / "changed", ("include/csv2/reader.hpp",)
+            )
+            changed_path = Path(changed["root"]) / "include" / "csv2" / "reader.hpp"
+            changed_path.write_bytes(changed_path.read_bytes() + b"\n")
+            with self.assertRaisesRegex(RuntimeError, "changed after extraction"):
+                builds.verify_git_export(changed)
+
+            extra = builds.export_git_tree(
+                REPOSITORY, "HEAD", root / "extra", ("include/csv2/reader.hpp",)
+            )
+            (Path(extra["root"]) / "unmanifested").write_text("extra", encoding="utf-8")
+            with self.assertRaisesRegex(RuntimeError, "unmanifested"):
+                builds.verify_git_export(extra)
+
+    def test_owned_build_manifest_binds_objects_compiler_argv_and_output(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            headers = builds.export_git_tree(
+                REPOSITORY, "HEAD", root / "headers", ("include",)
+            )
+            adapter = builds.export_git_tree(
+                REPOSITORY,
+                "HEAD",
+                root / "adapter",
+                ("benchmark/compare/common_driver.cpp",),
+            )
+            output = root / "driver.bin"
+
+            def fake_run(command, **kwargs):
+                del kwargs
+                if command[-1] == "--version":
+                    return subprocess.CompletedProcess(command, 0, "fake compiler 1\n", "")
+                output_index = command.index("-o") + 1
+                Path(command[output_index]).write_bytes(b"owned-driver")
+                return subprocess.CompletedProcess(command, 0, "compile stdout", "compile stderr")
+
+            manifest = builds.compile_common_driver(
+                header_export=headers,
+                adapter_export=adapter,
+                compiler=Path(sys.executable),
+                compiler_flags=("-std=c++11", "-O3", "-DNDEBUG"),
+                output=output,
+                run_fn=fake_run,
+            )
+            self.assertEqual(manifest["schema"], BUILD_SCHEMA)
+            self.assertEqual(manifest["revision"], headers["commit"])
+            self.assertEqual(manifest["output"]["sha256"], hashlib.sha256(b"owned-driver").hexdigest())
+            self.assertIn("{include_root}", " ".join(manifest["normalized_argv"]))
+            self.assertIn("{revision}", " ".join(manifest["normalized_argv"]))
+            self.assertIn("{output}", " ".join(manifest["normalized_argv"]))
+            self.assertEqual(manifest["build_log"]["returncode"], 0)
+            self.assertRegex(manifest["digest"], r"^[0-9a-f]{64}$")
+
+            compatible = copy.deepcopy(manifest)
+            builds.assert_compatible_builds(manifest, compatible)
+            compatible["normalized_argv"][1] += "-fno-compatible"
+            unsigned = dict(compatible)
+            unsigned.pop("digest")
+            compatible["digest"] = builds.document_digest(unsigned)
+            with self.assertRaisesRegex(RuntimeError, "normalized build commands"):
+                builds.assert_compatible_builds(manifest, compatible)
+
+
+if __name__ == "__main__":
+    unittest.main()
