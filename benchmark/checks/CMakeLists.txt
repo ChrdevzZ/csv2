@@ -44,6 +44,100 @@ csv2_add_benchmark_check(csv2.benchmark.current.dry_run
     --csv2-source buffer --csv2-operation traversal/rows-cells
     --benchmark_min_time=0.001s --benchmark_repetitions=1)
 
+foreach(csv2_unsupported_mode IN ITEMS list timing)
+  if(csv2_unsupported_mode STREQUAL "list")
+    set(csv2_unsupported_command
+      csv2_benchmark --csv2-list --csv2-source file
+      --csv2-operation writer/raw-direct)
+  else()
+    set(csv2_unsupported_command
+      csv2_benchmark --csv2-input ${csv2_check_fixture}
+      --csv2-source file --csv2-operation writer/raw-direct
+      --benchmark_min_time=0.001s --benchmark_repetitions=1)
+  endif()
+  csv2_add_benchmark_check(
+    csv2.benchmark.reject.unsupported_${csv2_unsupported_mode}
+    COMMAND ${csv2_unsupported_command})
+  set_tests_properties(
+    csv2.benchmark.reject.unsupported_${csv2_unsupported_mode}
+    PROPERTIES WILL_FAIL TRUE)
+endforeach()
+
+foreach(csv2_failure IN ITEMS overflow stream)
+  set(csv2_failure_extra_definitions)
+  if(csv2_failure STREQUAL "overflow")
+    set(csv2_failure_argument --csv2-test-output-capacity)
+    set(csv2_failure_value 1)
+    set(csv2_failure_status output_overflow)
+  else()
+    set(csv2_failure_argument --csv2-test-output-stream-failure)
+    unset(csv2_failure_value)
+    set(csv2_failure_status output_stream_failed)
+  endif()
+  if(DEFINED csv2_failure_value)
+    list(APPEND csv2_failure_extra_definitions
+      -DCSV2_EXTRA_VALUE=${csv2_failure_value})
+  endif()
+  csv2_add_benchmark_check(csv2.benchmark.reject.writer_${csv2_failure}
+    COMMAND ${CMAKE_COMMAND}
+      -DCSV2_BENCHMARK_EXECUTABLE=$<TARGET_FILE:csv2_benchmark>
+      -DCSV2_BENCHMARK_INPUT=${csv2_quote_fixture}
+      -DCSV2_BENCHMARK_SOURCE=buffer
+      -DCSV2_BENCHMARK_OPERATION=writer/escaped-direct
+      -DCSV2_EXPECTED_STATUS=${csv2_failure_status}
+      -DCSV2_EXTRA_ARGUMENT=${csv2_failure_argument}
+      ${csv2_failure_extra_definitions}
+      -P ${CMAKE_CURRENT_SOURCE_DIR}/verify_current_failure.cmake)
+endforeach()
+
+set(csv2_missing_input
+  "${CMAKE_CURRENT_BINARY_DIR}/does-not-exist.csv")
+set(csv2_io_failures open read changed)
+if(csv2_benchmark_has_mmap)
+  list(APPEND csv2_io_failures mmap)
+endif()
+foreach(csv2_io_failure IN LISTS csv2_io_failures)
+  if(csv2_io_failure STREQUAL "open")
+    set(csv2_io_operation source/file-read)
+    set(csv2_io_source file)
+    set(csv2_io_status input_open_failed)
+    set(csv2_io_argument --csv2-test-input-path-after-load)
+    set(csv2_io_value ${csv2_missing_input})
+  elseif(csv2_io_failure STREQUAL "read")
+    set(csv2_io_operation source/file-read)
+    set(csv2_io_source file)
+    set(csv2_io_status input_read_failed)
+    set(csv2_io_argument --csv2-test-input-read-failure)
+    unset(csv2_io_value)
+  elseif(csv2_io_failure STREQUAL "mmap")
+    set(csv2_io_operation source/mmap-open)
+    set(csv2_io_source mmap)
+    set(csv2_io_status mmap_failed)
+    set(csv2_io_argument --csv2-test-input-path-after-load)
+    set(csv2_io_value ${csv2_missing_input})
+  else()
+    set(csv2_io_operation source/file-read)
+    set(csv2_io_source file)
+    set(csv2_io_status input_changed)
+    set(csv2_io_argument --csv2-test-input-path-after-load)
+    set(csv2_io_value ${csv2_quote_fixture})
+  endif()
+  set(csv2_io_extra_definitions)
+  if(DEFINED csv2_io_value)
+    list(APPEND csv2_io_extra_definitions -DCSV2_EXTRA_VALUE=${csv2_io_value})
+  endif()
+  csv2_add_benchmark_check(csv2.benchmark.reject.io_${csv2_io_failure}
+    COMMAND ${CMAKE_COMMAND}
+      -DCSV2_BENCHMARK_EXECUTABLE=$<TARGET_FILE:csv2_benchmark>
+      -DCSV2_BENCHMARK_INPUT=${csv2_check_fixture}
+      -DCSV2_BENCHMARK_SOURCE=${csv2_io_source}
+      -DCSV2_BENCHMARK_OPERATION=${csv2_io_operation}
+      -DCSV2_EXPECTED_STATUS=${csv2_io_status}
+      -DCSV2_EXTRA_ARGUMENT=${csv2_io_argument}
+      ${csv2_io_extra_definitions}
+      -P ${CMAKE_CURRENT_SOURCE_DIR}/verify_current_failure.cmake)
+endforeach()
+
 csv2_add_benchmark_check(csv2.benchmark.current.observer_audit.validation
   COMMAND csv2_benchmark_observer_audit --csv2-input ${csv2_check_fixture}
     --csv2-source buffer --csv2-operation validation/strict

@@ -32,27 +32,35 @@ std::string safe_component(std::string value) {
 }
 
 template <typename Function>
-void for_each_selected_source(const Operation &operation, const Options &options,
-                              const Context *context, Function function) {
+std::size_t for_each_selected_source(const Operation &operation, const Options &options,
+                                     const Context *context, Function function) {
+  std::size_t selected = 0;
   const Source sources[] = {Source::file, Source::buffer, Source::mmap};
   for (const Source source : sources) {
     if (!source_enabled(operation.sources, source) || !source_selected(options.source, source))
       continue;
     if (source == Source::mmap && context && !context->mmap_ready())
       continue;
+    ++selected;
     function(source);
   }
+  return selected;
 }
 
 int list_operations(const Registry &registry, const Options &options) {
+  std::size_t selected = 0;
   for (const Operation &operation : registry.operations()) {
     if (!options.operation.empty() && options.operation != operation.id)
       continue;
-    for_each_selected_source(operation, options, nullptr, [&](Source source) {
+    selected += for_each_selected_source(operation, options, nullptr, [&](Source source) {
       std::cout << operation.id << " source=" << source_name(source)
                 << " zero_allocations=" << (operation.expect_zero_allocations ? "true" : "false")
                 << '\n';
     });
+  }
+  if (selected == 0) {
+    std::cerr << "no operation/source combination matched the request\n";
+    return 2;
   }
   return 0;
 }
@@ -60,6 +68,7 @@ int list_operations(const Registry &registry, const Options &options) {
 int verify_operations(Registry &registry, Context &context, const Options &options) {
   bool selected = false;
   bool allocation_failure = false;
+  bool kernel_failure = false;
   for (const Operation &operation : registry.operations()) {
     if (!options.operation.empty() && options.operation != operation.id)
       continue;
@@ -72,6 +81,14 @@ int verify_operations(Registry &registry, Context &context, const Options &optio
       allocation::reset(false);
       result.allocations = counts.allocations;
       result.allocated_bytes = counts.bytes;
+
+      if (!result.ok()) {
+        kernel_failure = true;
+        std::cerr << "operation=" << operation.id << " source=" << source_name(source)
+                  << " kernel_status=" << kernel_status_name(result.status)
+                  << " native_error=" << result.native_error << '\n';
+        return;
+      }
 
       std::cout << "protocol=csv2-current-v2" << " revision=" << CSV2_BENCHMARK_REVISION
                 << " operation=" << operation.id << " source=" << source_name(source)
@@ -92,13 +109,14 @@ int verify_operations(Registry &registry, Context &context, const Options &optio
     return 2;
   }
 
-  return allocation_failure ? 3 : 0;
+  return kernel_failure ? 4 : (allocation_failure ? 3 : 0);
 }
 
 int audit_observers(Registry &registry, Context &context, const Options &options) {
 #if defined(CSV2_BENCHMARK_OBSERVER_AUDIT)
   bool selected = false;
   bool missing_observation = false;
+  bool kernel_failure = false;
   for (const Operation &operation : registry.operations()) {
     if (!options.operation.empty() && options.operation != operation.id)
       continue;
@@ -106,6 +124,13 @@ int audit_observers(Registry &registry, Context &context, const Options &options
       selected = true;
       TimedObserver observer;
       Result result = operation.timed_kernel(context, source, observer);
+      if (!result.ok()) {
+        kernel_failure = true;
+        std::cerr << "operation=" << operation.id << " source=" << source_name(source)
+                  << " kernel_status=" << kernel_status_name(result.status)
+                  << " native_error=" << result.native_error << '\n';
+        return;
+      }
       std::cout << "operation=" << operation.id << " source=" << source_name(source)
                 << " value_observations=" << observer.value_observations()
                 << " memory_observations=" << observer.memory_observations() << '\n';
@@ -118,7 +143,7 @@ int audit_observers(Registry &registry, Context &context, const Options &options
     std::cerr << "no operation/source combination matched the request\n";
     return 2;
   }
-  return missing_observation ? 3 : 0;
+  return kernel_failure ? 4 : (missing_observation ? 3 : 0);
 #else
   (void)registry;
   (void)context;
@@ -128,13 +153,15 @@ int audit_observers(Registry &registry, Context &context, const Options &options
 #endif
 }
 
-void register_timing_benchmarks(Registry &registry, Context &context, const Options &options) {
+std::size_t register_timing_benchmarks(Registry &registry, Context &context,
+                                       const Options &options) {
+  std::size_t selected = 0;
   const std::string dataset = safe_component(context.dataset_name());
   for (const Operation &operation : registry.operations()) {
     if (!options.operation.empty() && options.operation != operation.id)
       continue;
     const Operation *const selected_operation = &operation;
-    for_each_selected_source(operation, options, &context, [&](Source source) {
+    selected += for_each_selected_source(operation, options, &context, [&](Source source) {
       const std::string name = "csv2/" + operation.id + "/" + source_name(source) + "/" + dataset;
       benchmark::RegisterBenchmark(name, [&context, selected_operation,
                                           source](benchmark::State &state) {
@@ -143,7 +170,13 @@ void register_timing_benchmarks(Registry &registry, Context &context, const Opti
         for (auto ignored : state) {
           (void)ignored;
           result = selected_operation->timed_kernel(context, source, observer);
+          if (!result.ok()) {
+            state.SkipWithError(kernel_status_name(result.status));
+            break;
+          }
         }
+        if (!result.ok())
+          return;
         state.SetBytesProcessed(static_cast<std::int64_t>(state.iterations()) *
                                 static_cast<std::int64_t>(context.input_size()));
         const std::uint64_t items = result.cells ? result.cells : result.rows;
@@ -155,6 +188,7 @@ void register_timing_benchmarks(Registry &registry, Context &context, const Opti
       })->UseRealTime();
     });
   }
+  return selected;
 }
 
 } // namespace
@@ -184,6 +218,12 @@ int main(int argc, char **argv) {
       std::cerr << error << '\n';
       return 2;
     }
+    if (options.output_capacity_set)
+      context.limit_output_capacity_for_test(options.output_capacity);
+    context.force_output_stream_failure_for_test(options.force_output_stream_failure);
+    if (!options.input_path_after_load.empty())
+      context.replace_input_path_for_test(options.input_path_after_load);
+    context.force_input_read_failure_for_test(options.force_input_read_failure);
     if (options.source == "mmap" && !context.mmap_ready()) {
       std::cerr << "mmap source is unavailable for this build or input\n";
       return 2;
@@ -196,7 +236,10 @@ int main(int argc, char **argv) {
     benchmark::Initialize(&argc, argv);
     if (benchmark::ReportUnrecognizedArguments(argc, argv))
       return 2;
-    register_timing_benchmarks(registry, context, options);
+    if (register_timing_benchmarks(registry, context, options) == 0) {
+      std::cerr << "no operation/source combination matched the request\n";
+      return 2;
+    }
 #if defined(CSV2_BENCHMARK_ENABLE_ALLOCATION_TRACKING)
     allocation::MemoryManager memory_manager;
     benchmark::RegisterMemoryManager(&memory_manager);

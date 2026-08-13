@@ -8,6 +8,7 @@
 #include <iterator>
 #include <string>
 #include <system_error>
+#include <cerrno>
 
 #if CSV2_HAS_SPAN
 #include <span>
@@ -17,9 +18,24 @@ namespace csv2_benchmark {
 namespace {
 
 template <bool Verify> Result file_read(Context &context, Source, TimedObserver &observer) {
-  std::ifstream input(context.input_path().c_str(), std::ios::binary);
-  std::string bytes((std::istreambuf_iterator<char>(input)), std::istreambuf_iterator<char>());
   Result result;
+  errno = 0;
+  std::ifstream input(context.input_path().c_str(), std::ios::binary);
+  if (!input) {
+    fail(result, KernelStatus::input_open_failed, errno);
+    return result;
+  }
+  if (context.input_read_failure_for_test())
+    input.setstate(std::ios::badbit);
+  std::string bytes((std::istreambuf_iterator<char>(input)), std::istreambuf_iterator<char>());
+  if (!input.eof() && input.fail()) {
+    fail(result, KernelStatus::input_read_failed, errno);
+    return result;
+  }
+  if (bytes.size() != context.input_size()) {
+    fail(result, KernelStatus::input_changed);
+    return result;
+  }
   result.bytes = static_cast<std::uint64_t>(bytes.size());
   if (Verify)
     mix_bytes(result, bytes.data(), bytes.size());
@@ -35,11 +51,12 @@ template <bool Verify> Result mmap_open(Context &context, Source, TimedObserver 
 #if CSV2_HAS_MMAP
   std::error_code error;
   mio::mmap_source mapping = mio::make_mmap_source(context.input_path(), error);
-  if (!error) {
+  if (!error && !mapping.empty()) {
     result.bytes = static_cast<std::uint64_t>(mapping.size());
     if (Verify)
       mix(result, result.bytes);
-  }
+  } else
+    fail(result, KernelStatus::mmap_failed, error.value());
   if constexpr (!Verify) {
     int error_value = error.value();
     observer.value(error_value);
@@ -72,7 +89,8 @@ template <bool Verify> Result mmap_touch(Context &context, Source, TimedObserver
       observer.value(observed_sink);
       observe_result(observer, result);
     }
-  }
+  } else
+    fail(result, KernelStatus::mmap_failed);
 #else
   (void)context;
   (void)observer;
@@ -88,7 +106,8 @@ template <bool Verify> Result parse_borrowed(Context &context, Source, TimedObse
     result.bytes = static_cast<std::uint64_t>(context.input_size());
     if (Verify)
       mix(result, result.bytes);
-  }
+  } else
+    fail(result, KernelStatus::parse_failed);
   if constexpr (!Verify) {
     observer.value(parsed);
     observer.value(reader);
@@ -105,7 +124,8 @@ template <bool Verify> Result parse_owned(Context &context, Source, TimedObserve
     result.bytes = static_cast<std::uint64_t>(context.input_size());
     if (Verify)
       mix(result, result.bytes);
-  }
+  } else
+    fail(result, KernelStatus::parse_failed);
   if constexpr (!Verify) {
     observer.value(parsed);
     observer.value(reader);
@@ -124,8 +144,9 @@ template <bool Verify> Result parse_span(Context &context, Source, TimedObserver
     result.bytes = static_cast<std::uint64_t>(bytes.size());
     if (Verify)
       mix(result, result.bytes);
-  }
-  if (!Verify) {
+  } else
+    fail(result, KernelStatus::parse_failed);
+  if constexpr (!Verify) {
     observer.value(parsed);
     observer.value(reader);
     observe_result(observer, result);

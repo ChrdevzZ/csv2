@@ -19,6 +19,10 @@ Result write(Context &context, const Rows &rows, TimedObserver &observer) {
   result.rows = context.decoded_row_count();
   result.cells = context.decoded_cell_count();
   result.bytes = static_cast<std::uint64_t>(context.output_buffer().size());
+  if (context.output_buffer().overflowed())
+    fail(result, KernelStatus::output_overflow);
+  else if (!stream)
+    fail(result, KernelStatus::output_stream_failed);
   if (Verify)
     mix_bytes(result, context.output_buffer().data(), context.output_buffer().size());
   else {
