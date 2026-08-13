@@ -15,6 +15,21 @@
       "root": "third_party/verification/catch2",
       "file_list": "third_party/verification/catch2.files",
       "patches": []
+    },
+    "google_benchmark": {
+      "upstream": "https://github.com/google/benchmark",
+      "version": "1.9.5",
+      "tag": "v1.9.5",
+      "tag_object": null,
+      "commit": "192ef10025eb2c4cdd392bc502f0c852196baa48",
+      "archive_url": "https://github.com/google/benchmark/archive/192ef10025eb2c4cdd392bc502f0c852196baa48.tar.gz",
+      "archive_sha256": "f82705a2726d8f6cdcda274b841f6314dbfc6f731cdda06c946f310ec1cc3ad9",
+      "snapshot_sha256": "e5ed0f09089472e1ea729869600ae03a8aef75fc521952dcfd30c4904481d789",
+      "license": "Apache-2.0",
+      "license_file": "LICENSE",
+      "root": "third_party/verification/google_benchmark",
+      "file_list": "third_party/verification/google_benchmark.files",
+      "patches": []
     }
   }
 }

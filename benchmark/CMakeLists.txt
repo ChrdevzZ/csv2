@@ -1,5 +1,9 @@
 cmake_minimum_required(VERSION 3.16)
 
+list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
+include(Csv2BenchmarkDependencies)
+csv2_load_google_benchmark()
+
 if(NOT 20 IN_LIST csv2_supported_standards)
   message(FATAL_ERROR
     "CSV2_BUILD_BENCHMARKS requires CMake and a compiler with C++20 support")
