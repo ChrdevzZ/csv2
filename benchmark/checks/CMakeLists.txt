@@ -97,11 +97,11 @@ endforeach()
 
 csv2_add_benchmark_check(csv2.benchmark.common.protocol
   COMMAND csv2_common_benchmark --describe
-  PASS_REGEX "protocol=csv2-common-v1")
+  PASS_REGEX "protocol=csv2-common-v2")
 csv2_add_benchmark_check(csv2.benchmark.common.rows_cells
   COMMAND csv2_common_benchmark --operation rows_cells
     --input ${csv2_check_fixture} --source buffer --iterations 1
-  PASS_REGEX "protocol=csv2-common-v1.*rows=3.*cells=9")
+  PASS_REGEX "protocol=csv2-common-v2.*rows=3.*cells=9")
 
 foreach(csv2_common_writer_operation IN ITEMS
     legacy_writer_raw
@@ -125,6 +125,21 @@ if(csv2_benchmark_has_mmap)
       --csv2-source mmap --csv2-operation traversal/rows-cells --csv2-verify
     PASS_REGEX "protocol=csv2-current-v2.*source=mmap")
 endif()
+
+foreach(csv2_contract IN ITEMS current-legacy-option common-zero-iterations)
+  if(csv2_contract STREQUAL "current-legacy-option")
+    set(csv2_contract_target csv2_benchmark)
+  else()
+    set(csv2_contract_target csv2_common_benchmark)
+  endif()
+  csv2_add_benchmark_check(csv2.benchmark.reject.${csv2_contract}
+    COMMAND ${CMAKE_COMMAND}
+      -DCSV2_BENCHMARK_EXECUTABLE=$<TARGET_FILE:${csv2_contract_target}>
+      -DCSV2_BENCHMARK_KIND=${csv2_contract}
+      -DCSV2_BENCHMARK_INPUT=${csv2_check_fixture}
+      -P ${CMAKE_CURRENT_SOURCE_DIR}/cli_contract.cmake
+    TIMEOUT 5)
+endforeach()
 
 find_package(Python3 3.10 COMPONENTS Interpreter QUIET)
 if(Python3_Interpreter_FOUND)

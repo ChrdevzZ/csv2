@@ -1,3 +1,4 @@
+#include <algorithm>
 #include <chrono>
 #include <cstdint>
 #include <cstdlib>
@@ -20,8 +21,10 @@ namespace {
 using CommonReader = csv2::Reader<csv2::delimiter<','>, csv2::quote_character<'"'>,
                                   csv2::first_row_is_header<false>>;
 
-const char protocol[] = "csv2-common-v1";
+const char protocol[] = "csv2-common-v2";
 volatile std::uint64_t benchmark_sink = 0;
+bool timed_phase = false;
+std::uint64_t timed_checksum_mix_calls = 0;
 
 struct Options {
   std::string operation;
@@ -37,26 +40,75 @@ struct Observation {
 };
 
 void mix(std::uint64_t &checksum, std::uint64_t value) noexcept {
+  if (timed_phase)
+    ++timed_checksum_mix_calls;
   checksum ^= value + 0x9e3779b97f4a7c15ull + (checksum << 6) + (checksum >> 2);
 }
 
-class HashBuffer : public std::streambuf {
+class FixedOutputBuffer : public std::streambuf {
+  std::vector<char> storage_;
+
 public:
-  std::uint64_t checksum{1469598103934665603ull};
+  explicit FixedOutputBuffer(std::size_t capacity) : storage_(capacity) { reset(); }
+
+  void reset() {
+    char *const first = storage_.empty() ? 0 : &storage_[0];
+    setp(first, first == 0 ? 0 : first + storage_.size());
+  }
+
+  const char *data() const { return storage_.empty() ? 0 : &storage_[0]; }
+  std::size_t size() const { return pbase() == 0 ? 0 : static_cast<std::size_t>(pptr() - pbase()); }
 
 protected:
   std::streamsize xsputn(const char *data, std::streamsize size) override {
-    for (std::streamsize index = 0; index < size; ++index)
-      mix(checksum, static_cast<unsigned char>(data[index]));
-    return size;
+    if (size <= 0)
+      return 0;
+    const std::streamsize available = pptr() == 0 ? 0 : epptr() - pptr();
+    const std::streamsize written = (std::min)(available, size);
+    if (written > 0) {
+      std::copy(data, data + written, pptr());
+      std::streamsize remaining = written;
+      while (remaining > 0) {
+        const int step = static_cast<int>(
+            (std::min)(remaining, static_cast<std::streamsize>((std::numeric_limits<int>::max)())));
+        pbump(step);
+        remaining -= step;
+      }
+    }
+    return written;
   }
 
   int_type overflow(int_type character) override {
-    if (!traits_type::eq_int_type(character, traits_type::eof()))
-      mix(checksum, static_cast<unsigned char>(traits_type::to_char_type(character)));
+    if (traits_type::eq_int_type(character, traits_type::eof()) || pptr() == epptr())
+      return traits_type::eof();
+    *pptr() = traits_type::to_char_type(character);
+    pbump(1);
     return character;
   }
 };
+
+std::uint64_t output_checksum(const FixedOutputBuffer &buffer) {
+  std::uint64_t checksum = 1469598103934665603ull;
+  for (std::size_t index = 0; index < buffer.size(); ++index)
+    mix(checksum, static_cast<unsigned char>(buffer.data()[index]));
+  return checksum;
+}
+
+bool writer_capacity(std::uint64_t input_bytes, const Observation &sample, std::size_t &capacity) {
+  const std::uint64_t maximum = (std::numeric_limits<std::size_t>::max)();
+  if (input_bytes > (maximum - 64) / 3 || sample.cells > (maximum - 64) / 3 ||
+      sample.rows > maximum - 64)
+    return false;
+  const std::uint64_t input_capacity = input_bytes * 3;
+  const std::uint64_t cell_capacity = sample.cells * 3;
+  if (input_capacity > maximum - cell_capacity - 64)
+    return false;
+  const std::uint64_t partial = input_capacity + cell_capacity + 64;
+  if (sample.rows > maximum - partial)
+    return false;
+  capacity = static_cast<std::size_t>(partial + sample.rows);
+  return true;
+}
 
 bool parse_size(const char *text, std::size_t &value) {
   if (!text || *text == '\0')
@@ -294,7 +346,9 @@ bool run_prepared(const Options &options, Observation &result, std::uint64_t &ch
     return false;
   checksum = semantic_checksum(reader);
 
+  timed_checksum_mix_calls = 0;
   const std::chrono::steady_clock::time_point start = std::chrono::steady_clock::now();
+  timed_phase = true;
   for (std::size_t run = 0; run < options.iterations; ++run) {
     const Observation sample = traverse(reader);
     result.rows += sample.rows;
@@ -302,6 +356,9 @@ bool run_prepared(const Options &options, Observation &result, std::uint64_t &ch
     result.row_bytes += sample.row_bytes;
   }
   const std::chrono::steady_clock::time_point stop = std::chrono::steady_clock::now();
+  timed_phase = false;
+  if (timed_checksum_mix_calls != 0)
+    return false;
   elapsed_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(stop - start).count();
   return true;
 }
@@ -319,18 +376,25 @@ bool run_legacy_mmap(const Options &options, Observation &result, std::uint64_t 
   }
 
   elapsed_ns = 0;
+  timed_checksum_mix_calls = 0;
   for (std::size_t run = 0; run < options.iterations; ++run) {
     const std::chrono::steady_clock::time_point start = std::chrono::steady_clock::now();
+    timed_phase = true;
     CommonReader reader;
-    if (!reader.mmap(options.input))
+    if (!reader.mmap(options.input)) {
+      timed_phase = false;
       return false;
+    }
     const Observation sample = traverse(reader);
     const std::chrono::steady_clock::time_point stop = std::chrono::steady_clock::now();
+    timed_phase = false;
     elapsed_ns += std::chrono::duration_cast<std::chrono::nanoseconds>(stop - start).count();
     result.rows += sample.rows;
     result.cells += sample.cells;
     result.row_bytes += sample.row_bytes;
   }
+  if (timed_checksum_mix_calls != 0)
+    return false;
   return true;
 #else
   (void)options;
@@ -362,49 +426,75 @@ bool run_writer(const Options &options, Observation &result, std::uint64_t &chec
     return false;
 #endif
 
-  HashBuffer buffer;
+  std::size_t capacity = 0;
+  if (!writer_capacity(file_size(options.input), sample, capacity))
+    return false;
+  FixedOutputBuffer buffer(capacity);
   std::ostream output(&buffer);
+  timed_checksum_mix_calls = 0;
   const std::chrono::steady_clock::time_point start = std::chrono::steady_clock::now();
+  timed_phase = true;
   if (options.operation == "legacy_writer_raw") {
     csv2::Writer<csv2::delimiter<','>, std::ostream> writer(output);
-    for (std::size_t run = 0; run < options.iterations; ++run)
+    for (std::size_t run = 0; run < options.iterations; ++run) {
+      buffer.reset();
+      output.clear();
       writer.write_rows(prepared_rows);
+    }
   }
 #if defined(CSV2_BENCHMARK_ENABLE_MODERN_WRITER_OPERATIONS)
   else if (options.operation == "writer_raw_direct") {
     csv2::basic_writer<csv2::delimiter<','>, std::ostream, csv2::stream_ownership::leave_open,
                        csv2::quote_policy::none>
         writer(output);
-    for (std::size_t run = 0; run < options.iterations; ++run)
+    for (std::size_t run = 0; run < options.iterations; ++run) {
+      buffer.reset();
+      output.clear();
       for (const auto row : reader)
         writer.write_row(RawRow<CommonReader::Row, RawDirectField>(row));
+    }
   } else if (options.operation == "writer_raw_streamable") {
     csv2::basic_writer<csv2::delimiter<','>, std::ostream, csv2::stream_ownership::leave_open,
                        csv2::quote_policy::none>
         writer(output);
-    for (std::size_t run = 0; run < options.iterations; ++run)
+    for (std::size_t run = 0; run < options.iterations; ++run) {
+      buffer.reset();
+      output.clear();
       for (const auto row : reader)
         writer.write_row(RawRow<CommonReader::Row, RawStreamableField>(row));
+    }
   } else if (options.operation == "writer_escaped_direct") {
     csv2::EscapingWriter<csv2::delimiter<','>, std::ostream, csv2::stream_ownership::leave_open>
         writer(output);
-    for (std::size_t run = 0; run < options.iterations; ++run)
+    for (std::size_t run = 0; run < options.iterations; ++run) {
+      buffer.reset();
+      output.clear();
       writer.write_rows(prepared_rows);
+    }
   } else if (options.operation == "writer_escaped_streamable") {
     csv2::EscapingWriter<csv2::delimiter<','>, std::ostream, csv2::stream_ownership::leave_open>
         writer(output);
-    for (std::size_t run = 0; run < options.iterations; ++run)
+    for (std::size_t run = 0; run < options.iterations; ++run) {
+      buffer.reset();
+      output.clear();
       for (StringRows::const_iterator row = prepared_rows.begin(); row != prepared_rows.end();
            ++row)
         writer.write_row(StreamableStringRow(*row));
+    }
   }
 #endif
   const std::chrono::steady_clock::time_point stop = std::chrono::steady_clock::now();
+  timed_phase = false;
+
+  if (!output)
+    return false;
+  if (timed_checksum_mix_calls != 0)
+    return false;
 
   result.rows = sample.rows * options.iterations;
   result.cells = sample.cells * options.iterations;
   result.row_bytes = sample.row_bytes * options.iterations;
-  checksum = buffer.checksum;
+  checksum = output_checksum(buffer);
   elapsed_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(stop - start).count();
   return true;
 }

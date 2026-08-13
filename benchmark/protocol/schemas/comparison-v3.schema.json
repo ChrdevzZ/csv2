@@ -1,0 +1,248 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "CSV2 paired benchmark report v3",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema", "mode", "status", "evidence_level", "decision_eligible",
+    "generated_at_utc", "runs", "warmups", "iterations_per_run", "compiler",
+    "compiler_flags", "host", "runner", "adapter_source", "baseline",
+    "candidate", "datasets", "calibration", "cases"
+  ],
+  "properties": {
+    "schema": {"const": "csv2-benchmark-report-v3"},
+    "mode": {"enum": ["aa", "compare"]},
+    "status": {"enum": ["running", "completed", "failed"]},
+    "evidence_level": {"enum": ["exploratory", "controlled"]},
+    "decision_eligible": {"type": "boolean"},
+    "generated_at_utc": {"type": "string", "minLength": 1},
+    "completed_at_utc": {"type": "string", "minLength": 1},
+    "error": {"type": "string", "minLength": 1},
+    "runs": {"type": "integer", "minimum": 1},
+    "warmups": {"type": "integer", "minimum": 0},
+    "iterations_per_run": {"type": "integer", "minimum": 1},
+    "compiler": {"type": "string", "minLength": 1},
+    "compiler_flags": {"type": "string"},
+    "host": {
+      "type": "object",
+      "required": [
+        "platform", "node", "machine", "processor", "cpu_model",
+        "cpu_model_source", "logical_cpus", "process_affinity", "python"
+      ],
+      "properties": {
+        "logical_cpus": {"type": "integer", "minimum": 1},
+        "process_affinity": {
+          "oneOf": [
+            {"type": "null"},
+            {"type": "array", "items": {"type": "integer", "minimum": 0}}
+          ]
+        }
+      },
+      "additionalProperties": true
+    },
+    "runner": {"$ref": "#/$defs/source_bundle"},
+    "adapter_source": {"$ref": "#/$defs/revision_artifact"},
+    "baseline": {"$ref": "#/$defs/revision_side"},
+    "candidate": {"$ref": "#/$defs/revision_side"},
+    "datasets": {"type": "array", "items": {"$ref": "#/$defs/dataset"}},
+    "calibration": {"type": ["object", "null"]},
+    "cases": {"type": "array", "items": {"$ref": "#/$defs/case"}}
+  },
+  "$defs": {
+    "artifact": {
+      "type": "object",
+      "required": ["path", "size", "sha256", "mtime_ns"],
+      "properties": {
+        "path": {"type": "string", "minLength": 1},
+        "size": {"type": "integer", "minimum": 0},
+        "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "mtime_ns": {"type": "integer", "minimum": 0}
+      },
+      "additionalProperties": true
+    },
+    "revision_artifact": {
+      "allOf": [
+        {"$ref": "#/$defs/artifact"},
+        {"required": ["revision"], "properties": {"revision": {"type": "string", "minLength": 1}}}
+      ]
+    },
+    "source_bundle": {
+      "type": "object",
+      "required": ["kind", "root", "revision", "sha256", "files"],
+      "properties": {
+        "kind": {"const": "source-bundle"},
+        "root": {"type": "string", "minLength": 1},
+        "revision": {"type": "string", "minLength": 1},
+        "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "files": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/artifact"}}
+      },
+      "additionalProperties": false
+    },
+    "invocation": {
+      "type": "object",
+      "required": ["command", "stdout", "stderr"],
+      "properties": {
+        "command": {"type": "array", "minItems": 1, "items": {"type": "string", "minLength": 1}},
+        "stdout": {"type": "string"},
+        "stderr": {"type": "string"}
+      },
+      "additionalProperties": false
+    },
+    "revision_side": {
+      "type": "object",
+      "required": ["artifact", "description", "description_invocation"],
+      "properties": {
+        "artifact": {"$ref": "#/$defs/revision_artifact"},
+        "description": {
+          "type": "object",
+          "required": ["protocol", "revision", "operations", "sources"],
+          "properties": {
+            "protocol": {"const": "csv2-common-v2"},
+            "revision": {"type": "string", "minLength": 1},
+            "operations": {"type": "string", "minLength": 1},
+            "sources": {"type": "string", "minLength": 1}
+          },
+          "additionalProperties": true
+        },
+        "description_invocation": {"$ref": "#/$defs/invocation"}
+      },
+      "additionalProperties": false
+    },
+    "dataset": {
+      "type": "object",
+      "required": ["name", "path", "size", "sha256"],
+      "properties": {
+        "name": {"type": "string", "minLength": 1},
+        "path": {"type": "string", "minLength": 1},
+        "size": {"type": "integer", "minimum": 1},
+        "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+      },
+      "additionalProperties": false
+    },
+    "case": {
+      "type": "object",
+      "required": [
+        "dataset", "operation", "source", "semantic_signature", "baseline",
+        "candidate", "candidate_over_baseline_95pct", "measured_noise",
+        "calibration_noise", "observed_noise", "regression_threshold",
+        "regression", "improvement", "launches"
+      ],
+      "properties": {
+        "dataset": {"type": "string", "minLength": 1},
+        "operation": {"type": "string", "minLength": 1},
+        "source": {"enum": ["buffer", "mmap"]},
+        "semantic_signature": {
+          "type": "array", "minItems": 6, "maxItems": 6,
+          "items": {"type": "string", "pattern": "^(0|[1-9][0-9]*)$"}
+        },
+        "baseline": {"$ref": "#/$defs/sample_statistics"},
+        "candidate": {"$ref": "#/$defs/sample_statistics"},
+        "candidate_over_baseline_95pct": {
+          "type": "array", "minItems": 2, "maxItems": 2,
+          "items": {"type": "number", "exclusiveMinimum": 0}
+        },
+        "measured_noise": {"type": "number", "minimum": 0},
+        "calibration_noise": {"type": "number", "minimum": 0},
+        "observed_noise": {"type": "number", "minimum": 0},
+        "regression_threshold": {"type": "number", "minimum": 0.05},
+        "regression": {"type": "boolean"},
+        "improvement": {"type": "boolean"},
+        "launches": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/launch"}}
+      },
+      "additionalProperties": false
+    },
+    "sample_statistics": {
+      "type": "object",
+      "required": ["median", "mad", "samples"],
+      "properties": {
+        "median": {"type": "number", "exclusiveMinimum": 0},
+        "mad": {"type": "number", "minimum": 0},
+        "samples": {
+          "type": "array", "minItems": 1,
+          "items": {"type": "number", "exclusiveMinimum": 0}
+        }
+      },
+      "additionalProperties": false
+    },
+    "launch": {
+      "type": "object",
+      "required": [
+        "phase", "round", "order", "side", "command", "stdout", "stderr",
+        "throughput_gib_per_second", "result"
+      ],
+      "properties": {
+        "phase": {"enum": ["warmup", "sample"]},
+        "round": {"type": "integer", "minimum": 0},
+        "order": {"enum": [0, 1]},
+        "side": {"enum": ["baseline", "candidate"]},
+        "command": {"type": "array", "minItems": 1, "items": {"type": "string", "minLength": 1}},
+        "stdout": {"type": "string"},
+        "stderr": {"type": "string"},
+        "throughput_gib_per_second": {"type": "number", "exclusiveMinimum": 0},
+        "result": {
+          "type": "object",
+          "required": [
+            "protocol", "revision", "operation", "scope", "source", "bytes",
+            "iterations", "elapsed_ns", "rows", "cells", "row_bytes", "checksum"
+          ],
+          "properties": {
+            "protocol": {"const": "csv2-common-v2"},
+            "revision": {"type": "string", "minLength": 1},
+            "operation": {"type": "string", "minLength": 1},
+            "scope": {"type": "string", "minLength": 1},
+            "source": {"enum": ["buffer", "mmap"]},
+            "bytes": {"type": "string", "pattern": "^(0|[1-9][0-9]*)$"},
+            "iterations": {"type": "string", "pattern": "^(0|[1-9][0-9]*)$"},
+            "elapsed_ns": {"type": "string", "pattern": "^[1-9][0-9]*$"},
+            "rows": {"type": "string", "pattern": "^(0|[1-9][0-9]*)$"},
+            "cells": {"type": "string", "pattern": "^(0|[1-9][0-9]*)$"},
+            "row_bytes": {"type": "string", "pattern": "^(0|[1-9][0-9]*)$"},
+            "checksum": {"type": "string", "pattern": "^(0|[1-9][0-9]*)$"}
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "allOf": [
+    {
+      "if": {"properties": {"status": {"const": "completed"}}, "required": ["status"]},
+      "then": {
+        "required": ["completed_at_utc"],
+        "properties": {"datasets": {"minItems": 1}, "cases": {"minItems": 1}}
+      }
+    },
+    {
+      "if": {"properties": {"status": {"const": "failed"}}, "required": ["status"]},
+      "then": {"required": ["error"]}
+    },
+    {
+      "if": {"properties": {"decision_eligible": {"const": true}}, "required": ["decision_eligible"]},
+      "then": {
+        "properties": {"status": {"const": "completed"}, "evidence_level": {"const": "controlled"}}
+      }
+    },
+    {
+      "if": {"properties": {"evidence_level": {"const": "controlled"}}, "required": ["evidence_level"]},
+      "then": {
+        "properties": {
+          "runs": {"minimum": 20},
+          "warmups": {"minimum": 3},
+          "host": {"properties": {"process_affinity": {"type": "array", "minItems": 1}}}
+        }
+      }
+    },
+    {
+      "if": {"properties": {"mode": {"const": "aa"}}, "required": ["mode"]},
+      "then": {"properties": {"calibration": {"type": "null"}}}
+    },
+    {
+      "if": {
+        "properties": {"mode": {"const": "compare"}, "evidence_level": {"const": "controlled"}},
+        "required": ["mode", "evidence_level"]
+      },
+      "then": {"properties": {"calibration": {"type": "object"}}}
+    }
+  ]
+}
