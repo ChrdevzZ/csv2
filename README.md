@@ -101,9 +101,9 @@ lifetime.
 `include/csv2/mio.hpp` vendors [mandreyel/mio](https://github.com/mandreyel/mio),
 first imported by csv2 commit `e51a8df` on 2020-04-23. Its MIT license remains
 in `LICENSE.mio`. Local csv2 patches preserve mapping ownership/error handling,
-support explicit no-mmap builds, and restrict file paths to the safe types
-listed above; no independent upstream version tag was recorded by the original
-import.
+request readable protection for writable POSIX mappings, support explicit
+no-mmap builds, and restrict file paths to the safe types listed above; no
+independent upstream version tag was recorded by the original import.
 
 Records may be terminated by LF or CRLF. LF and CRLF inside a quoted field are
 part of that field, and doubled quote characters (`""`) do not close it. A final
