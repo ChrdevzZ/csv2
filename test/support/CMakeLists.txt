@@ -1,6 +1,7 @@
 add_library(csv2_test_support INTERFACE)
 target_include_directories(csv2_test_support INTERFACE
   ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_link_libraries(csv2_test_support INTERFACE csv2_test_fixtures)
 
 add_library(csv2_minitest STATIC minitest.cpp)
 target_link_libraries(csv2_minitest PUBLIC csv2_test_support)

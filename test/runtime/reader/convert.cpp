@@ -77,8 +77,8 @@ CSV2_TEST_CASE("reader.convert.expose-cxx23-expected-adapters-when-the-library-p
 
 #if CSV2_HAS_MMAP
   ReaderWithoutHeader mapped;
-  CSV2_REQUIRE(mapped.mmap_expected("inputs/test_01.csv").has_value());
-  const auto missing = mapped.mmap_expected("inputs/this-file-does-not-exist.csv");
+  CSV2_REQUIRE(mapped.mmap_expected(fixture_path("test_01.csv")).has_value());
+  const auto missing = mapped.mmap_expected(fixture_path("this-file-does-not-exist.csv"));
   CSV2_REQUIRE_FALSE(missing.has_value());
   CSV2_REQUIRE(missing.error());
 #endif

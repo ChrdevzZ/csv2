@@ -61,3 +61,36 @@ csv2_declare_test_domain(
   PROFILES quick full perf
   LABELS reader runtime index
   TIMEOUT 20)
+
+csv2_declare_test_domain(
+  ID writer.raw
+  SOURCES runtime/writer/raw.cpp
+  MIN_STANDARD 11
+  PROFILES quick full perf
+  LABELS writer runtime
+  TIMEOUT 20)
+
+csv2_declare_test_domain(
+  ID writer.escape
+  SOURCES runtime/writer/escape.cpp
+  MIN_STANDARD 11
+  PROFILES quick full perf
+  LABELS writer runtime escaping
+  TIMEOUT 20)
+
+csv2_declare_test_domain(
+  ID writer.stream
+  SOURCES runtime/writer/stream.cpp
+  MIN_STANDARD 11
+  PROFILES quick full perf
+  LABELS writer runtime stream
+  TIMEOUT 20)
+
+csv2_declare_test_domain(
+  ID mio.mapping
+  SOURCES runtime/mio/mapping.cpp
+  MIN_STANDARD 11
+  PROFILES quick full perf
+  REQUIRES mmap
+  LABELS mio runtime mapping
+  TIMEOUT 30)

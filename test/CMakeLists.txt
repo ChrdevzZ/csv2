@@ -52,7 +52,9 @@ if(NOT CSV2_BUILD_TESTS)
   return()
 endif()
 
+add_subdirectory(fixtures)
 add_subdirectory(support)
+add_subdirectory(platform)
 add_subdirectory(runtime)
 add_subdirectory(contracts)
 csv2_add_runtime_matrix()
@@ -542,14 +544,10 @@ set_tests_properties(csv2.benchmark.no_mmap PROPERTIES
   WILL_FAIL TRUE)
 
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
-  set(csv2_windows_shim_directory "${CMAKE_CURRENT_BINARY_DIR}/winapi_shim")
-  file(MAKE_DIRECTORY "${csv2_windows_shim_directory}")
-  file(WRITE "${csv2_windows_shim_directory}/windows.h" "")
-
   function(csv2_add_windows_api_test target test_name single_header)
-    add_executable(${target} main.cpp)
-    target_compile_definitions(${target} PRIVATE CSV2_TEST_WINDOWS_API)
-    target_include_directories(${target} PRIVATE ${csv2_windows_shim_directory})
+    add_executable(${target} platform/windows_mio_shim.cpp)
+    target_include_directories(${target} PRIVATE
+      ${CMAKE_CURRENT_SOURCE_DIR}/platform/winapi_stub)
     if(single_header)
       target_compile_definitions(${target} PRIVATE CSV2_TEST_SINGLE_HEADER)
       target_include_directories(${target} PRIVATE ${csv2_SOURCE_DIR}/single_include)
@@ -567,5 +565,5 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
     csv2.mio.winapi_injection.single_header.cxx11 TRUE)
 endif()
 
-file(COPY ${CMAKE_CURRENT_SOURCE_DIR}/inputs
-     DESTINATION ${CMAKE_CURRENT_BINARY_DIR})
+file(COPY ${CMAKE_CURRENT_SOURCE_DIR}/fixtures/upstream/
+     DESTINATION ${CMAKE_CURRENT_BINARY_DIR}/inputs)

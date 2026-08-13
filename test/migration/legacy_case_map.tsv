@@ -1,0 +1,72 @@
+legacy_title	stable_case_id	domain
+Read a file, its header, rows, columns, and cells	reader.source.read-a-file-its-header-rows-columns-and-cells	reader.source
+Honor delimiter, quote, and trim policies	reader.scan.honor-delimiter-quote-and-trim-policies	reader.scan
+Preserve original cell bounds for custom trim policies	reader.extract.preserve-original-cell-bounds-for-custom-trim-policies	reader.extract
+Evaluate borrowed string address before its extent	reader.source.evaluate-borrowed-string-address-before-its-extent	reader.source
+Materialize an owned string address before its extent	reader.source.materialize-an-owned-string-address-before-its-extent	reader.source
+Use a custom trim policy on complete field bounds	reader.validate.use-a-custom-trim-policy-on-complete-field-bounds	reader.validate
+Do not validate a suffix using a different trim context	reader.validate.do-not-validate-a-suffix-using-a-different-trim-context	reader.validate
+Preserve quote structure when the trim policy includes quotes	reader.validate.preserve-quote-structure-when-the-trim-policy-includes-quotes	reader.validate
+Preserve structural diagnostics after a quoted-field suffix	reader.validate.preserve-structural-diagnostics-after-a-quoted-field-suffix	reader.validate
+Propagate exceptions from a user trim policy	reader.validate.propagate-exceptions-from-a-user-trim-policy	reader.validate
+Keep shared delimiter and quote semantics stable across the scanner threshold	reader.scan.keep-shared-delimiter-and-quote-semantics-stable-across-the-scanner-threshold	reader.scan
+Validate a shared delimiter and quote with quote precedence	reader.validate.validate-a-shared-delimiter-and-quote-with-quote-precedence	reader.validate
+Give a newline quote policy precedence over record boundaries	reader.scan.give-a-newline-quote-policy-precedence-over-record-boundaries	reader.scan
+Allow a bare carriage return inside a quoted field	reader.validate.allow-a-bare-carriage-return-inside-a-quoted-field	reader.validate
+Preserve carriage-return quote bytes at record boundaries	reader.scan.preserve-carriage-return-quote-bytes-at-record-boundaries	reader.scan
+Reject record-separator quotes outside a quoted field	reader.scan.reject-record-separator-quotes-outside-a-quoted-field	reader.scan
+Scan cell boundaries through the shared fast path	reader.scan.scan-cell-boundaries-through-the-shared-fast-path	reader.scan
+Validate strict CSV syntax without changing permissive traversal	reader.validate.validate-strict-csv-syntax-without-changing-permissive-traversal	reader.validate
+Allow carriage returns inside a quoted field during validation	reader.validate.allow-carriage-returns-inside-a-quoted-field-during-validation	reader.validate
+Validate structural characters before overlapping trim characters	reader.validate.validate-structural-characters-before-overlapping-trim-characters	reader.validate
+Convert complete integer field content without modifying failures	reader.convert.convert-complete-integer-field-content-without-modifying-failures	reader.convert
+Expose C++23 expected adapters when the library provides them	reader.convert.expose-cxx23-expected-adapters-when-the-library-provides-them	reader.convert
+Handle record terminators and quoted newlines	reader.scan.handle-record-terminators-and-quoted-newlines	reader.scan
+Expose the address and length of each logical row	reader.extract.expose-the-address-and-length-of-each-logical-row	reader.extract
+Preserve trailing empty fields and normalize empty records	reader.scan.preserve-trailing-empty-fields-and-normalize-empty-records	reader.scan
+Read raw and decoded cell values by appending to the output	reader.extract.read-raw-and-decoded-cell-values-by-appending-to-the-output	reader.extract
+Do not reserve when reading an empty raw range	reader.extract.do-not-reserve-when-reading-an-empty-raw-range	reader.extract
+Copy fields to generic containers and output iterators	reader.extract.copy-fields-to-generic-containers-and-output-iterators	reader.extract
+Batch contiguous raw and decoded field segments	reader.extract.batch-contiguous-raw-and-decoded-field-segments	reader.extract
+Expose raw byte views and explicit source ownership	reader.source.expose-raw-byte-views-and-explicit-source-ownership	reader.source
+Reject an owned alias range that extends beyond its backing source	reader.source.reject-an-owned-alias-range-that-extends-beyond-its-backing-source	reader.source
+Preserve owned storage when parse_borrowed selects a cell range	reader.source.preserve-owned-storage-when-parse-borrowed-selects-a-cell-range	reader.source
+Preserve mapped storage when parse_borrowed selects a cell range	reader.source.preserve-mapped-storage-when-parse-borrowed-selects-a-cell-range	reader.source
+Expose an empty view from a default cell	reader.extract.expose-an-empty-view-from-a-default-cell	reader.extract
+Borrow a span source without copying	reader.source.borrow-a-span-source-without-copying	reader.source
+Reacquire cursors and indexes after same-extent source mutation	reader.source.reacquire-cursors-and-indexes-after-same-extent-source-mutation	reader.source
+Pipe a temporary borrowed Row view	reader.ranges.pipe-a-temporary-borrowed-row-view	reader.ranges
+Reserve for existing output when appending a raw row	reader.extract.reserve-for-existing-output-when-appending-a-raw-row	reader.extract
+Append a raw row to a reserve-only output type	reader.extract.append-a-raw-row-to-a-reserve-only-output-type	reader.extract
+Own rvalue input, borrow lvalue input, and preserve input across moves	reader.source.own-rvalue-input-borrow-lvalue-input-and-preserve-input-across-moves	reader.source
+Clear old input when replacing a source or a source fails	reader.source.clear-old-input-when-replacing-a-source-or-a-source-fails	reader.source
+Report mmap errors and release handles after mapping failures	mio.mapping.report-mmap-errors-and-release-handles-after-mapping-failures	mio.mapping
+Map a non-page-aligned offset beyond the first page	mio.mapping.map-a-non-page-aligned-offset-beyond-the-first-page	mio.mapping
+Preserve ownership when remapping through the mapping's own handle	mio.mapping.preserve-ownership-when-remapping-through-the-mapping-s-own-handle	mio.mapping
+Preserve ownership through shared and writable same-handle remaps	mio.mapping.preserve-ownership-through-shared-and-writable-same-handle-remaps	mio.mapping
+Reject mapped paths containing an embedded NUL	mio.mapping.reject-mapped-paths-containing-an-embedded-nul	mio.mapping
+Validate sized character range paths before mapping	mio.mapping.validate-sized-character-range-paths-before-mapping	mio.mapping
+Map a caller-owned file handle without closing it	mio.mapping.map-a-caller-owned-file-handle-without-closing-it	mio.mapping
+Map a path stored in the Reader's current owned source	mio.mapping.map-a-path-stored-in-the-reader-s-current-owned-source	mio.mapping
+Map a path stored in the Reader's current mapped source	mio.mapping.map-a-path-stored-in-the-reader-s-current-mapped-source	mio.mapping
+Map a filesystem path	mio.mapping.map-a-filesystem-path	mio.mapping
+Borrow storage passed through parse_view	reader.source.borrow-storage-passed-through-parse-view	reader.source
+Preserve a complete owned source when parse_view aliases it	reader.source.preserve-a-complete-owned-source-when-parse-view-aliases-it	reader.source
+Preserve owned storage when parse_view selects a cell subview	reader.source.preserve-owned-storage-when-parse-view-selects-a-cell-subview	reader.source
+Preserve mapped storage when parse_view selects a cell subview	reader.source.preserve-mapped-storage-when-parse-view-selects-a-cell-subview	reader.source
+Preserve destination-owned storage when move-assigning a view borrower	reader.source.preserve-destination-owned-storage-when-move-assigning-a-view-borrower	reader.source
+Compare const iterators and expose a trailing empty cell before end	reader.iterate.compare-const-iterators-and-expose-a-trailing-empty-cell-before-end	reader.iterate
+Use default and post-incremented iterators with classic algorithms	reader.iterate.use-default-and-post-incremented-iterators-with-classic-algorithms	reader.iterate
+Build an explicit random-access row index from logical record offsets	reader.index.build-an-explicit-random-access-row-index-from-logical-record-offsets	reader.index
+Write to streams with and without close	writer.stream.write-to-streams-with-and-without-close	writer.stream
+Write empty and forward-iterable rows	writer.raw.write-empty-and-forward-iterable-rows	writer.raw
+Preserve historical Writer record-byte delimiter policies	writer.raw.preserve-historical-writer-record-byte-delimiter-policies	writer.raw
+Write ADL ranges and contiguous character fields directly	writer.raw.write-adl-ranges-and-contiguous-character-fields-directly	writer.raw
+Consume stream width on the next Writer field	writer.stream.consume-stream-width-on-the-next-writer-field	writer.stream
+Propagate formatted Writer state and preserve insertion exceptions	writer.stream.propagate-formatted-writer-state-and-preserve-insertion-exceptions	writer.stream
+Escape CSV fields with explicit minimal and always quote policies	writer.escape.escape-csv-fields-with-explicit-minimal-and-always-quote-policies	writer.escape
+Leave borrowed streams open unless close is explicit	writer.stream.leave-borrowed-streams-open-unless-close-is-explicit	writer.stream
+Write C++20 view pipelines	writer.raw.write-cxx20-view-pipelines	writer.raw
+Write a forward-iterable collection of rows	writer.raw.write-a-forward-iterable-collection-of-rows	writer.raw
+Transfer and release Writer close responsibility exactly once	writer.stream.transfer-and-release-writer-close-responsibility-exactly-once	writer.stream
+Report explicit Writer close errors and suppress destructor close errors	writer.stream.report-explicit-writer-close-errors-and-suppress-destructor-close-errors	writer.stream
