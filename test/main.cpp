@@ -2439,6 +2439,21 @@ TEST_CASE("Escape CSV fields with explicit minimal and always quote policies" *
   always.write_row(std::vector<std::string>({"a", "\"b\"", ""}));
   REQUIRE(always_output.str() == "\"a\",\"\"\"b\"\"\",\"\"\n");
 
+  std::ostringstream minimal_empty_output;
+  csv2::EscapingWriter<csv2::delimiter<','>, std::ostringstream, csv2::stream_ownership::leave_open>
+      minimal_empty(minimal_empty_output);
+  minimal_empty.write_row(std::vector<std::string>());
+  minimal_empty.write_row(std::vector<std::string>(1));
+  REQUIRE(minimal_empty_output.str() == "\n\n");
+
+  std::ostringstream always_empty_output;
+  csv2::basic_writer<csv2::delimiter<','>, std::ostringstream, csv2::stream_ownership::leave_open,
+                     csv2::quote_policy::always>
+      always_empty(always_empty_output);
+  always_empty.write_row(std::vector<std::string>());
+  always_empty.write_row(std::vector<std::string>(1));
+  REQUIRE(always_empty_output.str() == "\n\"\"\n");
+
   std::ostringstream formatted_output;
   formatted_output << std::hex;
   csv2::EscapingWriter<csv2::delimiter<','>, std::ostringstream, csv2::stream_ownership::leave_open>
