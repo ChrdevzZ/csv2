@@ -1,5 +1,12 @@
 include_guard(GLOBAL)
 
+function(csv2_register_runtime_test target test_name)
+  add_test(NAME ${test_name} COMMAND ${target})
+  set_tests_properties(${test_name} PROPERTIES
+    LABELS sanitizer-runtime
+    WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+endfunction()
+
 function(csv2_register_domain_test target domain header_mode standard variant backend)
   string(REPLACE "." "_" domain_key "${domain}")
   get_property(timeout GLOBAL PROPERTY CSV2_TEST_DOMAIN_${domain_key}_TIMEOUT)
