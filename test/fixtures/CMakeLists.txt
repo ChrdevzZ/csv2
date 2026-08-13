@@ -1,10 +1,12 @@
 file(STRINGS "${CMAKE_CURRENT_SOURCE_DIR}/SHA256SUMS" csv2_fixture_hashes)
+set(csv2_manifest_fixture_paths)
 foreach(entry IN LISTS csv2_fixture_hashes)
   if(NOT entry MATCHES "^([0-9a-f]+)  ([^ ]+)$")
     message(FATAL_ERROR "Malformed fixture hash entry: ${entry}")
   endif()
   set(expected_hash "${CMAKE_MATCH_1}")
   set(relative_path "${CMAKE_MATCH_2}")
+  list(APPEND csv2_manifest_fixture_paths "${relative_path}")
   string(LENGTH "${expected_hash}" hash_length)
   if(NOT hash_length EQUAL 64)
     message(FATAL_ERROR "Malformed fixture SHA-256: ${entry}")
@@ -20,6 +22,17 @@ foreach(entry IN LISTS csv2_fixture_hashes)
       "expected ${expected_hash}, got ${actual_hash}")
   endif()
 endforeach()
+
+file(GLOB_RECURSE csv2_discovered_fixture_paths
+  RELATIVE "${CMAKE_CURRENT_SOURCE_DIR}" "${CMAKE_CURRENT_SOURCE_DIR}/*.csv")
+list(SORT csv2_discovered_fixture_paths)
+list(SORT csv2_manifest_fixture_paths)
+if(NOT csv2_discovered_fixture_paths STREQUAL csv2_manifest_fixture_paths)
+  message(FATAL_ERROR
+    "CSV2 fixture manifest does not match the fixture tree. "
+    "Manifest: ${csv2_manifest_fixture_paths}; "
+    "discovered: ${csv2_discovered_fixture_paths}")
+endif()
 
 add_library(csv2_test_fixtures INTERFACE)
 target_compile_definitions(csv2_test_fixtures INTERFACE

@@ -44,7 +44,7 @@ jobs:
       - name: Build smoke targets
         run: >-
           cmake --build build --parallel
-          --target csv2_fuzz csv2_fuzz_smoke
+          --target csv2_fuzz csv2_fuzz_writer csv2_fuzz_smoke csv2_fuzz_writer_smoke
           csv2_benchmark csv2_benchmark_allocations
           csv2_common_benchmark
 
@@ -55,7 +55,9 @@ jobs:
         env:
           ASAN_OPTIONS: detect_leaks=1:halt_on_error=1
           UBSAN_OPTIONS: halt_on_error=1:print_stacktrace=1
-        run: ./build/test/csv2_fuzz -runs=5000 test/fuzz/corpus
+        run: |
+          ./build/test/fuzz/csv2_fuzz -runs=5000 test/fuzz/corpus/reader
+          ./build/test/fuzz/csv2_fuzz_writer -runs=5000 test/fuzz/corpus/writer
 
       - name: Verify benchmark checksums
         run: >-
