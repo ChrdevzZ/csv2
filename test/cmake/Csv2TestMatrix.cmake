@@ -14,8 +14,16 @@ function(csv2_add_runtime_variant standard header_mode variant)
       PROPERTY CSV2_TEST_DOMAIN_${domain_key}_MIN_STANDARD)
     get_property(profiles GLOBAL
       PROPERTY CSV2_TEST_DOMAIN_${domain_key}_PROFILES)
+    get_property(requires GLOBAL
+      PROPERTY CSV2_TEST_DOMAIN_${domain_key}_REQUIRES)
     if(standard LESS min_standard OR
        NOT CSV2_VERIFICATION_PROFILE IN_LIST profiles)
+      continue()
+    endif()
+    if(variant STREQUAL "no_mmap" AND "mmap" IN_LIST requires)
+      continue()
+    endif()
+    if(variant STREQUAL "no_exceptions" AND "exceptions" IN_LIST requires)
       continue()
     endif()
     get_property(domain_sources GLOBAL
