@@ -72,9 +72,8 @@ int verify_operations(Registry &registry, Context &context, const Options &optio
       result.allocations = counts.allocations;
       result.allocated_bytes = counts.bytes;
 
-      std::cout << "protocol=csv2-current-v2"
-                << " revision=" << CSV2_BENCHMARK_REVISION << " operation=" << operation.id
-                << " source=" << source_name(source)
+      std::cout << "protocol=csv2-current-v2" << " revision=" << CSV2_BENCHMARK_REVISION
+                << " operation=" << operation.id << " source=" << source_name(source)
                 << " dataset=" << safe_component(context.dataset_name())
                 << " checksum=" << result.checksum << " bytes=" << result.bytes
                 << " rows=" << result.rows << " cells=" << result.cells

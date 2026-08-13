@@ -102,7 +102,7 @@ jobs:
           cmake --build build-current --target csv2_benchmark_corpus
           ctest --test-dir build-current -L benchmark-checksum \
             --no-tests=error --output-on-failure \
-            --output-junit build-perf/reports/benchmark-checksum.xml
+            --output-junit "$GITHUB_WORKSPACE/build-perf/reports/benchmark-checksum.xml"
 
       - name: Collect exploratory A/A and A/B reports
         env:
@@ -227,7 +227,7 @@ jobs:
           cmake --build build-current --target csv2_benchmark_corpus
           ctest --test-dir build-current -L benchmark-checksum \
             --no-tests=error --output-on-failure \
-            --output-junit build-perf/reports/benchmark-checksum.xml
+            --output-junit "$GITHUB_WORKSPACE/build-perf/reports/benchmark-checksum.xml"
 
       - name: Collect controlled A/A and A/B reports
         env:
