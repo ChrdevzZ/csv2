@@ -1,0 +1,135 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "build-v1.schema.json",
+  "title": "CSV2 audited benchmark build v1",
+  "type": "object",
+  "required": [
+    "schema", "kind", "generated_at_utc", "revision", "header_export",
+    "adapter_export", "compiler", "compiler_flags", "argv", "normalized_argv",
+    "build_log", "output", "identity_digest", "digest"
+  ],
+  "properties": {
+    "schema": {"const": "csv2-benchmark-build-v1"},
+    "kind": {"const": "common-driver"},
+    "generated_at_utc": {"type": "string", "minLength": 1},
+    "revision": {"$ref": "#/$defs/object_id"},
+    "header_export": {"$ref": "#/$defs/git_export"},
+    "adapter_export": {"$ref": "#/$defs/git_export"},
+    "compiler": {"$ref": "#/$defs/compiler"},
+    "compiler_flags": {
+      "type": "array",
+      "items": {"type": "string", "minLength": 1}
+    },
+    "argv": {"$ref": "#/$defs/argv"},
+    "normalized_argv": {"$ref": "#/$defs/argv"},
+    "build_log": {"$ref": "#/$defs/process_result"},
+    "output": {"$ref": "#/$defs/revision_artifact"},
+    "identity_digest": {"$ref": "#/$defs/sha256"},
+    "digest": {"$ref": "#/$defs/sha256"}
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "object_id": {
+      "type": "string",
+      "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$"
+    },
+    "sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "argv": {
+      "type": "array",
+      "minItems": 1,
+      "items": {"type": "string", "minLength": 1}
+    },
+    "artifact": {
+      "type": "object",
+      "required": ["path", "size", "sha256", "mtime_ns"],
+      "properties": {
+        "path": {"type": "string", "minLength": 1},
+        "size": {"type": "integer", "minimum": 0},
+        "sha256": {"$ref": "#/$defs/sha256"},
+        "mtime_ns": {"type": "integer", "minimum": 0}
+      },
+      "additionalProperties": true
+    },
+    "revision_artifact": {
+      "allOf": [
+        {"$ref": "#/$defs/artifact"},
+        {
+          "required": ["revision"],
+          "properties": {"revision": {"$ref": "#/$defs/object_id"}}
+        }
+      ]
+    },
+    "git_file": {
+      "type": "object",
+      "required": ["mode", "type", "oid", "path", "size", "sha256"],
+      "properties": {
+        "mode": {"enum": ["100644", "100755"]},
+        "type": {"const": "blob"},
+        "oid": {"$ref": "#/$defs/object_id"},
+        "path": {"type": "string", "minLength": 1},
+        "size": {"type": "integer", "minimum": 0},
+        "sha256": {"$ref": "#/$defs/sha256"}
+      },
+      "additionalProperties": false
+    },
+    "git_export": {
+      "type": "object",
+      "required": [
+        "schema", "repository", "reference", "commit", "tree", "selections",
+        "root", "files", "digest"
+      ],
+      "properties": {
+        "schema": {"const": "csv2-git-export-v1"},
+        "repository": {"type": "string", "minLength": 1},
+        "reference": {"type": "string", "minLength": 1},
+        "commit": {"$ref": "#/$defs/object_id"},
+        "tree": {"$ref": "#/$defs/object_id"},
+        "selections": {
+          "type": "array",
+          "minItems": 1,
+          "items": {"type": "string", "minLength": 1}
+        },
+        "root": {"type": "string", "minLength": 1},
+        "files": {
+          "type": "array",
+          "minItems": 1,
+          "items": {"$ref": "#/$defs/git_file"}
+        },
+        "digest": {"$ref": "#/$defs/sha256"}
+      },
+      "additionalProperties": false
+    },
+    "process_result": {
+      "type": "object",
+      "required": ["returncode", "stdout", "stderr"],
+      "properties": {
+        "returncode": {"const": 0},
+        "stdout": {"type": "string"},
+        "stderr": {"type": "string"}
+      },
+      "additionalProperties": false
+    },
+    "compiler": {
+      "type": "object",
+      "required": ["artifact", "version"],
+      "properties": {
+        "artifact": {"$ref": "#/$defs/artifact"},
+        "version": {
+          "type": "object",
+          "required": ["command", "returncode", "stdout", "stderr"],
+          "properties": {
+            "command": {"$ref": "#/$defs/argv"},
+            "returncode": {"const": 0},
+            "stdout": {"type": "string"},
+            "stderr": {"type": "string"}
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}

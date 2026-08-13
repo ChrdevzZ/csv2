@@ -17,8 +17,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Sequence
 
-from . import METRICS_SCHEMA
-from . import artifacts, atomic, protocol, statistics
+from . import ARTIFACT_MANIFEST_SCHEMA, METRICS_SCHEMA
+from . import artifacts, atomic, builds, protocol, statistics
 
 
 TIME_SCALE = {"ns": 1e-9, "us": 1e-6, "ms": 1e-3, "s": 1.0}
@@ -33,6 +33,7 @@ def collector_source_paths() -> list[Path]:
         package_root / "__init__.py",
         package_root / "artifacts.py",
         package_root / "atomic.py",
+        package_root / "builds.py",
         package_root / "metrics.py",
         package_root / "protocol.py",
         package_root / "statistics.py",
@@ -371,10 +372,10 @@ def validate_compile_commands(path: Path, compiler: Path) -> int:
         ):
             executable = arguments[0]
         elif isinstance(command, str):
-            parts = shlex.split(command)
+            parts = shlex.split(command, posix=os.name != "nt")
             if not parts:
                 raise RuntimeError("compile_commands.json contains an empty command")
-            executable = parts[0]
+            executable = parts[0].strip('"')
         else:
             raise RuntimeError(
                 "compile_commands.json entry has neither command nor arguments"
@@ -398,11 +399,16 @@ def validate_compile_commands(path: Path, compiler: Path) -> int:
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--executable", type=Path, required=True)
+    parser.add_argument("--external-artifacts", action="store_true")
+    parser.add_argument("--repository", type=Path, default=Path.cwd())
+    parser.add_argument("--candidate-ref")
+    parser.add_argument("--build-root", type=Path)
+    parser.add_argument("--corpus-scale", type=int, default=1)
+    parser.add_argument("--executable", type=Path)
     parser.add_argument("--allocation-executable", type=Path)
-    parser.add_argument("--revision", required=True)
-    parser.add_argument("--compiler", required=True)
-    parser.add_argument("--compiler-flags", required=True)
+    parser.add_argument("--revision")
+    parser.add_argument("--compiler")
+    parser.add_argument("--compiler-flags", default="")
     parser.add_argument("--compiler-executable", type=Path)
     parser.add_argument("--compile-commands", type=Path)
     parser.add_argument("--operation", required=True)
@@ -426,6 +432,27 @@ def main() -> None:
     parser.add_argument("--manifest", type=Path)
     args = parser.parse_args()
 
+    if args.external_artifacts:
+        if args.evidence_level != "exploratory":
+            parser.error("--external-artifacts is restricted to exploratory evidence")
+        if args.executable is None or args.revision is None:
+            parser.error("--external-artifacts requires --executable and --revision")
+        if args.candidate_ref or args.build_root:
+            parser.error("external artifacts cannot use owned-build ref options")
+    else:
+        if args.executable is not None or args.allocation_executable is not None:
+            parser.error("explicit executable paths require --external-artifacts")
+        if args.revision is not None:
+            parser.error("explicit revision requires --external-artifacts")
+        if not args.candidate_ref or args.compiler_executable is None:
+            parser.error("owned metrics require --candidate-ref and --compiler-executable")
+        if args.build_root is None:
+            args.build_root = args.output.with_suffix(args.output.suffix + ".build")
+        if args.corpus_scale < 1:
+            parser.error("--corpus-scale must be positive")
+        if args.build_command or args.post_build_command:
+            parser.error("owned metrics build internally; external build commands are forbidden")
+
     if args.runs < 1:
         parser.error("--runs must be positive")
     if args.warmup_seconds < 0 or not math.isfinite(args.warmup_seconds):
@@ -442,20 +469,42 @@ def main() -> None:
         args.skip_pmu or args.skip_rss or args.skip_size
     ):
         parser.error("controlled evidence requires PMU, RSS, and code-size collection")
-    if args.evidence_level == "controlled" and (
-        args.compiler_executable is None or args.compile_commands is None
-    ):
-        parser.error(
-            "controlled evidence requires --compiler-executable and --compile-commands"
-        )
-    if args.evidence_level == "controlled" and not args.build_command:
-        parser.error("controlled evidence requires --build-command for clean-build timing")
-    if args.evidence_level == "controlled" and not args.post_build_command:
-        parser.error(
-            "controlled evidence requires --post-build-command to restore generated inputs"
-        )
+    if args.evidence_level == "controlled" and args.external_artifacts:
+        parser.error("controlled evidence requires an owned current-tree build")
     if args.post_build_command and not args.build_command:
         parser.error("--post-build-command requires --build-command")
+
+    owned_build: dict[str, object] | None = None
+    artifact_mode = "external" if args.external_artifacts else "owned"
+    if not args.external_artifacts:
+        try:
+            owned_build = builds.build_current_tree(
+                repository=args.repository,
+                reference=args.candidate_ref,
+                compiler=args.compiler_executable,
+                workspace=artifacts.canonical_output(args.build_root),
+                corpus_scale=args.corpus_scale,
+            )
+            args.revision = str(owned_build["revision"])
+            args.executable = Path(str(owned_build["targets"]["csv2_benchmark"]["path"]))
+            args.allocation_executable = Path(
+                str(owned_build["targets"]["csv2_benchmark_allocations"]["path"])
+            )
+            args.compile_commands = Path(str(owned_build["compile_commands"]["path"]))
+            if not args.input.is_absolute():
+                args.input = (
+                    Path(str(owned_build["build_root"]))
+                    / "benchmark-corpus"
+                    / "fixtures"
+                    / args.input
+                )
+            version = owned_build["compiler"]["version"]
+            identity = (str(version["stdout"]) + "\n" + str(version["stderr"])).strip()
+            args.compiler = args.compiler or identity.splitlines()[0]
+        except (OSError, RuntimeError) as error:
+            parser.error(str(error))
+    elif args.compiler is None:
+        args.compiler = "external-artifact compiler (unverified)"
 
     if args.allocation_executable is None:
         args.allocation_executable = args.executable.with_name(
@@ -525,21 +574,32 @@ def main() -> None:
         compiler_matches = validate_compile_commands(
             args.compile_commands, args.compiler_executable
         ) if args.compile_commands is not None else None
-        version = run([str(args.compiler_executable), "--version"])
+        if owned_build is not None:
+            recorded_version = owned_build["compiler"]["version"]
+            version_command = list(recorded_version["command"])
+            version_stdout = str(recorded_version["stdout"])
+            version_stderr = str(recorded_version["stderr"])
+        else:
+            version = run([str(args.compiler_executable), "--version"])
+            version_command = [str(args.compiler_executable), "--version"]
+            version_stdout = version.stdout.rstrip("\n")
+            version_stderr = version.stderr.rstrip("\n")
         identities["compiler_executable"] = artifacts.metadata(
             args.compiler_executable
         )
         compiler_identity = {
             "artifact": identities["compiler_executable"],
             "compile_command_matches": compiler_matches,
-            "version_command": [str(args.compiler_executable), "--version"],
-            "version_stdout": version.stdout.rstrip("\n"),
-            "version_stderr": version.stderr.rstrip("\n"),
+            "version_command": version_command,
+            "version_stdout": version_stdout,
+            "version_stderr": version_stderr,
         }
     if args.compile_commands is not None:
         identities["compile_commands"] = artifacts.metadata(args.compile_commands)
     report: dict[str, object] = {
         "schema": METRICS_SCHEMA,
+        "artifact_mode": artifact_mode,
+        "build": owned_build,
         "status": "running",
         "evidence_level": args.evidence_level,
         "decision_eligible": False,
@@ -552,8 +612,25 @@ def main() -> None:
         "source": args.source,
         "runs": args.runs,
         "artifacts": identities,
-        "clean_build": None,
-        "post_build": None,
+        "clean_build": (
+            {
+                "command": owned_build["build_argv"],
+                "seconds": owned_build["build_log"]["seconds"],
+                "stdout": owned_build["build_log"]["stdout"],
+                "stderr": owned_build["build_log"]["stderr"],
+            }
+            if owned_build is not None
+            else None
+        ),
+        "post_build": (
+            {
+                "command": owned_build["build_argv"],
+                "stdout": owned_build["build_log"]["stdout"],
+                "stderr": owned_build["build_log"]["stderr"],
+            }
+            if owned_build is not None
+            else None
+        ),
     }
     protocol.validate_fixed_metrics_report(report)
     atomic.write_json(args.output, report)
@@ -636,16 +713,23 @@ def main() -> None:
             artifacts.verify_unchanged(identity, label)
         report["status"] = "completed"
         report["decision_eligible"] = protocol.decision_eligible(
-            args.evidence_level, report["status"]
+            args.evidence_level,
+            report["status"],
+            owned_build=artifact_mode == "owned",
         )
         report["completed_at_utc"] = datetime.now(timezone.utc).isoformat()
         protocol.validate_fixed_metrics_report(report)
         atomic.write_json(args.output, report)
         manifest = {
-            "schema": "csv2-artifact-manifest-v1",
+            "schema": ARTIFACT_MANIFEST_SCHEMA,
+            "kind": "fixed-metrics",
             "report": artifacts.metadata(args.output),
-            "inputs": identities,
+            "inputs": {
+                "artifacts": identities,
+                "build": owned_build["identity_digest"] if owned_build is not None else None,
+            },
         }
+        protocol.validate_artifact_manifest(manifest)
         atomic.write_json(args.manifest, manifest)
     except BaseException as error:
         report["status"] = "failed"

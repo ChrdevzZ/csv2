@@ -1,16 +1,17 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "title": "CSV2 paired benchmark report v3",
+  "title": "CSV2 paired benchmark report v4",
   "type": "object",
   "additionalProperties": false,
   "required": [
-    "schema", "mode", "status", "evidence_level", "decision_eligible",
+    "schema", "artifact_mode", "mode", "status", "evidence_level", "decision_eligible",
     "generated_at_utc", "runs", "warmups", "iterations_per_run", "compiler",
     "compiler_flags", "host", "runner", "adapter_source", "baseline",
     "candidate", "datasets", "calibration", "cases"
   ],
   "properties": {
-    "schema": {"const": "csv2-benchmark-report-v3"},
+    "schema": {"const": "csv2-benchmark-report-v4"},
+    "artifact_mode": {"enum": ["owned", "external"]},
     "mode": {"enum": ["aa", "compare"]},
     "status": {"enum": ["running", "completed", "failed"]},
     "evidence_level": {"enum": ["exploratory", "controlled"]},
@@ -90,9 +91,15 @@
     },
     "revision_side": {
       "type": "object",
-      "required": ["artifact", "description", "description_invocation"],
+      "required": ["artifact", "build", "description", "description_invocation"],
       "properties": {
         "artifact": {"$ref": "#/$defs/revision_artifact"},
+        "build": {
+          "oneOf": [
+            {"$ref": "build-v1.schema.json"},
+            {"type": "null"}
+          ]
+        },
         "description": {
           "type": "object",
           "required": ["protocol", "revision", "operations", "sources", "operation_contracts"],
@@ -223,13 +230,18 @@
     {
       "if": {"properties": {"decision_eligible": {"const": true}}, "required": ["decision_eligible"]},
       "then": {
-        "properties": {"status": {"const": "completed"}, "evidence_level": {"const": "controlled"}}
+        "properties": {
+          "status": {"const": "completed"},
+          "evidence_level": {"const": "controlled"},
+          "artifact_mode": {"const": "owned"}
+        }
       }
     },
     {
       "if": {"properties": {"evidence_level": {"const": "controlled"}}, "required": ["evidence_level"]},
       "then": {
         "properties": {
+          "artifact_mode": {"const": "owned"},
           "runs": {"minimum": 20},
           "warmups": {"minimum": 3},
           "host": {"properties": {"process_affinity": {"type": "array", "minItems": 1}}}
@@ -246,6 +258,26 @@
         "required": ["mode", "evidence_level"]
       },
       "then": {"properties": {"calibration": {"type": "object"}}}
+    },
+    {
+      "if": {
+        "properties": {"artifact_mode": {"const": "owned"}},
+        "required": ["artifact_mode"]
+      },
+      "then": {
+        "properties": {
+          "baseline": {"properties": {"build": {"$ref": "build-v1.schema.json"}}},
+          "candidate": {"properties": {"build": {"$ref": "build-v1.schema.json"}}}
+        }
+      },
+      "else": {
+        "properties": {
+          "evidence_level": {"const": "exploratory"},
+          "decision_eligible": {"const": false},
+          "baseline": {"properties": {"build": {"type": "null"}}},
+          "candidate": {"properties": {"build": {"type": "null"}}}
+        }
+      }
     }
   ]
 }

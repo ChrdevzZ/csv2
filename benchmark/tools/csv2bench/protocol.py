@@ -5,7 +5,8 @@ from __future__ import annotations
 import math
 from typing import Iterable
 
-from . import COMMON_PROTOCOL, CURRENT_PROTOCOL
+from . import COMPARISON_SCHEMA, CURRENT_PROTOCOL, METRICS_SCHEMA
+from . import COMMON_PROTOCOL
 
 UINT64_MAX = (1 << 64) - 1
 
@@ -101,9 +102,11 @@ def finite_nonnegative(value: object, label: str) -> float:
     return parsed
 
 
-def decision_eligible(evidence_level: str, status: str) -> bool:
+def decision_eligible(
+    evidence_level: str, status: str, *, owned_build: bool = True
+) -> bool:
     """Return whether a completed report may support a regression decision."""
-    return evidence_level == "controlled" and status == "completed"
+    return evidence_level == "controlled" and status == "completed" and owned_build
 
 
 def _object(value: object, label: str) -> dict[str, object]:
@@ -332,10 +335,234 @@ def _code_size(value: object, label: str, *, require_sections: bool) -> dict[str
     return size
 
 
+def _hex_digest(value: object, label: str, lengths: tuple[int, ...]) -> str:
+    text = _string(value, label)
+    if len(text) not in lengths or any(character not in "0123456789abcdef" for character in text):
+        raise RuntimeError(f"{label} is not a lowercase hexadecimal digest")
+    return text
+
+
+def _git_export(value: object, label: str) -> dict[str, object]:
+    from . import builds as audited_builds
+
+    export = _object(value, label)
+    fields = {
+        "schema", "repository", "reference", "commit", "tree", "selections",
+        "root", "files", "digest",
+    }
+    _required(export, fields, label)
+    _closed(export, fields, label)
+    if export["schema"] != "csv2-git-export-v1":
+        raise RuntimeError(f"{label}.schema is unsupported")
+    for field in ("repository", "reference", "root"):
+        _string(export[field], f"{label}.{field}")
+    _hex_digest(export["commit"], f"{label}.commit", (40, 64))
+    _hex_digest(export["tree"], f"{label}.tree", (40, 64))
+    selections = _array(export["selections"], f"{label}.selections")
+    if not selections or not all(isinstance(item, str) and item for item in selections):
+        raise RuntimeError(f"{label}.selections must contain strings")
+    files = _array(export["files"], f"{label}.files")
+    if not files:
+        raise RuntimeError(f"{label}.files must not be empty")
+    paths: set[str] = set()
+    for index, value in enumerate(files):
+        file_label = f"{label}.files[{index}]"
+        entry = _object(value, file_label)
+        entry_fields = {"mode", "type", "oid", "path", "size", "sha256"}
+        _required(entry, entry_fields, file_label)
+        _closed(entry, entry_fields, file_label)
+        if entry["mode"] not in {"100644", "100755"} or entry["type"] != "blob":
+            raise RuntimeError(f"{file_label} is not a regular Git blob")
+        _hex_digest(entry["oid"], f"{file_label}.oid", (40, 64))
+        path = _string(entry["path"], f"{file_label}.path")
+        audited_builds.safe_git_path(path)
+        if path in paths:
+            raise RuntimeError(f"{label}.files contains duplicate paths")
+        paths.add(path)
+        _integer(entry["size"], f"{file_label}.size")
+        _hex_digest(entry["sha256"], f"{file_label}.sha256", (64,))
+    digest = _hex_digest(export["digest"], f"{label}.digest", (64,))
+    unsigned = dict(export)
+    unsigned.pop("digest")
+    if audited_builds.document_digest(unsigned) != digest:
+        raise RuntimeError(f"{label}.digest is inconsistent")
+    return export
+
+
+def _common_build(value: object, label: str) -> dict[str, object]:
+    from . import BUILD_SCHEMA
+    from . import builds as audited_builds
+
+    build = _object(value, label)
+    fields = {
+        "schema", "kind", "generated_at_utc", "revision", "header_export",
+        "adapter_export", "compiler", "compiler_flags", "argv", "normalized_argv",
+        "build_log", "output", "identity_digest", "digest",
+    }
+    _required(build, fields, label)
+    _closed(build, fields, label)
+    if build["schema"] != BUILD_SCHEMA or build["kind"] != "common-driver":
+        raise RuntimeError(f"{label} has the wrong schema or kind")
+    _string(build["generated_at_utc"], f"{label}.generated_at_utc")
+    revision = _hex_digest(build["revision"], f"{label}.revision", (40, 64))
+    headers = _git_export(build["header_export"], f"{label}.header_export")
+    adapter = _git_export(build["adapter_export"], f"{label}.adapter_export")
+    if headers["commit"] != revision:
+        raise RuntimeError(f"{label} revision differs from its headers")
+    if any(
+        entry["path"] != "include" and not entry["path"].startswith("include/")
+        for entry in headers["files"]
+    ):
+        raise RuntimeError(f"{label} header export contains non-header paths")
+    if [entry["path"] for entry in adapter["files"]] != [
+        "benchmark/compare/common_driver.cpp"
+    ]:
+        raise RuntimeError(f"{label} adapter export is not the common driver")
+    compiler = _object(build["compiler"], f"{label}.compiler")
+    _required(compiler, {"artifact", "version"}, f"{label}.compiler")
+    _closed(compiler, {"artifact", "version"}, f"{label}.compiler")
+    _artifact(compiler["artifact"], f"{label}.compiler.artifact", revision=False)
+    version = _object(compiler["version"], f"{label}.compiler.version")
+    _required(version, {"command", "returncode", "stdout", "stderr"}, f"{label}.compiler.version")
+    _closed(version, {"command", "returncode", "stdout", "stderr"}, f"{label}.compiler.version")
+    _invocation(
+        {"command": version["command"], "stdout": version["stdout"], "stderr": version["stderr"]},
+        f"{label}.compiler.version",
+    )
+    if _integer(version["returncode"], f"{label}.compiler.version.returncode") != 0:
+        raise RuntimeError(f"{label}.compiler.version did not succeed")
+    for field in ("compiler_flags", "argv", "normalized_argv"):
+        values = _array(build[field], f"{label}.{field}")
+        if (field != "compiler_flags" and not values) or not all(
+            isinstance(item, str) and item for item in values
+        ):
+            raise RuntimeError(f"{label}.{field} is malformed")
+    if len(build["argv"]) != len(build["normalized_argv"]):
+        raise RuntimeError(f"{label} normalized command length differs")
+    normalized_text = "\n".join(build["normalized_argv"])
+    for placeholder in ("{revision}", "{include_root}", "{adapter_source}", "{output}"):
+        if placeholder not in normalized_text:
+            raise RuntimeError(f"{label} normalized command lacks {placeholder}")
+    if build["argv"][0] != compiler["artifact"]["path"]:
+        raise RuntimeError(f"{label} command did not invoke the recorded compiler")
+    log = _object(build["build_log"], f"{label}.build_log")
+    _required(log, {"returncode", "stdout", "stderr"}, f"{label}.build_log")
+    if _integer(log["returncode"], f"{label}.build_log.returncode") != 0:
+        raise RuntimeError(f"{label}.build_log did not succeed")
+    for stream in ("stdout", "stderr"):
+        if not isinstance(log[stream], str):
+            raise RuntimeError(f"{label}.build_log.{stream} must be a string")
+    output = _artifact(build["output"], f"{label}.output", revision=True)
+    if output["revision"] != revision:
+        raise RuntimeError(f"{label}.output revision is inconsistent")
+    identity = _hex_digest(build["identity_digest"], f"{label}.identity_digest", (64,))
+    try:
+        actual_identity = audited_builds.common_build_identity_digest(build)
+    except (KeyError, TypeError, ValueError) as error:
+        raise RuntimeError(f"{label}.identity_digest cannot be reconstructed") from error
+    if identity != actual_identity:
+        raise RuntimeError(f"{label}.identity_digest is inconsistent")
+    digest = _hex_digest(build["digest"], f"{label}.digest", (64,))
+    unsigned = dict(build)
+    unsigned.pop("digest")
+    if audited_builds.document_digest(unsigned) != digest:
+        raise RuntimeError(f"{label}.digest is inconsistent")
+    return build
+
+
+def _tool_identity(value: object, label: str) -> dict[str, object]:
+    tool = _object(value, label)
+    _required(tool, {"artifact", "version"}, label)
+    _closed(tool, {"artifact", "version"}, label)
+    _artifact(tool["artifact"], f"{label}.artifact", revision=False)
+    version = _object(tool["version"], f"{label}.version")
+    _required(version, {"command", "returncode", "stdout", "stderr"}, f"{label}.version")
+    _closed(version, {"command", "returncode", "stdout", "stderr"}, f"{label}.version")
+    _invocation(
+        {"command": version["command"], "stdout": version["stdout"], "stderr": version["stderr"]},
+        f"{label}.version",
+    )
+    if _integer(version["returncode"], f"{label}.version.returncode") != 0:
+        raise RuntimeError(f"{label}.version did not succeed")
+    return tool
+
+
+def _current_build(value: object, label: str) -> dict[str, object]:
+    from . import BUILD_SCHEMA
+    from . import builds as audited_builds
+
+    build = _object(value, label)
+    fields = {
+        "schema", "kind", "generated_at_utc", "revision", "source_export",
+        "compiler", "cmake", "ninja", "configure_argv", "normalized_configure_argv",
+        "build_argv", "configure_log", "build_log", "file_api", "compile_commands",
+        "targets", "corpus_manifest", "source_root", "build_root", "identity_digest",
+        "digest",
+    }
+    _required(build, fields, label)
+    _closed(build, fields, label)
+    if build["schema"] != BUILD_SCHEMA or build["kind"] != "current-tree":
+        raise RuntimeError(f"{label} has the wrong schema or kind")
+    _string(build["generated_at_utc"], f"{label}.generated_at_utc")
+    revision = _hex_digest(build["revision"], f"{label}.revision", (40, 64))
+    source = _git_export(build["source_export"], f"{label}.source_export")
+    if source["commit"] != revision or source["selections"] != ["<full-tree>"]:
+        raise RuntimeError(f"{label} is not bound to a full candidate tree")
+    for tool_name in ("compiler", "cmake", "ninja"):
+        _tool_identity(build[tool_name], f"{label}.{tool_name}")
+    for field in ("configure_argv", "normalized_configure_argv", "build_argv"):
+        values = _array(build[field], f"{label}.{field}")
+        if not values or not all(isinstance(item, str) and item for item in values):
+            raise RuntimeError(f"{label}.{field} is malformed")
+    if len(build["configure_argv"]) != len(build["normalized_configure_argv"]):
+        raise RuntimeError(f"{label} normalized configure command differs in length")
+    normalized = "\n".join(build["normalized_configure_argv"])
+    for placeholder in ("{source_root}", "{build_root}", "{compiler}", "{revision}"):
+        if placeholder not in normalized:
+            raise RuntimeError(f"{label} configure command lacks {placeholder}")
+    for log_name in ("configure_log", "build_log"):
+        log = _object(build[log_name], f"{label}.{log_name}")
+        _required(log, {"returncode", "seconds", "stdout", "stderr"}, f"{label}.{log_name}")
+        if _integer(log["returncode"], f"{label}.{log_name}.returncode") != 0:
+            raise RuntimeError(f"{label}.{log_name} did not succeed")
+        _number(log["seconds"], f"{label}.{log_name}.seconds", positive=True)
+    _artifact(build["compile_commands"], f"{label}.compile_commands", revision=False)
+    _artifact(build["corpus_manifest"], f"{label}.corpus_manifest", revision=False)
+    targets = _object(build["targets"], f"{label}.targets")
+    expected_targets = {"csv2_benchmark", "csv2_benchmark_allocations"}
+    _required(targets, expected_targets, f"{label}.targets")
+    _closed(targets, expected_targets, f"{label}.targets")
+    for name in expected_targets:
+        artifact = _artifact(targets[name], f"{label}.targets.{name}", revision=True)
+        if artifact["revision"] != revision:
+            raise RuntimeError(f"{label}.targets.{name} revision is inconsistent")
+    api = _object(build["file_api"], f"{label}.file_api")
+    _required(api, {"compiler", "targets", "link_commands"}, f"{label}.file_api")
+    api_targets = _object(api["targets"], f"{label}.file_api.targets")
+    links = _object(api["link_commands"], f"{label}.file_api.link_commands")
+    for name in expected_targets:
+        target = _object(api_targets.get(name), f"{label}.file_api.targets.{name}")
+        sources = set(_array(target.get("sources"), f"{label}.file_api.targets.{name}.sources"))
+        if sources != audited_builds.CURRENT_SOURCES:
+            raise RuntimeError(f"{label}.file_api.targets.{name} source set is incomplete")
+        commands = _array(links.get(name), f"{label}.file_api.link_commands.{name}")
+        if not commands or not all(isinstance(command, str) and command for command in commands):
+            raise RuntimeError(f"{label}.file_api lacks a link command for {name}")
+    identity = _hex_digest(build["identity_digest"], f"{label}.identity_digest", (64,))
+    if identity != audited_builds.current_build_identity_digest(build):
+        raise RuntimeError(f"{label}.identity_digest is inconsistent")
+    digest = _hex_digest(build["digest"], f"{label}.digest", (64,))
+    unsigned = dict(build)
+    unsigned.pop("digest")
+    if digest != audited_builds.document_digest(unsigned):
+        raise RuntimeError(f"{label}.digest is inconsistent")
+    return build
+
+
 def validate_comparison_report(report: object) -> None:
     document = _object(report, "comparison report")
     allowed = {
-        "schema", "mode", "status", "evidence_level", "decision_eligible",
+        "schema", "artifact_mode", "mode", "status", "evidence_level", "decision_eligible",
         "generated_at_utc", "completed_at_utc", "error", "runs", "warmups",
         "iterations_per_run", "compiler", "compiler_flags", "host", "runner",
         "adapter_source", "baseline", "candidate", "datasets", "calibration",
@@ -344,8 +571,13 @@ def validate_comparison_report(report: object) -> None:
     required = allowed - {"completed_at_utc", "error"}
     _required(document, required, "comparison report")
     _closed(document, allowed, "comparison report")
-    if document["schema"] != "csv2-benchmark-report-v3":
+    if document["schema"] != COMPARISON_SCHEMA:
         raise RuntimeError("comparison report has an unsupported schema")
+    artifact_mode = document["artifact_mode"]
+    if artifact_mode not in {"owned", "external"}:
+        raise RuntimeError("comparison report artifact mode is invalid")
+    if artifact_mode == "external" and document["evidence_level"] != "exploratory":
+        raise RuntimeError("external artifacts are restricted to exploratory evidence")
     if document["mode"] not in {"aa", "compare"}:
         raise RuntimeError("comparison report mode is invalid")
     if document["status"] not in {"running", "completed", "failed"}:
@@ -353,7 +585,9 @@ def validate_comparison_report(report: object) -> None:
     if document["evidence_level"] not in {"exploratory", "controlled"}:
         raise RuntimeError("comparison report evidence level is invalid")
     expected_eligible = decision_eligible(
-        str(document["evidence_level"]), str(document["status"])
+        str(document["evidence_level"]),
+        str(document["status"]),
+        owned_build=artifact_mode == "owned",
     )
     if type(document["decision_eligible"]) is not bool or document[
         "decision_eligible"
@@ -388,16 +622,32 @@ def validate_comparison_report(report: object) -> None:
 
     revisions: list[str] = []
     capabilities: list[dict[str, tuple[str, frozenset[str]]]] = []
+    build_documents: list[dict[str, object]] = []
     for side in ("baseline", "candidate"):
         side_document = _object(document[side], f"comparison report.{side}")
         _required(
             side_document,
-            {"artifact", "description", "description_invocation"},
+            {"artifact", "build", "description", "description_invocation"},
             f"comparison report.{side}",
         )
         artifact = _artifact(
             side_document["artifact"], f"comparison report.{side}.artifact", revision=True
         )
+        if artifact_mode == "owned":
+            build = _common_build(
+                side_document["build"], f"comparison report.{side}.build"
+            )
+            output = build["output"]
+            if any(
+                artifact[field] != output[field]
+                for field in ("path", "size", "sha256", "mtime_ns", "revision")
+            ):
+                raise RuntimeError(
+                    f"comparison report.{side} artifact differs from its build"
+                )
+            build_documents.append(build)
+        elif side_document["build"] is not None:
+            raise RuntimeError(f"comparison report.{side}.build must be null")
         description = _object(
             side_document["description"], f"comparison report.{side}.description"
         )
@@ -434,6 +684,17 @@ def validate_comparison_report(report: object) -> None:
             side_document["description_invocation"],
             f"comparison report.{side}.description_invocation",
         )
+
+    if artifact_mode == "owned":
+        baseline_build, candidate_build = build_documents
+        if (
+            baseline_build["adapter_export"]["digest"]
+            != candidate_build["adapter_export"]["digest"]
+            or baseline_build["compiler"]["artifact"]["sha256"]
+            != candidate_build["compiler"]["artifact"]["sha256"]
+            or baseline_build["normalized_argv"] != candidate_build["normalized_argv"]
+        ):
+            raise RuntimeError("comparison owned builds are not compatible")
 
     datasets = _array(document["datasets"], "comparison report.datasets")
     cases = _array(document["cases"], "comparison report.cases")
@@ -640,7 +901,7 @@ def validate_comparison_report(report: object) -> None:
         _string(calibration["path"], "comparison report.calibration.path")
         _integer(calibration["size"], "comparison report.calibration.size", 1)
         _string(calibration["sha256"], "comparison report.calibration.sha256")
-        if calibration["schema"] != "csv2-benchmark-report-v3":
+        if calibration["schema"] != COMPARISON_SCHEMA:
             raise RuntimeError("comparison report calibration schema is invalid")
     if document["mode"] == "aa" and document["calibration"] is not None:
         raise RuntimeError("A/A comparison must not reference another calibration")
@@ -651,36 +912,58 @@ def validate_comparison_report(report: object) -> None:
         candidate_hash = document["candidate"]["artifact"]["sha256"]
         if baseline_hash != candidate_hash:
             raise RuntimeError("A/A comparison artifacts must be byte-identical")
-    if adapter["revision"] != "shared-source":
-        raise RuntimeError("comparison report adapter revision is invalid")
+    if artifact_mode == "owned":
+        candidate_build = document["candidate"]["build"]
+        adapter_export = candidate_build["adapter_export"]
+        adapter_file = adapter_export["files"][0]
+        if (
+            adapter["revision"] != adapter_export["commit"]
+            or adapter["sha256"] != adapter_file["sha256"]
+        ):
+            raise RuntimeError("comparison report adapter differs from the owned build")
+    elif adapter["revision"] != "shared-source":
+        raise RuntimeError("comparison report external adapter revision is invalid")
 
 
 def validate_fixed_metrics_report(report: object) -> None:
     document = _object(report, "fixed-machine report")
     allowed = {
-        "schema", "status", "evidence_level", "decision_eligible",
+        "schema", "artifact_mode", "build", "status", "evidence_level", "decision_eligible",
         "generated_at_utc", "completed_at_utc", "error", "machine", "compiler",
         "compiler_identity", "compiler_flags", "operation", "source", "runs",
         "artifacts", "clean_build", "post_build", "verification", "allocations", "timing",
         "timing_invocation", "pmu", "pmu_invocation", "peak_rss", "code_size",
     }
     required = {
-        "schema", "status", "evidence_level", "decision_eligible",
+        "schema", "artifact_mode", "build", "status", "evidence_level", "decision_eligible",
         "generated_at_utc", "machine", "compiler", "compiler_identity",
         "compiler_flags", "operation", "source", "runs", "artifacts", "clean_build",
         "post_build",
     }
     _required(document, required, "fixed-machine report")
     _closed(document, allowed, "fixed-machine report")
-    if document["schema"] != "csv2-fixed-machine-metrics-v3":
+    if document["schema"] != METRICS_SCHEMA:
         raise RuntimeError("fixed-machine report has an unsupported schema")
+    artifact_mode = document["artifact_mode"]
+    if artifact_mode not in {"owned", "external"}:
+        raise RuntimeError("fixed-machine report artifact mode is invalid")
+    if artifact_mode == "owned":
+        current_build = _current_build(document["build"], "fixed-machine report.build")
+    elif document["build"] is not None:
+        raise RuntimeError("external fixed-machine report build must be null")
+    else:
+        current_build = None
     status = document["status"]
     evidence = document["evidence_level"]
     if status not in {"running", "completed", "failed"}:
         raise RuntimeError("fixed-machine report status is invalid")
     if evidence not in {"exploratory", "controlled"}:
         raise RuntimeError("fixed-machine report evidence level is invalid")
-    expected_eligible = decision_eligible(str(evidence), str(status))
+    if artifact_mode == "external" and evidence != "exploratory":
+        raise RuntimeError("external fixed-machine artifacts are exploratory only")
+    expected_eligible = decision_eligible(
+        str(evidence), str(status), owned_build=artifact_mode == "owned"
+    )
     if type(document["decision_eligible"]) is not bool or document[
         "decision_eligible"
     ] != expected_eligible:
@@ -722,6 +1005,17 @@ def validate_fixed_metrics_report(report: object) -> None:
     _artifact(identities["dataset"], "fixed-machine report.artifacts.dataset", revision=False)
     if executable["revision"] != allocation["revision"]:
         raise RuntimeError("fixed-machine executable revisions are inconsistent")
+    if current_build is not None:
+        for name, artifact in (
+            ("csv2_benchmark", executable),
+            ("csv2_benchmark_allocations", allocation),
+        ):
+            built = current_build["targets"][name]
+            if any(
+                artifact[field] != built[field]
+                for field in ("path", "size", "sha256", "mtime_ns", "revision")
+            ):
+                raise RuntimeError(f"fixed-machine {name} differs from the owned build")
 
     if status == "completed":
         _required(
@@ -790,6 +1084,8 @@ def validate_fixed_metrics_report(report: object) -> None:
         _string(document.get("error"), "fixed-machine report.error")
 
     if evidence == "controlled":
+        if artifact_mode != "owned":
+            raise RuntimeError("controlled fixed-machine report requires an owned build")
         if runs < 20:
             raise RuntimeError("controlled fixed-machine report requires 20 runs")
         affinity = machine.get("process_affinity")
@@ -849,7 +1145,14 @@ def validate_fixed_metrics_report(report: object) -> None:
         )
         if compiler_artifact["sha256"] != recorded_compiler["sha256"]:
             raise RuntimeError("fixed-machine compiler identities are inconsistent")
-        _artifact(identities["compile_commands"], "controlled compile commands", revision=False)
+        recorded_commands = _artifact(
+            identities["compile_commands"], "controlled compile commands", revision=False
+        )
+        if current_build is not None:
+            if compiler_artifact["sha256"] != current_build["compiler"]["artifact"]["sha256"]:
+                raise RuntimeError("fixed-machine compiler differs from the owned build")
+            if recorded_commands["sha256"] != current_build["compile_commands"]["sha256"]:
+                raise RuntimeError("fixed-machine compile commands differ from the owned build")
         if status == "completed":
             _required(
                 document,
@@ -871,3 +1174,44 @@ def validate_fixed_metrics_report(report: object) -> None:
                 "fixed-machine report.code_size",
                 require_sections=True,
             )
+
+
+def validate_artifact_manifest(manifest: object) -> None:
+    from . import ARTIFACT_MANIFEST_SCHEMA
+
+    document = _object(manifest, "artifact manifest")
+    fields = {"schema", "kind", "report", "inputs"}
+    _required(document, fields, "artifact manifest")
+    _closed(document, fields, "artifact manifest")
+    if document["schema"] != ARTIFACT_MANIFEST_SCHEMA:
+        raise RuntimeError("artifact manifest has an unsupported schema")
+    kind = document["kind"]
+    if kind not in {"comparison", "fixed-metrics"}:
+        raise RuntimeError("artifact manifest kind is invalid")
+    _artifact(document["report"], "artifact manifest.report", revision=False)
+    inputs = _object(document["inputs"], "artifact manifest.inputs")
+    if kind == "comparison":
+        required = {"baseline", "candidate", "datasets", "builds"}
+        _required(inputs, required, "artifact manifest.inputs")
+        _closed(inputs, required, "artifact manifest.inputs")
+        _artifact(inputs["baseline"], "artifact manifest.inputs.baseline", revision=True)
+        _artifact(inputs["candidate"], "artifact manifest.inputs.candidate", revision=True)
+        datasets = _array(inputs["datasets"], "artifact manifest.inputs.datasets")
+        if not datasets:
+            raise RuntimeError("artifact manifest datasets must not be empty")
+        for index, dataset in enumerate(datasets):
+            _artifact(dataset, f"artifact manifest.inputs.datasets[{index}]", revision=False)
+        digests = _object(inputs["builds"], "artifact manifest.inputs.builds")
+        _required(digests, {"baseline", "candidate"}, "artifact manifest.inputs.builds")
+        for side in ("baseline", "candidate"):
+            value = digests[side]
+            if value is not None:
+                _hex_digest(value, f"artifact manifest.inputs.builds.{side}", (64,))
+    else:
+        required = {"artifacts", "build"}
+        _required(inputs, required, "artifact manifest.inputs")
+        artifacts_document = _object(inputs["artifacts"], "artifact manifest.inputs.artifacts")
+        if not artifacts_document:
+            raise RuntimeError("artifact manifest inputs must not be empty")
+        if inputs["build"] is not None:
+            _hex_digest(inputs["build"], "artifact manifest.inputs.build", (64,))
