@@ -5,7 +5,7 @@ import unittest
 from pathlib import Path
 
 import _support  # noqa: F401
-from csv2bench import protocol
+from csv2bench import builds, protocol
 
 
 def artifact(revision: str | None = None) -> dict[str, object]:
@@ -38,6 +38,7 @@ def comparison_report() -> dict[str, object]:
     revision = "candidate"
     side = {
         "artifact": artifact(revision),
+        "build": None,
         "description": {
             "protocol": "csv2-common-v3",
             "revision": revision,
@@ -93,7 +94,8 @@ def comparison_report() -> dict[str, object]:
         "launches": [launch("baseline", 0), launch("candidate", 1)],
     }
     return {
-        "schema": "csv2-benchmark-report-v3",
+        "schema": "csv2-benchmark-report-v4",
+        "artifact_mode": "external",
         "mode": "aa",
         "status": "completed",
         "evidence_level": "exploratory",
@@ -130,7 +132,9 @@ def comparison_report() -> dict[str, object]:
 
 def fixed_metrics_report() -> dict[str, object]:
     return {
-        "schema": "csv2-fixed-machine-metrics-v3",
+        "schema": "csv2-fixed-machine-metrics-v4",
+        "artifact_mode": "external",
+        "build": None,
         "status": "completed",
         "evidence_level": "exploratory",
         "decision_eligible": False,
@@ -198,6 +202,18 @@ def fixed_metrics_report() -> dict[str, object]:
 
 def controlled_comparison_report() -> dict[str, object]:
     report = comparison_report()
+    revision = "d" * 40
+    adapter_commit = "e" * 40
+    adapter_sha256 = "f" * 64
+    for side_name in ("baseline", "candidate"):
+        side = report[side_name]
+        side["artifact"]["revision"] = revision
+        side["description"]["revision"] = revision
+    for launch in report["cases"][0]["launches"]:
+        launch["result"]["revision"] = revision
+    report["adapter_source"] = artifact(adapter_commit)
+    report["adapter_source"]["sha256"] = adapter_sha256
+    report["artifact_mode"] = "owned"
     report["evidence_level"] = "controlled"
     report["decision_eligible"] = True
     report["runs"] = 20
@@ -222,6 +238,86 @@ def controlled_comparison_report() -> dict[str, object]:
     case["launches"] = launches
     case["baseline"]["samples"] = [1.0] * 20
     case["candidate"]["samples"] = [1.0] * 20
+
+    def git_export(
+        root: str, commit: str, selection: str, path: str, sha256: str
+    ) -> dict[str, object]:
+        value: dict[str, object] = {
+            "schema": "csv2-git-export-v1",
+            "repository": "/repository",
+            "reference": commit,
+            "commit": commit,
+            "tree": "a" * 40,
+            "selections": [selection],
+            "root": root,
+            "files": [
+                {
+                    "mode": "100644",
+                    "type": "blob",
+                    "oid": "b" * 40,
+                    "path": path,
+                    "size": 1,
+                    "sha256": sha256,
+                }
+            ],
+        }
+        value["digest"] = builds.document_digest(value)
+        return value
+
+    adapter_export = git_export(
+        "/adapter",
+        adapter_commit,
+        "benchmark/compare/common_driver.cpp",
+        "benchmark/compare/common_driver.cpp",
+        adapter_sha256,
+    )
+    for side_name in ("baseline", "candidate"):
+        output = json.loads(json.dumps(report[side_name]["artifact"]))
+        build: dict[str, object] = {
+            "schema": "csv2-benchmark-build-v1",
+            "kind": "common-driver",
+            "generated_at_utc": "now",
+            "revision": revision,
+            "header_export": git_export(
+                f"/{side_name}-headers",
+                revision,
+                "include",
+                "include/csv2/reader.hpp",
+                "c" * 64,
+            ),
+            "adapter_export": adapter_export,
+            "compiler": {
+                "artifact": artifact(),
+                "version": {
+                    "command": ["c++", "--version"],
+                    "returncode": 0,
+                    "stdout": "compiler version",
+                    "stderr": "",
+                },
+            },
+            "compiler_flags": ["-std=c++11", "-O3", "-DNDEBUG"],
+            "argv": [
+                "/artifact",
+                "-I/source",
+                "adapter.cpp",
+                "-o",
+                f"/{side_name}",
+                f"-D{revision}",
+            ],
+            "normalized_argv": [
+                "/artifact",
+                "-I{include_root}",
+                "{adapter_source}",
+                "-o",
+                "{output}",
+                "-D{revision}",
+            ],
+            "build_log": {"returncode": 0, "stdout": "", "stderr": ""},
+            "output": output,
+        }
+        build["identity_digest"] = builds.common_build_identity_digest(build)
+        build["digest"] = builds.document_digest(build)
+        report[side_name]["build"] = build
     return report
 
 
@@ -229,6 +325,7 @@ def controlled_metrics_report() -> dict[str, object]:
     report = fixed_metrics_report()
     report["evidence_level"] = "controlled"
     report["decision_eligible"] = True
+    report["artifact_mode"] = "owned"
     report["runs"] = 20
     report["machine"]["process_affinity"] = [0]
     report["timing"]["runs"] = 20
@@ -272,6 +369,92 @@ def controlled_metrics_report() -> dict[str, object]:
         "total_bytes": 3,
         "command": ["size"],
     }
+    source: dict[str, object] = {
+        "schema": "csv2-git-export-v1",
+        "repository": "/repository",
+        "reference": "candidate",
+        "commit": "d" * 40,
+        "tree": "a" * 40,
+        "selections": ["<full-tree>"],
+        "root": "/source",
+        "files": [
+            {
+                "mode": "100644",
+                "type": "blob",
+                "oid": "b" * 40,
+                "path": "CMakeLists.txt",
+                "size": 1,
+                "sha256": "c" * 64,
+            }
+        ],
+    }
+    source["digest"] = builds.document_digest(source)
+    tool = {
+        "artifact": artifact(),
+        "version": {
+            "command": ["tool", "--version"],
+            "returncode": 0,
+            "stdout": "version",
+            "stderr": "",
+        },
+    }
+    target_summaries = {
+        name: {
+            "sources": sorted(builds.CURRENT_SOURCES),
+            "compile_fragments": "-O3 -DNDEBUG -std=c++23",
+            "defines": [f'CSV2_BENCHMARK_REVISION=\\"{"d" * 40}\\"'],
+            "includes": ["/source/include"],
+            "artifact": report["artifacts"][artifact_name]["path"],
+        }
+        for name, artifact_name in (
+            ("csv2_benchmark", "executable"),
+            ("csv2_benchmark_allocations", "allocation_executable"),
+        )
+    }
+    current_build: dict[str, object] = {
+        "schema": "csv2-benchmark-build-v1",
+        "kind": "current-tree",
+        "generated_at_utc": "now",
+        "revision": "d" * 40,
+        "source_export": source,
+        "compiler": tool,
+        "cmake": json.loads(json.dumps(tool)),
+        "ninja": json.loads(json.dumps(tool)),
+        "configure_argv": [
+            "cmake", "-S", "/source", "-B", "/build", "/compiler", "d" * 40,
+        ],
+        "normalized_configure_argv": [
+            "cmake", "-S", "{source_root}", "-B", "{build_root}",
+            "{compiler}", "{revision}",
+        ],
+        "build_argv": ["cmake", "--build", "/build"],
+        "configure_log": {"returncode": 0, "seconds": 1.0, "stdout": "", "stderr": ""},
+        "build_log": {"returncode": 0, "seconds": 1.0, "stdout": "", "stderr": ""},
+        "file_api": {
+            "compiler": "/compiler",
+            "targets": target_summaries,
+            "link_commands": {
+                "csv2_benchmark": ["c++ -o csv2_benchmark"],
+                "csv2_benchmark_allocations": ["c++ -o csv2_benchmark_allocations"],
+            },
+        },
+        "compile_commands": report["artifacts"]["compile_commands"],
+        "targets": {
+            "csv2_benchmark": report["artifacts"]["executable"],
+            "csv2_benchmark_allocations": report["artifacts"]["allocation_executable"],
+        },
+        "corpus_manifest": artifact(),
+        "source_root": "/source",
+        "build_root": "/build",
+    }
+    for value in current_build["targets"].values():
+        value["revision"] = "d" * 40
+    report["artifacts"]["executable"]["revision"] = "d" * 40
+    report["artifacts"]["allocation_executable"]["revision"] = "d" * 40
+    report["verification"]["result"]["revision"] = "d" * 40
+    current_build["identity_digest"] = builds.current_build_identity_digest(current_build)
+    current_build["digest"] = builds.document_digest(current_build)
+    report["build"] = current_build
     return report
 
 
@@ -283,12 +466,7 @@ class ProtocolTests(unittest.TestCase):
         protocol.validate_fixed_metrics_report(controlled_metrics_report())
 
     def test_empty_eligible_reports_and_unknown_top_level_fields_are_rejected(self) -> None:
-        comparison = comparison_report()
-        comparison["evidence_level"] = "controlled"
-        comparison["decision_eligible"] = True
-        comparison["runs"] = 20
-        comparison["warmups"] = 3
-        comparison["host"]["process_affinity"] = [0]
+        comparison = controlled_comparison_report()
         comparison["datasets"] = []
         comparison["cases"] = []
         with self.assertRaisesRegex(RuntimeError, "requires datasets and cases"):
@@ -322,6 +500,77 @@ class ProtocolTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "launches"):
             protocol.validate_comparison_report(comparison)
 
+    def test_owned_current_build_rejects_provenance_drift(self) -> None:
+        mutations = (
+            (
+                "revision",
+                lambda report: report["build"].update(revision="e" * 40),
+            ),
+            (
+                "source set",
+                lambda report: report["build"]["file_api"]["targets"][
+                    "csv2_benchmark"
+                ]["sources"].pop(),
+            ),
+            (
+                "link command",
+                lambda report: report["build"]["file_api"]["link_commands"].update(
+                    csv2_benchmark=[]
+                ),
+            ),
+            (
+                "normalized configure",
+                lambda report: report["build"]["normalized_configure_argv"].__setitem__(
+                    2, "/wrong-source"
+                ),
+            ),
+            (
+                "compiler",
+                lambda report: report["build"]["compiler"]["artifact"].update(
+                    sha256="0" * 64
+                ),
+            ),
+            (
+                "output",
+                lambda report: report["build"]["targets"]["csv2_benchmark"].update(
+                    sha256="0" * 64
+                ),
+            ),
+        )
+        for label, mutate in mutations:
+            with self.subTest(label=label):
+                report = controlled_metrics_report()
+                mutate(report)
+                with self.assertRaises(RuntimeError):
+                    protocol.validate_fixed_metrics_report(report)
+
+    def test_v3_reports_are_explicitly_rejected(self) -> None:
+        comparison = comparison_report()
+        comparison["schema"] = "csv2-benchmark-report-v3"
+        with self.assertRaisesRegex(RuntimeError, "unsupported schema"):
+            protocol.validate_comparison_report(comparison)
+        metrics = fixed_metrics_report()
+        metrics["schema"] = "csv2-fixed-machine-metrics-v3"
+        with self.assertRaisesRegex(RuntimeError, "unsupported schema"):
+            protocol.validate_fixed_metrics_report(metrics)
+
+    def test_artifact_manifest_v2_rejects_old_or_incomplete_inputs(self) -> None:
+        manifest = {
+            "schema": "csv2-artifact-manifest-v2",
+            "kind": "comparison",
+            "report": artifact(),
+            "inputs": {
+                "baseline": artifact("base"),
+                "candidate": artifact("candidate"),
+                "datasets": [artifact()],
+                "builds": {"baseline": "a" * 64, "candidate": "b" * 64},
+            },
+        }
+        protocol.validate_artifact_manifest(manifest)
+        manifest["schema"] = "csv2-artifact-manifest-v1"
+        with self.assertRaisesRegex(RuntimeError, "unsupported schema"):
+            protocol.validate_artifact_manifest(manifest)
+
     def test_comparison_uses_declared_operation_contracts(self) -> None:
         report = comparison_report()
         report["candidate"]["description"]["operation_contracts"] = (
@@ -338,13 +587,24 @@ class ProtocolTests(unittest.TestCase):
     def test_schemas_close_the_top_level_and_require_controlled_evidence(self) -> None:
         schema_root = Path(__file__).resolve().parents[2] / "protocol" / "schemas"
         comparison = json.loads(
-            (schema_root / "comparison-v3.schema.json").read_text(encoding="utf-8")
+            (schema_root / "comparison-v4.schema.json").read_text(encoding="utf-8")
         )
         metrics = json.loads(
-            (schema_root / "fixed-machine-v3.schema.json").read_text(encoding="utf-8")
+            (schema_root / "fixed-machine-v4.schema.json").read_text(encoding="utf-8")
+        )
+        build = json.loads(
+            (schema_root / "build-v1.schema.json").read_text(encoding="utf-8")
+        )
+        artifact_manifest = json.loads(
+            (schema_root / "artifact-manifest-v2.schema.json").read_text(encoding="utf-8")
         )
         self.assertFalse(comparison["additionalProperties"])
         self.assertFalse(metrics["additionalProperties"])
+        self.assertFalse(build["additionalProperties"])
+        self.assertFalse(artifact_manifest["additionalProperties"])
+        self.assertEqual(comparison["properties"]["schema"]["const"], "csv2-benchmark-report-v4")
+        self.assertEqual(metrics["properties"]["schema"]["const"], "csv2-fixed-machine-metrics-v4")
+        self.assertEqual(build["properties"]["schema"]["const"], "csv2-benchmark-build-v1")
         self.assertIn("runner", comparison["required"])
         self.assertIn("clean_build", metrics["required"])
         self.assertIn("post_build", metrics["required"])

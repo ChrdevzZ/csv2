@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "CSV2 benchmark artifact manifest v2",
+  "type": "object",
+  "required": ["schema", "kind", "report", "inputs"],
+  "properties": {
+    "schema": {"const": "csv2-artifact-manifest-v2"},
+    "kind": {"enum": ["comparison", "fixed-metrics"]},
+    "report": {"$ref": "#/$defs/artifact"},
+    "inputs": {"type": "object", "minProperties": 1}
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "artifact": {
+      "type": "object",
+      "required": ["path", "size", "sha256", "mtime_ns"],
+      "properties": {
+        "path": {"type": "string", "minLength": 1},
+        "size": {"type": "integer", "minimum": 0},
+        "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "mtime_ns": {"type": "integer", "minimum": 0}
+      },
+      "additionalProperties": true
+    }
+  }
+}

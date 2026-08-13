@@ -143,6 +143,9 @@ class BuildTests(unittest.TestCase):
             compatible = copy.deepcopy(manifest)
             builds.assert_compatible_builds(manifest, compatible)
             compatible["normalized_argv"][1] += "-fno-compatible"
+            compatible["identity_digest"] = builds.common_build_identity_digest(
+                compatible
+            )
             unsigned = dict(compatible)
             unsigned.pop("digest")
             compatible["digest"] = builds.document_digest(unsigned)

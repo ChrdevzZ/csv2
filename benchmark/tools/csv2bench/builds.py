@@ -340,6 +340,34 @@ def _artifact(path: Path, revision: str) -> dict[str, object]:
     return artifacts.metadata(path, revision)
 
 
+def common_build_identity_digest(manifest: dict[str, object]) -> str:
+    header_export = manifest["header_export"]
+    adapter_export = manifest["adapter_export"]
+    compiler = manifest["compiler"]
+    version = compiler["version"]
+    identity = {
+        "schema": BUILD_SCHEMA,
+        "kind": "common-driver",
+        "revision": manifest["revision"],
+        "header_tree": header_export["tree"],
+        "header_files": [
+            {key: entry[key] for key in ("path", "mode", "oid", "size", "sha256")}
+            for entry in header_export["files"]
+        ],
+        "adapter_tree": adapter_export["tree"],
+        "adapter_files": [
+            {key: entry[key] for key in ("path", "mode", "oid", "size", "sha256")}
+            for entry in adapter_export["files"]
+        ],
+        "compiler_sha256": compiler["artifact"]["sha256"],
+        "compiler_version_stdout": version["stdout"],
+        "compiler_version_stderr": version["stderr"],
+        "normalized_argv": manifest["normalized_argv"],
+        "output_sha256": manifest["output"]["sha256"],
+    }
+    return document_digest(identity)
+
+
 def compile_common_driver(
     *,
     header_export: dict[str, object],
@@ -479,6 +507,7 @@ def compile_common_driver(
         },
         "output": _artifact(output, revision),
     }
+    manifest["identity_digest"] = common_build_identity_digest(manifest)
     manifest["digest"] = document_digest(manifest)
     validate_build_manifest(manifest)
     return manifest
@@ -498,6 +527,7 @@ def validate_build_manifest(manifest: dict[str, object]) -> None:
         "normalized_argv",
         "build_log",
         "output",
+        "identity_digest",
         "digest",
     }
     if set(manifest) != required:
@@ -509,6 +539,11 @@ def validate_build_manifest(manifest: dict[str, object]) -> None:
     unsigned.pop("digest")
     if not SHA256.fullmatch(expected_digest) or document_digest(unsigned) != expected_digest:
         raise RuntimeError("build manifest digest is inconsistent")
+    if (
+        not SHA256.fullmatch(str(manifest["identity_digest"]))
+        or common_build_identity_digest(manifest) != manifest["identity_digest"]
+    ):
+        raise RuntimeError("build identity digest is inconsistent")
     revision = _object_id(str(manifest["revision"]), "build revision")
     header_export = manifest["header_export"]
     adapter_export = manifest["adapter_export"]
@@ -646,3 +681,356 @@ def build_common_pair(
         "candidate": manifests["candidate"],
         "adapter": adapter,
     }
+
+
+CURRENT_SOURCES = frozenset(
+    {
+        "benchmark/current/main.cpp",
+        "benchmark/current/context.cpp",
+        "benchmark/current/registry.cpp",
+        "benchmark/current/support/allocation.cpp",
+        "benchmark/current/support/output_buffer.cpp",
+        "benchmark/current/support/result.cpp",
+        "benchmark/current/kernels/source.cpp",
+        "benchmark/current/kernels/traversal.cpp",
+        "benchmark/current/kernels/extraction.cpp",
+        "benchmark/current/kernels/validation.cpp",
+        "benchmark/current/kernels/conversion.cpp",
+        "benchmark/current/kernels/ranges.cpp",
+        "benchmark/current/kernels/index.cpp",
+        "benchmark/current/kernels/writer.cpp",
+    }
+)
+
+
+def current_build_identity_digest(manifest: dict[str, object]) -> str:
+    source = manifest["source_export"]
+    compiler = manifest["compiler"]
+    cmake = manifest["cmake"]
+    ninja = manifest["ninja"]
+    compile_commands = manifest["compile_commands"]
+    targets = manifest["targets"]
+    corpus_manifest = manifest["corpus_manifest"]
+    return document_digest(
+        {
+            "revision": manifest["revision"],
+            "source_tree": source["tree"],
+            "source_digest": source["digest"],
+            "compiler_sha256": compiler["artifact"]["sha256"],
+            "cmake_sha256": cmake["artifact"]["sha256"],
+            "ninja_sha256": ninja["artifact"]["sha256"],
+            "normalized_configure_argv": manifest["normalized_configure_argv"],
+            "file_api": manifest["file_api"],
+            "compile_commands_sha256": compile_commands["sha256"],
+            "targets": {name: value["sha256"] for name, value in targets.items()},
+            "corpus_manifest_sha256": corpus_manifest["sha256"],
+        }
+    )
+
+
+def _run_text(command: Sequence[str], *, timeout: int = 600, run_fn: Run = subprocess.run):
+    completed = run_fn(list(command), capture_output=True, text=True, timeout=timeout)
+    if completed.returncode != 0:
+        raise RuntimeError(
+            "build command failed\n"
+            f"command: {json.dumps(list(command))}\n"
+            f"exit: {completed.returncode}\nstdout:\n{completed.stdout}\nstderr:\n{completed.stderr}"
+        )
+    return completed
+
+
+def _tool_identity(path: Path, version_arguments: Sequence[str], run_fn: Run) -> dict[str, object]:
+    executable = artifacts.canonical_existing(path, "build tool executable")
+    version = _run_text([str(executable), *version_arguments], timeout=30, run_fn=run_fn)
+    if not (version.stdout.strip() or version.stderr.strip()):
+        raise RuntimeError(f"build tool returned no version identity: {executable}")
+    return {
+        "artifact": artifacts.metadata(executable),
+        "version": {
+            "command": [str(executable), *version_arguments],
+            "returncode": 0,
+            "stdout": version.stdout,
+            "stderr": version.stderr,
+        },
+    }
+
+
+def _file_api_reply(build_root: Path) -> tuple[dict[str, object], dict[str, object]]:
+    reply_root = build_root / ".cmake" / "api" / "v1" / "reply"
+    indices = sorted(reply_root.glob("index-*.json"))
+    if len(indices) != 1:
+        raise RuntimeError("CMake File API produced no unique reply index")
+    try:
+        index = json.loads(indices[0].read_text(encoding="utf-8"))
+        replies = index["reply"]
+        codemodel_name = replies["codemodel-v2"]["jsonFile"]
+        toolchains_name = replies["toolchains-v1"]["jsonFile"]
+        codemodel = json.loads((reply_root / codemodel_name).read_text(encoding="utf-8"))
+        toolchains = json.loads((reply_root / toolchains_name).read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError, KeyError, TypeError) as error:
+        raise RuntimeError("CMake File API reply is malformed") from error
+    return codemodel, toolchains
+
+
+def audit_current_codemodel(
+    source_root: Path,
+    build_root: Path,
+    compiler: Path,
+    revision: str,
+    *,
+    run_fn: Run = subprocess.run,
+) -> dict[str, object]:
+    codemodel, toolchains = _file_api_reply(build_root)
+    try:
+        configurations = codemodel["configurations"]
+        if len(configurations) != 1:
+            raise RuntimeError("CMake codemodel must contain one configuration")
+        configuration = configurations[0]
+        targets = {target["name"]: target for target in configuration["targets"]}
+        compiler_paths = [
+            toolchain["compiler"]["path"]
+            for toolchain in toolchains["toolchains"]
+            if toolchain.get("language") == "CXX"
+        ]
+    except (KeyError, TypeError) as error:
+        raise RuntimeError("CMake codemodel lacks target or toolchain metadata") from error
+    if len(compiler_paths) != 1 or Path(compiler_paths[0]).resolve(strict=True) != compiler:
+        raise RuntimeError("CMake File API compiler differs from the audited compiler")
+
+    reply_root = build_root / ".cmake" / "api" / "v1" / "reply"
+    summaries: dict[str, object] = {}
+    for target_name in ("csv2_benchmark", "csv2_benchmark_allocations"):
+        target_reference = targets.get(target_name)
+        if target_reference is None:
+            raise RuntimeError(f"CMake codemodel is missing target {target_name}")
+        try:
+            target = json.loads(
+                (reply_root / target_reference["jsonFile"]).read_text(encoding="utf-8")
+            )
+            source_entries = target["sources"]
+            compile_groups = target["compileGroups"]
+            artifacts_values = target["artifacts"]
+        except (OSError, json.JSONDecodeError, KeyError, TypeError) as error:
+            raise RuntimeError(f"CMake target reply is malformed: {target_name}") from error
+        source_paths = set()
+        for entry in source_entries:
+            if "compileGroupIndex" not in entry:
+                continue
+            source_path = Path(entry["path"])
+            if not source_path.is_absolute():
+                source_path = source_root / source_path
+            try:
+                relative = source_path.resolve(strict=True).relative_to(source_root).as_posix()
+            except ValueError as error:
+                raise RuntimeError(
+                    f"{target_name} source escapes the immutable source tree: {source_path}"
+                ) from error
+            source_paths.add(relative)
+        if source_paths != CURRENT_SOURCES:
+            missing = sorted(CURRENT_SOURCES - source_paths)
+            extra = sorted(source_paths - CURRENT_SOURCES)
+            raise RuntimeError(
+                f"{target_name} source set differs; missing={missing}, extra={extra}"
+            )
+        if not compile_groups:
+            raise RuntimeError(f"{target_name} has no compile groups")
+        fragments = " ".join(
+            fragment["fragment"]
+            for group in compile_groups
+            for fragment in group.get("compileCommandFragments", [])
+        )
+        defines = {
+            define["define"] for group in compile_groups for define in group.get("defines", [])
+        }
+        include_paths = {
+            str(Path(include["path"]).resolve(strict=True))
+            for group in compile_groups
+            for include in group.get("includes", [])
+        }
+        revision_definitions = {
+            f'CSV2_BENCHMARK_REVISION=\\"{revision}\\"',
+            f'CSV2_BENCHMARK_REVISION="{revision}"',
+        }
+        if "NDEBUG" not in fragments or not (defines & revision_definitions):
+            raise RuntimeError(f"{target_name} lacks NDEBUG or the exact revision define")
+        if not any(flag in fragments for flag in ("-O2", "-O3", "/O2")):
+            raise RuntimeError(f"{target_name} lacks an optimized compile flag")
+        language_standards = {
+            str(group.get("languageStandard", {}).get("standard", ""))
+            for group in compile_groups
+        }
+        if not (
+            language_standards & {"20", "23", "26"}
+            and any(
+                flag in fragments
+                for flag in (
+                    "-std=c++20", "-std=c++23", "-std=c++2b", "-std=c++latest",
+                    "-std:c++20", "-std:c++latest",
+                    "/std:c++20", "/std:c++latest",
+                )
+            )
+        ):
+            raise RuntimeError(f"{target_name} lacks the required modern C++ mode")
+        public_include = str((source_root / "include").resolve(strict=True))
+        if public_include not in include_paths:
+            raise RuntimeError(f"{target_name} does not compile against the exported include root")
+        executable_artifacts = [
+            value
+            for value in artifacts_values
+            if Path(value["path"]).suffix.lower() not in {".pdb", ".ilk", ".manifest"}
+        ]
+        if target.get("type") != "EXECUTABLE" or len(executable_artifacts) != 1:
+            raise RuntimeError(f"{target_name} must have one final executable artifact")
+        artifact_path = (build_root / executable_artifacts[0]["path"]).resolve(strict=True)
+        summaries[target_name] = {
+            "sources": sorted(source_paths),
+            "compile_fragments": fragments,
+            "language_standards": sorted(language_standards),
+            "defines": sorted(defines),
+            "includes": sorted(include_paths),
+            "artifact": str(artifact_path),
+        }
+
+    link_commands: dict[str, list[str]] = {}
+    ninja = shutil.which("ninja")
+    if ninja is None:
+        raise RuntimeError("Ninja is required to audit current-tree link commands")
+    for target_name in summaries:
+        completed = _run_text(
+            [ninja, "-C", str(build_root), "-t", "commands", target_name],
+            timeout=60,
+            run_fn=run_fn,
+        )
+        commands = [line for line in completed.stdout.splitlines() if line.strip()]
+        artifact = str(summaries[target_name]["artifact"])
+        link_matches = [line for line in commands if artifact in line or Path(artifact).name in line]
+        if not link_matches:
+            raise RuntimeError(f"Ninja command trace lacks the {target_name} link command")
+        link_commands[target_name] = link_matches
+    return {
+        "compiler": str(compiler),
+        "targets": summaries,
+        "link_commands": link_commands,
+    }
+
+
+def build_current_tree(
+    *,
+    repository: Path,
+    reference: str,
+    compiler: Path,
+    workspace: Path,
+    corpus_scale: int = 1,
+    run_fn: Run = subprocess.run,
+) -> dict[str, object]:
+    if corpus_scale < 1:
+        raise RuntimeError("corpus scale must be positive")
+    repository = artifacts.canonical_existing(repository, "Git repository")
+    compiler = _compiler_path(compiler)
+    cmake_path = shutil.which("cmake")
+    ninja_path = shutil.which("ninja")
+    if cmake_path is None or ninja_path is None:
+        raise RuntimeError("owned current-tree builds require CMake and Ninja")
+    workspace = workspace.expanduser().resolve(strict=False)
+    workspace.mkdir(parents=True, exist_ok=False)
+    source = export_git_tree(repository, reference, workspace / "source", run_fn=run_fn)
+    revision = str(source["commit"])
+    source_root = Path(str(source["root"]))
+    build_root = workspace / "build"
+    query_root = build_root / ".cmake" / "api" / "v1" / "query"
+    query_root.mkdir(parents=True)
+    (query_root / "codemodel-v2").touch()
+    (query_root / "toolchains-v1").touch()
+    configure = [
+        cmake_path,
+        "-S",
+        str(source_root),
+        "-B",
+        str(build_root),
+        "-G",
+        "Ninja",
+        "-DCMAKE_BUILD_TYPE=Release",
+        "-DCMAKE_EXPORT_COMPILE_COMMANDS=ON",
+        f"-DCMAKE_CXX_COMPILER={compiler}",
+        "-DCSV2_BUILD_BENCHMARKS=ON",
+        "-DCSV2_BUILD_BENCHMARK_CHECKS=ON",
+        "-DCSV2_VERIFICATION_PROFILE=perf",
+        f"-DCSV2_BENCHMARK_CORPUS_SCALE={corpus_scale}",
+        f"-DCSV2_BENCHMARK_REVISION={revision}",
+        "-DCSV2_REQUIRE_PYTHON_AUDITS=ON",
+    ]
+    configured_started = __import__("time").perf_counter()
+    configured = _run_text(configure, run_fn=run_fn)
+    configure_seconds = __import__("time").perf_counter() - configured_started
+    build_command = [
+        cmake_path,
+        "--build",
+        str(build_root),
+        "--target",
+        "csv2_benchmark",
+        "csv2_benchmark_allocations",
+        "csv2_benchmark_corpus",
+        "--parallel",
+    ]
+    built_started = __import__("time").perf_counter()
+    built = _run_text(build_command, run_fn=run_fn)
+    build_seconds = __import__("time").perf_counter() - built_started
+    audit = audit_current_codemodel(
+        source_root, build_root, compiler, revision, run_fn=run_fn
+    )
+    compiler_identity = _tool_identity(
+        compiler,
+        ("/Bv", "/?") if compiler.name.lower() in {"cl", "cl.exe"} else ("--version",),
+        run_fn,
+    )
+    cmake_identity = _tool_identity(Path(cmake_path), ("--version",), run_fn)
+    ninja_identity = _tool_identity(Path(ninja_path), ("--version",), run_fn)
+    compile_commands = artifacts.metadata(build_root / "compile_commands.json")
+    targets = {
+        name: artifacts.metadata(Path(str(value["artifact"])), revision)
+        for name, value in audit["targets"].items()
+    }
+    corpus_manifest = artifacts.metadata(build_root / "benchmark-corpus" / "manifest.json")
+    normalized_configure = normalize_build_argv(
+        configure,
+        (
+            (str(source_root), "{source_root}"),
+            (str(build_root), "{build_root}"),
+            (str(compiler), "{compiler}"),
+            (revision, "{revision}"),
+        ),
+    )
+    manifest: dict[str, object] = {
+        "schema": BUILD_SCHEMA,
+        "kind": "current-tree",
+        "generated_at_utc": datetime.now(timezone.utc).isoformat(),
+        "revision": revision,
+        "source_export": source,
+        "compiler": compiler_identity,
+        "cmake": cmake_identity,
+        "ninja": ninja_identity,
+        "configure_argv": configure,
+        "normalized_configure_argv": normalized_configure,
+        "build_argv": build_command,
+        "configure_log": {
+            "returncode": 0,
+            "seconds": configure_seconds,
+            "stdout": configured.stdout,
+            "stderr": configured.stderr,
+        },
+        "build_log": {
+            "returncode": 0,
+            "seconds": build_seconds,
+            "stdout": built.stdout,
+            "stderr": built.stderr,
+        },
+        "file_api": audit,
+        "compile_commands": compile_commands,
+        "targets": targets,
+        "corpus_manifest": corpus_manifest,
+        "source_root": str(source_root),
+        "build_root": str(build_root),
+    }
+    manifest["identity_digest"] = current_build_identity_digest(manifest)
+    manifest["digest"] = document_digest(manifest)
+    return manifest

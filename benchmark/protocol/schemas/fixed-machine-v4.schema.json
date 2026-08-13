@@ -1,16 +1,18 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "title": "CSV2 fixed-machine metrics v3",
+  "title": "CSV2 fixed-machine metrics v4",
   "type": "object",
   "additionalProperties": false,
   "required": [
-    "schema", "status", "evidence_level", "decision_eligible",
+    "schema", "artifact_mode", "build", "status", "evidence_level", "decision_eligible",
     "generated_at_utc", "machine", "compiler", "compiler_identity",
     "compiler_flags", "operation", "source", "runs", "artifacts", "clean_build",
     "post_build"
   ],
   "properties": {
-    "schema": {"const": "csv2-fixed-machine-metrics-v3"},
+    "schema": {"const": "csv2-fixed-machine-metrics-v4"},
+    "artifact_mode": {"enum": ["owned", "external"]},
+    "build": {"type": ["object", "null"]},
     "status": {"enum": ["running", "completed", "failed"]},
     "evidence_level": {"enum": ["exploratory", "controlled"]},
     "decision_eligible": {"type": "boolean"},
@@ -250,13 +252,18 @@
     {
       "if": {"properties": {"decision_eligible": {"const": true}}, "required": ["decision_eligible"]},
       "then": {
-        "properties": {"status": {"const": "completed"}, "evidence_level": {"const": "controlled"}}
+        "properties": {
+          "status": {"const": "completed"},
+          "evidence_level": {"const": "controlled"},
+          "artifact_mode": {"const": "owned"}
+        }
       }
     },
     {
       "if": {"properties": {"evidence_level": {"const": "controlled"}}, "required": ["evidence_level"]},
       "then": {
         "properties": {
+          "artifact_mode": {"const": "owned"},
           "runs": {"minimum": 20},
           "machine": {"properties": {"process_affinity": {"type": "array", "minItems": 1}}},
           "compiler_identity": {
@@ -283,6 +290,20 @@
           "code_size": {
             "required": ["text_bytes", "data_bytes", "bss_bytes", "total_bytes", "command"]
           }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {"artifact_mode": {"const": "owned"}},
+        "required": ["artifact_mode"]
+      },
+      "then": {"properties": {"build": {"type": "object"}}},
+      "else": {
+        "properties": {
+          "build": {"type": "null"},
+          "evidence_level": {"const": "exploratory"},
+          "decision_eligible": {"const": false}
         }
       }
     }

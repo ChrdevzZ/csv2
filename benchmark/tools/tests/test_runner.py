@@ -90,12 +90,12 @@ class RunnerTests(unittest.TestCase):
                 expected_revision="candidate",
             )
 
-    def test_calibration_rejects_v2_schema(self) -> None:
+    def test_calibration_rejects_v3_schema(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "calibration.json"
             path.write_text(
                 json.dumps(
-                    {"schema": "csv2-benchmark-report-v2", "mode": "aa", "status": "completed"}
+                    {"schema": "csv2-benchmark-report-v3", "mode": "aa", "status": "completed"}
                 ),
                 encoding="utf-8",
             )
@@ -108,7 +108,7 @@ class RunnerTests(unittest.TestCase):
             path.write_text(
                 json.dumps(
                     {
-                        "schema": "csv2-benchmark-report-v3",
+                        "schema": "csv2-benchmark-report-v4",
                         "mode": "aa",
                         "status": "completed",
                     }
@@ -126,6 +126,7 @@ class RunnerTests(unittest.TestCase):
 
     def test_calibration_rejects_affinity_mismatch(self) -> None:
         calibration = {
+            "artifact_mode": "external",
             "compiler": "c++",
             "compiler_flags": "-O3",
             "runs": 20,
@@ -154,6 +155,7 @@ class RunnerTests(unittest.TestCase):
 
     def test_calibration_rejects_tool_bundle_drift(self) -> None:
         calibration = {
+            "artifact_mode": "external",
             "compiler": "c++",
             "compiler_flags": "-O3",
             "runs": 20,
