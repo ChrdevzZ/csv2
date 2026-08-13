@@ -31,6 +31,7 @@ jobs:
       matrix:
         include:
           - compiler: MSVC 19.51
+            artifact: msvc1951
             configuration: Debug
             toolset: ""
             benchmarks: "ON"
@@ -41,6 +42,7 @@ jobs:
             require_cxx26: "OFF"
             install: true
           - compiler: MSVC 19.51 / ASan
+            artifact: msvc1951-asan
             configuration: Release
             toolset: ""
             benchmarks: "OFF"
@@ -51,6 +53,7 @@ jobs:
             require_cxx26: "OFF"
             install: false
           - compiler: Clang-CL 22.1
+            artifact: clangcl221
             configuration: Release
             toolset: -T ClangCL
             benchmarks: "OFF"
@@ -61,6 +64,7 @@ jobs:
             require_cxx26: "ON"
             install: false
           - compiler: Clang-CL 22.1 / ASan + UBSan
+            artifact: clangcl221-sanitizers
             configuration: Release
             toolset: -T ClangCL
             benchmarks: "OFF"
@@ -85,6 +89,8 @@ jobs:
           -DCMAKE_COMPILE_WARNING_AS_ERROR=ON
           -DCSV2_BUILD_TESTS=ON
           -DCSV2_BUILD_BENCHMARKS=${{ matrix.benchmarks }}
+          -DCSV2_BUILD_BENCHMARK_CHECKS=${{ matrix.benchmarks }}
+          -DCSV2_VERIFICATION_PROFILE=quick
           -DCSV2_ENABLE_SANITIZERS=${{ matrix.sanitizers }}
           -DCSV2_REQUIRE_MODERN_STANDARD_TESTS=ON
           -DCSV2_REQUIRE_CXX26_TESTS=${{ matrix.require_cxx26 }}
@@ -99,6 +105,7 @@ jobs:
         run: >-
           ctest --test-dir build
           -C ${{ matrix.configuration }}
+          --output-junit build/ctest.xml
           --output-on-failure
 
       - name: Test with sanitizers
@@ -114,25 +121,10 @@ jobs:
           }
 
           $vsDevCmd = Join-Path $installationPath "Common7\Tools\VsDevCmd.bat"
-          $testManifest = ctest --test-dir build `
-            -C ${{ matrix.configuration }} `
-            -L sanitizer-runtime `
-            --show-only=json-v1 | ConvertFrom-Json
-          $tests = @($testManifest.tests)
-          if ($tests.Count -eq 0) {
-            throw "CTest registered no sanitizer runtime tests"
-          }
-          $unexpectedTests = @($tests | Where-Object {
-            $_.name -like "csv2.benchmark.*"
-          })
-          if ($unexpectedTests.Count -ne 0) {
-            throw "Benchmark tests must not run under sanitizers: " +
-              (($unexpectedTests | ForEach-Object name) -join ", ")
-          }
-          $duplicateNames = @($tests | Group-Object name | Where-Object Count -ne 1)
-          if ($duplicateNames.Count -ne 0) {
-            throw "CTest sanitizer manifest contains duplicate names"
-          }
+          $buildDirectory = (Resolve-Path build).Path
+          $junit = Join-Path $buildDirectory "ctest.xml"
+          $runner = (Resolve-Path `
+            test/platform/run_windows_sanitizer_tests.ps1).Path
 
           $commands = @(
             "call `"$vsDevCmd`" -arch=x64 -host_arch=x64 >nul"
@@ -161,31 +153,11 @@ jobs:
               "set UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1"
           }
 
-          foreach ($test in $tests) {
-            $command = @($test.command)
-            if ($command.Count -eq 0 -or `
-                -not (Test-Path -LiteralPath $command[0])) {
-              throw "Sanitizer test has no executable: $($test.name)"
-            }
-
-            $workingDirectory = ($test.properties |
-              Where-Object name -eq "WORKING_DIRECTORY").value
-            if (-not $workingDirectory -or `
-                -not (Test-Path -LiteralPath $workingDirectory)) {
-              throw "Sanitizer test has no working directory: $($test.name)"
-            }
-
-            $quotedCommand = ($command | ForEach-Object {
-              if ($_ -match '"') {
-                throw "Sanitizer test argument contains an unsupported quote: $_"
-              }
-              "`"$_`""
-            }) -join " "
-            $commands += "echo [sanitizer] $($test.name)"
-            $commands += "cd /d `"$workingDirectory`""
-            $commands += `
-              "$quotedCommand --no-version --no-intro --no-colors"
-          }
+          $commands += `
+            "pwsh.exe -NoLogo -NoProfile -File `"$runner`" " +
+            "-BuildDirectory `"$buildDirectory`" " +
+            "-Configuration ${{ matrix.configuration }} " +
+            "-OutputJunit `"$junit`""
 
           cmd.exe /d /s /c ($commands -join " && ")
           if ($LASTEXITCODE -ne 0) {
@@ -199,45 +171,22 @@ jobs:
           --config ${{ matrix.configuration }}
           --prefix build/install
 
+      - name: Verify verification dependencies are not installed
+        if: matrix.install
+        shell: pwsh
+        run: |
+          $unexpected = Get-ChildItem build/install -Recurse -File | Where-Object {
+            $_.Name -match 'catch2|benchmark'
+          }
+          if ($unexpected) {
+            throw "Verification dependencies leaked into install: $($unexpected.FullName)"
+          }
+
       - name: Verify installed package consumer
         if: matrix.install
         shell: pwsh
         run: |
-          New-Item -ItemType Directory -Force build/consumer | Out-Null
-          @'
-          cmake_minimum_required(VERSION 3.10)
-          project(csv2_consumer LANGUAGES CXX)
-          find_package(csv2 CONFIG REQUIRED)
-          add_executable(csv2_consumer main.cpp)
-          target_link_libraries(csv2_consumer PRIVATE csv2::csv2)
-          target_compile_features(csv2_consumer PRIVATE cxx_std_20)
-          set_target_properties(csv2_consumer PROPERTIES CXX_EXTENSIONS OFF)
-          add_executable(csv2_no_mmap_consumer no_mmap.cpp)
-          target_link_libraries(csv2_no_mmap_consumer PRIVATE csv2::csv2)
-          target_compile_features(csv2_no_mmap_consumer PRIVATE cxx_std_11)
-          target_compile_definitions(csv2_no_mmap_consumer PRIVATE CSV2_HAS_MMAP=0)
-          set_target_properties(csv2_no_mmap_consumer PROPERTIES CXX_EXTENSIONS OFF)
-          '@ | Set-Content build/consumer/CMakeLists.txt
-          @'
-          #include <csv2/reader.hpp>
-          #include <string>
-          int main() {
-            csv2::Reader<> reader;
-            return reader.parse(std::string("a,b")) ? 0 : 1;
-          }
-          '@ | Set-Content build/consumer/main.cpp
-          @'
-          #include <csv2/mio.hpp>
-          #ifdef MIO_MMAP_HEADER
-          #error "mio must be absent when CSV2_HAS_MMAP=0"
-          #endif
-          #include <csv2/errors.hpp>
-          #include <csv2/parameters.hpp>
-          #include <csv2/reader.hpp>
-          #include <csv2/writer.hpp>
-          int main() { return CSV2_HAS_MMAP; }
-          '@ | Set-Content build/consumer/no_mmap.cpp
-          cmake -S build/consumer -B build/consumer-build `
+          cmake -S test/contracts/consumer -B build/consumer-build `
             -G "Visual Studio 18 2026" -A x64 `
             -DCMAKE_PREFIX_PATH="$PWD/build/install"
           cmake --build build/consumer-build `
@@ -256,3 +205,11 @@ jobs:
         run: |
           python utils/amalgamate/amalgamate.py -c single_include.json -s .
           git diff --exit-code -- single_include/csv2/csv2.hpp
+
+      - name: Upload CTest results
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: windows-${{ matrix.artifact }}-ctest
+          path: build/ctest.xml
+          if-no-files-found: error
