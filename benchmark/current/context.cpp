@@ -26,6 +26,22 @@ bool take_value(int &index, int argc, char **argv, const char *option, std::stri
   return true;
 }
 
+bool parse_size(const std::string &text, std::size_t &value) {
+  if (text.empty())
+    return false;
+  std::size_t parsed = 0;
+  for (const char character : text) {
+    if (character < '0' || character > '9')
+      return false;
+    const std::size_t digit = static_cast<std::size_t>(character - '0');
+    if (parsed > ((std::numeric_limits<std::size_t>::max)() - digit) / 10)
+      return false;
+    parsed = parsed * 10 + digit;
+  }
+  value = parsed;
+  return true;
+}
+
 } // namespace
 
 const char *source_name(Source source) noexcept {
@@ -48,7 +64,8 @@ std::ostream &operator<<(std::ostream &stream, const StreamableField &field) {
 
 Context::Context()
     : mmap_ready_(false), decoded_row_count_(0), decoded_cell_count_(0),
-      output_stream_(&output_buffer_) {}
+      output_stream_(&output_buffer_), force_output_stream_failure_(false),
+      force_input_read_failure_(false) {}
 
 bool Context::load(const std::string &path, std::string &error) {
   std::ifstream input(path.c_str(), std::ios::binary);
@@ -138,6 +155,8 @@ std::ostream &Context::reset_output() noexcept {
   output_stream_.clear();
   output_stream_.width(0);
   output_buffer_.reset();
+  if (force_output_stream_failure_)
+    output_stream_.setstate(std::ios::badbit);
   return output_stream_;
 }
 
@@ -160,6 +179,23 @@ bool parse_options(int &argc, char **argv, Options &options, std::string &error)
       options.list = true;
     } else if (argument == "--csv2-observer-audit") {
       options.observer_audit = true;
+    } else if (argument == "--csv2-test-output-capacity") {
+      std::string value;
+      if (!take_value(index, argc, argv, "--csv2-test-output-capacity", value, error))
+        return false;
+      if (!parse_size(value, options.output_capacity)) {
+        error = "--csv2-test-output-capacity requires an unsigned decimal size";
+        return false;
+      }
+      options.output_capacity_set = true;
+    } else if (argument == "--csv2-test-output-stream-failure") {
+      options.force_output_stream_failure = true;
+    } else if (argument == "--csv2-test-input-path-after-load") {
+      if (!take_value(index, argc, argv, "--csv2-test-input-path-after-load",
+                      options.input_path_after_load, error))
+        return false;
+    } else if (argument == "--csv2-test-input-read-failure") {
+      options.force_input_read_failure = true;
     } else {
       argv[output_index++] = argv[index];
     }

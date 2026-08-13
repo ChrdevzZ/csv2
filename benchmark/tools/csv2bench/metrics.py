@@ -176,6 +176,10 @@ def parse_timing_report(
     for record in records:
         if record.get("run_type", "iteration") != "iteration":
             continue
+        if record.get("error_occurred") or record.get("skipped"):
+            message = str(record.get("error_message", "")).strip()
+            suffix = f": {message}" if message else ""
+            raise RuntimeError(f"benchmark sample failed or skipped{suffix}")
         unit = str(record.get("time_unit", ""))
         if unit not in TIME_SCALE:
             raise RuntimeError(f"unsupported Google Benchmark time unit: {unit}")

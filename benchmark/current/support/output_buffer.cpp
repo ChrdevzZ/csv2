@@ -12,6 +12,7 @@ void OutputBuffer::reserve(std::size_t capacity) {
 }
 
 void OutputBuffer::reset() noexcept {
+  overflowed_ = false;
   char *const first = storage_.empty() ? 0 : storage_.data();
   setp(first, first == 0 ? 0 : first + storage_.size());
 }
@@ -25,6 +26,8 @@ std::streamsize OutputBuffer::xsputn(const char *data, std::streamsize size) {
     return 0;
   const std::streamsize available = pptr() == 0 ? 0 : epptr() - pptr();
   const std::streamsize written = (std::min)(available, size);
+  if (written != size)
+    overflowed_ = true;
   if (written > 0) {
     std::memcpy(pptr(), data, static_cast<std::size_t>(written));
     std::streamsize remaining = written;
@@ -39,8 +42,12 @@ std::streamsize OutputBuffer::xsputn(const char *data, std::streamsize size) {
 }
 
 OutputBuffer::int_type OutputBuffer::overflow(int_type character) {
-  if (traits_type::eq_int_type(character, traits_type::eof()) || pptr() == epptr())
+  if (traits_type::eq_int_type(character, traits_type::eof()))
+    return traits_type::not_eof(character);
+  if (pptr() == epptr()) {
+    overflowed_ = true;
     return traits_type::eof();
+  }
   *pptr() = traits_type::to_char_type(character);
   pbump(1);
   return character;

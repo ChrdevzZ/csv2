@@ -38,8 +38,16 @@ struct Options {
   bool verify;
   bool list;
   bool observer_audit;
+  bool output_capacity_set;
+  std::size_t output_capacity;
+  bool force_output_stream_failure;
+  std::string input_path_after_load;
+  bool force_input_read_failure;
 
-  Options() : source("all"), verify(false), list(false), observer_audit(false) {}
+  Options()
+      : source("all"), verify(false), list(false), observer_audit(false),
+        output_capacity_set(false), output_capacity(0), force_output_stream_failure(false),
+        force_input_read_failure(false) {}
 };
 
 class Context {
@@ -60,6 +68,8 @@ class Context {
   std::vector<char> vector_scratch_;
   OutputBuffer output_buffer_;
   std::ostream output_stream_;
+  bool force_output_stream_failure_;
+  bool force_input_read_failure_;
 
 public:
   Context();
@@ -96,6 +106,15 @@ public:
   }
 
   std::ostream &reset_output() noexcept;
+  void limit_output_capacity_for_test(std::size_t capacity) { output_buffer_.reserve(capacity); }
+  void force_output_stream_failure_for_test(bool enabled) noexcept {
+    force_output_stream_failure_ = enabled;
+  }
+  void replace_input_path_for_test(const std::string &path) { input_path_ = path; }
+  void force_input_read_failure_for_test(bool enabled) noexcept {
+    force_input_read_failure_ = enabled;
+  }
+  bool input_read_failure_for_test() const noexcept { return force_input_read_failure_; }
   OutputBuffer &output_buffer() noexcept { return output_buffer_; }
   const OutputBuffer &output_buffer() const noexcept { return output_buffer_; }
 };

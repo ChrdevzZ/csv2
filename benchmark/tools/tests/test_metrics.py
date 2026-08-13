@@ -101,6 +101,24 @@ class MetricsTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "exactly one benchmark"):
                 metrics.parse_timing_report(path, 2)
 
+    def test_timing_report_rejects_skipped_or_error_samples(self) -> None:
+        for marker in ({"error_occurred": True, "error_message": "read failed"},
+                       {"skipped": True}):
+            record = {
+                "name": "csv2/source/file-read/file/x.csv",
+                "run_type": "iteration",
+                "real_time": 1,
+                "time_unit": "ns",
+                "bytes_per_second": 1,
+                "items_per_second": 1,
+                **marker,
+            }
+            with self.subTest(marker=marker), tempfile.TemporaryDirectory() as directory:
+                path = Path(directory) / "result.json"
+                path.write_text(json.dumps({"benchmarks": [record]}), encoding="utf-8")
+                with self.assertRaisesRegex(RuntimeError, "failed or skipped"):
+                    metrics.parse_timing_report(path, 1)
+
     def test_controlled_timing_requires_every_pmu_counter(self) -> None:
         document = {
             "benchmarks": [
