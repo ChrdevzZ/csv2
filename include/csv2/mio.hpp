@@ -965,6 +965,12 @@ struct mmap_context {
 #endif
 };
 
+#ifndef _WIN32
+constexpr int mmap_protection(const access_mode mode) noexcept {
+  return mode == access_mode::read ? PROT_READ : PROT_READ | PROT_WRITE;
+}
+#endif
+
 inline mmap_context memory_map(const file_handle_type file_handle, const int64_t offset,
                                const int64_t length, const access_mode mode,
                                std::error_code &error) {
@@ -991,8 +997,8 @@ inline mmap_context memory_map(const file_handle_type file_handle, const int64_t
 #else // POSIX
   char *mapping_start =
       static_cast<char *>(::mmap(0, // Don't give hint as to where to map.
-                                 length_to_map, mode == access_mode::read ? PROT_READ : PROT_WRITE,
-                                 MAP_SHARED, file_handle, aligned_offset));
+                                 length_to_map, mmap_protection(mode), MAP_SHARED, file_handle,
+                                 aligned_offset));
   if (mapping_start == MAP_FAILED) {
     error = detail::last_error();
     return {};

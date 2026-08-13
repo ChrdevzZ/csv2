@@ -586,6 +586,12 @@ static_assert(sizeof(ReaderWithoutHeader::RowIterator) <= 5 * sizeof(void *),
               "RowIterator must remain a five-word cursor");
 static_assert(sizeof(PublicRow::CellIterator) <= 5 * sizeof(void *),
               "CellIterator must not retain redundant range state");
+#if CSV2_HAS_MMAP && !defined(_WIN32)
+static_assert(mio::detail::mmap_protection(mio::access_mode::read) == PROT_READ,
+              "read mappings must request read access");
+static_assert(mio::detail::mmap_protection(mio::access_mode::write) == (PROT_READ | PROT_WRITE),
+              "writable mappings must also remain readable");
+#endif
 #if defined(__cpp_char8_t)
 static_assert(!csv2::detail::is_csv_integer<char8_t>::value,
               "character types must not use integer conversion");
@@ -2138,12 +2144,15 @@ TEST_CASE("Preserve ownership through shared and writable same-handle remaps" * 
   const mio::file_handle_type sink_handle = sink.file_handle();
   sink.map(sink_handle, 1, 1, error);
   REQUIRE_FALSE(error);
+  const mio::mmap_sink &const_sink = sink;
+  REQUIRE(const_sink[0] == 'b');
   sink[0] = 'Z';
+  REQUIRE(const_sink[0] == 'Z');
   sink.sync(error);
   REQUIRE_FALSE(error);
   sink.map(sink_handle, 2, 1, error);
   REQUIRE_FALSE(error);
-  REQUIRE(sink[0] == 'c');
+  REQUIRE(const_sink[0] == 'c');
   sink.unmap();
 
   std::ifstream input(path.c_str(), std::ios::binary);
