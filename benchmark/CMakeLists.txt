@@ -52,6 +52,7 @@ set(CSV2_BENCHMARK_REVISION "unstamped" CACHE STRING
   "Revision embedded in the version-neutral benchmark driver")
 target_compile_definitions(csv2_common_benchmark PRIVATE
   CSV2_BENCHMARK_REVISION="${CSV2_BENCHMARK_REVISION}"
+  CSV2_BENCHMARK_ENABLE_MODERN_WRITER_OPERATIONS=1
   CSV2_HAS_MMAP=${csv2_benchmark_mmap_value})
 set_target_properties(csv2_common_benchmark PROPERTIES
   CXX_STANDARD 11
@@ -80,6 +81,12 @@ if(CSV2_BUILD_TESTS)
       ${CMAKE_CURRENT_SOURCE_DIR}/fixtures/multiline.csv)
   set(csv2_benchmark_crlf_fixture
       ${CMAKE_CURRENT_SOURCE_DIR}/fixtures/crlf.csv)
+  set(csv2_benchmark_doubled_quotes_fixture
+      ${CMAKE_CURRENT_SOURCE_DIR}/fixtures/doubled_quotes.csv)
+  set(csv2_benchmark_trailing_empty_fixture
+      ${CMAKE_CURRENT_SOURCE_DIR}/fixtures/trailing_empty.csv)
+  set(csv2_benchmark_long_field_fixture
+      ${CMAKE_CURRENT_SOURCE_DIR}/fixtures/long_field.csv)
   # The newline-sensitive source fixtures are excluded from text normalization;
   # keep this no-newline mmap fixture byte-for-byte stable as well.
   file(WRITE ${csv2_benchmark_mmap_fixture} "a,b,c")
@@ -94,6 +101,20 @@ if(CSV2_BUILD_TESTS)
   set_tests_properties(csv2.benchmark.common_rows_cells PROPERTIES
     LABELS benchmark-checksum
     PASS_REGULAR_EXPRESSION "protocol=csv2-common-v1.*rows=3.*cells=9")
+  foreach(operation IN ITEMS
+      legacy_writer_raw
+      writer_raw_direct
+      writer_raw_streamable
+      writer_escaped_direct
+      writer_escaped_streamable)
+    add_test(NAME csv2.benchmark.common_${operation}
+      COMMAND csv2_common_benchmark --operation ${operation}
+        --input ${csv2_benchmark_fixture} --source buffer --iterations 1)
+    set_tests_properties(csv2.benchmark.common_${operation} PROPERTIES
+      LABELS benchmark-checksum
+      PASS_REGULAR_EXPRESSION
+        "protocol=csv2-common-v1.*scope=writer_only.*rows=3.*cells=9")
+  endforeach()
   function(csv2_add_common_benchmark_rejection name value)
     add_test(NAME csv2.benchmark.common_reject.${name}
       COMMAND ${CMAKE_COMMAND}
@@ -129,8 +150,10 @@ if(CSV2_BUILD_TESTS)
   csv2_add_benchmark_checksum(decoded_to_vector buffer 4405620607395608627)
   csv2_add_benchmark_checksum(ranges_pipeline buffer 6437334155717714538)
   csv2_add_benchmark_checksum(integer_conversion buffer 6437334155733299317)
-  csv2_add_benchmark_checksum(writer_raw buffer 9730279101474490404)
-  csv2_add_benchmark_checksum(writer_escaped buffer 9730279101474490404)
+  csv2_add_benchmark_checksum(writer_raw_direct buffer 9730279101474490404)
+  csv2_add_benchmark_checksum(writer_raw_streamable buffer 9730279101474490404)
+  csv2_add_benchmark_checksum(writer_escaped_direct buffer 9730279101474490404)
+  csv2_add_benchmark_checksum(writer_escaped_streamable buffer 9730279101474490404)
   function(csv2_add_fixture_checksum name operation fixture checksum)
     add_test(NAME csv2.benchmark.fixture.${name}
       COMMAND csv2_benchmark --operation ${operation}
@@ -169,18 +192,43 @@ if(CSV2_BUILD_TESTS)
     ${csv2_benchmark_multiline_fixture} 8674000034234398225)
   csv2_add_fixture_checksum(crlf_rows rows_cells
     ${csv2_benchmark_crlf_fixture} 12411622248167102744)
-  csv2_add_fixture_checksum(quote_heavy_writer writer_escaped
-    ${csv2_benchmark_quote_fixture} 11995933538725573646)
-  csv2_add_fixture_checksum(multiline_writer writer_escaped
-    ${csv2_benchmark_multiline_fixture} 10979403492338463298)
-  csv2_add_fixture_checksum(crlf_writer writer_escaped
-    ${csv2_benchmark_crlf_fixture} 10184391320815297044)
+  function(csv2_add_writer_fixture_checksums name fixture raw_checksum escaped_checksum)
+    foreach(operation IN ITEMS writer_raw_direct writer_raw_streamable)
+      csv2_add_fixture_checksum(${name}_${operation} ${operation}
+        ${fixture} ${raw_checksum})
+    endforeach()
+    foreach(operation IN ITEMS writer_escaped_direct writer_escaped_streamable)
+      csv2_add_fixture_checksum(${name}_${operation} ${operation}
+        ${fixture} ${escaped_checksum})
+    endforeach()
+  endfunction()
+
+  csv2_add_writer_fixture_checksums(quote_heavy ${csv2_benchmark_quote_fixture}
+    11995933538725573646 11995933538725573646)
+  csv2_add_writer_fixture_checksums(multiline ${csv2_benchmark_multiline_fixture}
+    10979403492338463298 10979403492338463298)
+  csv2_add_writer_fixture_checksums(crlf ${csv2_benchmark_crlf_fixture}
+    10184391320815297044 10184391320815297044)
+  csv2_add_writer_fixture_checksums(doubled_quotes ${csv2_benchmark_doubled_quotes_fixture}
+    8420966736546147094 8420966736546147094)
+  csv2_add_writer_fixture_checksums(trailing_empty ${csv2_benchmark_trailing_empty_fixture}
+    1350449405305950233 1350449405305950233)
+  csv2_add_writer_fixture_checksums(long_field ${csv2_benchmark_long_field_fixture}
+    12182800595363329554 12182800595363329554)
   add_test(NAME csv2.benchmark.allocations.rows_cells
     COMMAND csv2_benchmark_allocations --operation rows_cells
       --input ${csv2_benchmark_fixture} --source buffer --iterations 1
       --track-allocations --expect-allocations 0)
   set_tests_properties(csv2.benchmark.allocations.rows_cells PROPERTIES
     LABELS benchmark-checksum)
+  foreach(operation IN ITEMS writer_raw_direct writer_escaped_direct)
+    add_test(NAME csv2.benchmark.allocations.${operation}
+      COMMAND csv2_benchmark_allocations --operation ${operation}
+        --input ${csv2_benchmark_quote_fixture} --source buffer --iterations 1
+        --track-allocations --expect-allocations 0)
+    set_tests_properties(csv2.benchmark.allocations.${operation} PROPERTIES
+      LABELS benchmark-checksum)
+  endforeach()
   if(csv2_benchmark_has_mmap)
     add_test(NAME csv2.benchmark.checksum.map_only
       COMMAND csv2_benchmark --operation map_only

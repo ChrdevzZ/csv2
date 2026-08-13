@@ -2,11 +2,14 @@
 #include <cstdint>
 #include <cstdlib>
 #include <csv2/reader.hpp>
+#include <csv2/writer.hpp>
 #include <fstream>
 #include <iostream>
 #include <iterator>
 #include <limits>
+#include <streambuf>
 #include <string>
+#include <vector>
 
 #ifndef CSV2_BENCHMARK_REVISION
 #define CSV2_BENCHMARK_REVISION "unstamped"
@@ -36,6 +39,24 @@ struct Observation {
 void mix(std::uint64_t &checksum, std::uint64_t value) noexcept {
   checksum ^= value + 0x9e3779b97f4a7c15ull + (checksum << 6) + (checksum >> 2);
 }
+
+class HashBuffer : public std::streambuf {
+public:
+  std::uint64_t checksum{1469598103934665603ull};
+
+protected:
+  std::streamsize xsputn(const char *data, std::streamsize size) override {
+    for (std::streamsize index = 0; index < size; ++index)
+      mix(checksum, static_cast<unsigned char>(data[index]));
+    return size;
+  }
+
+  int_type overflow(int_type character) override {
+    if (!traits_type::eq_int_type(character, traits_type::eof()))
+      mix(checksum, static_cast<unsigned char>(traits_type::to_char_type(character)));
+    return character;
+  }
+};
 
 bool parse_size(const char *text, std::size_t &value) {
   if (!text || *text == '\0')
@@ -123,6 +144,138 @@ std::uint64_t semantic_checksum(const CommonReader &reader) {
   return checksum;
 }
 
+typedef std::vector<std::vector<std::string>> StringRows;
+
+void extract_raw_rows(const CommonReader &reader, StringRows &rows) {
+  rows.clear();
+  for (const auto row : reader) {
+    rows.push_back(std::vector<std::string>());
+    std::vector<std::string> &result_row = rows.back();
+    for (const auto cell : row) {
+      result_row.push_back(std::string());
+      cell.read_raw_value(result_row.back());
+    }
+  }
+}
+
+#if defined(CSV2_BENCHMARK_ENABLE_MODERN_WRITER_OPERATIONS)
+struct RawDirectField {
+  const char *bytes;
+  std::size_t length;
+  const char *data() const noexcept { return bytes; }
+  std::size_t size() const noexcept { return length; }
+};
+
+struct RawStreamableField {
+  const char *bytes;
+  std::size_t length;
+  const char *data() const noexcept { return bytes; }
+  std::size_t size() const noexcept { return length; }
+};
+
+std::ostream &operator<<(std::ostream &output, const RawStreamableField &field) {
+  return output.write(field.data(), static_cast<std::streamsize>(field.size()));
+}
+
+template <class Row, class Field> class RawRow {
+  Row row_;
+
+public:
+  explicit RawRow(Row row) : row_(row) {}
+
+  class iterator {
+    typename Row::CellIterator current_;
+
+  public:
+    typedef Field value_type;
+    typedef std::ptrdiff_t difference_type;
+    typedef Field reference;
+    typedef void pointer;
+    typedef std::input_iterator_tag iterator_category;
+
+    iterator() {}
+    explicit iterator(typename Row::CellIterator current) : current_(current) {}
+    Field operator*() const {
+      const typename Row::Cell cell = *current_;
+      Field field = {cell.raw_data(), cell.raw_size()};
+      return field;
+    }
+    iterator &operator++() {
+      ++current_;
+      return *this;
+    }
+    bool operator==(const iterator &other) const { return current_ == other.current_; }
+    bool operator!=(const iterator &other) const { return !(*this == other); }
+  };
+
+  iterator begin() const { return iterator(row_.begin()); }
+  iterator end() const { return iterator(row_.end()); }
+};
+
+struct StreamableStringField {
+  const std::string &value;
+};
+
+std::ostream &operator<<(std::ostream &output, const StreamableStringField &field) {
+  return output.write(field.value.data(), static_cast<std::streamsize>(field.value.size()));
+}
+
+class StreamableStringRow {
+  const std::vector<std::string> &row_;
+
+public:
+  explicit StreamableStringRow(const std::vector<std::string> &row) : row_(row) {}
+
+  class iterator {
+    std::vector<std::string>::const_iterator current_;
+
+  public:
+    typedef StreamableStringField value_type;
+    typedef std::ptrdiff_t difference_type;
+    typedef value_type reference;
+    typedef void pointer;
+    typedef std::input_iterator_tag iterator_category;
+
+    iterator() {}
+    explicit iterator(std::vector<std::string>::const_iterator current) : current_(current) {}
+    value_type operator*() const {
+      value_type field = {*current_};
+      return field;
+    }
+    iterator &operator++() {
+      ++current_;
+      return *this;
+    }
+    bool operator==(const iterator &other) const { return current_ == other.current_; }
+    bool operator!=(const iterator &other) const { return !(*this == other); }
+  };
+
+  iterator begin() const { return iterator(row_.begin()); }
+  iterator end() const { return iterator(row_.end()); }
+};
+
+bool is_modern_writer_operation(const std::string &operation) {
+  return operation == "writer_raw_direct" || operation == "writer_raw_streamable" ||
+         operation == "writer_escaped_direct" || operation == "writer_escaped_streamable";
+}
+
+bool is_escaped_writer_operation(const std::string &operation) {
+  return operation == "writer_escaped_direct" || operation == "writer_escaped_streamable";
+}
+
+void extract_decoded_rows(const CommonReader &reader, StringRows &rows) {
+  rows.clear();
+  for (const auto row : reader) {
+    rows.push_back(std::vector<std::string>());
+    std::vector<std::string> &result_row = rows.back();
+    for (const auto cell : row) {
+      result_row.push_back(std::string());
+      cell.copy_content_to(std::back_inserter(result_row.back()));
+    }
+  }
+}
+#endif
+
 bool prepare_reader(const Options &options, CommonReader &reader, std::string &storage) {
   if (options.source == "buffer")
     return read_file(options.input, storage) && reader.parse(storage);
@@ -188,18 +341,99 @@ bool run_legacy_mmap(const Options &options, Observation &result, std::uint64_t 
 #endif
 }
 
+bool run_writer(const Options &options, Observation &result, std::uint64_t &checksum,
+                std::int64_t &elapsed_ns) {
+  CommonReader reader;
+  std::string storage;
+  if (!prepare_reader(options, reader, storage))
+    return false;
+
+  const Observation sample = traverse(reader);
+  StringRows prepared_rows;
+  if (options.operation == "legacy_writer_raw")
+    extract_raw_rows(reader, prepared_rows);
+#if defined(CSV2_BENCHMARK_ENABLE_MODERN_WRITER_OPERATIONS)
+  else if (is_escaped_writer_operation(options.operation))
+    extract_decoded_rows(reader, prepared_rows);
+  else if (!is_modern_writer_operation(options.operation))
+    return false;
+#else
+  else
+    return false;
+#endif
+
+  HashBuffer buffer;
+  std::ostream output(&buffer);
+  const std::chrono::steady_clock::time_point start = std::chrono::steady_clock::now();
+  if (options.operation == "legacy_writer_raw") {
+    csv2::Writer<csv2::delimiter<','>, std::ostream> writer(output);
+    for (std::size_t run = 0; run < options.iterations; ++run)
+      writer.write_rows(prepared_rows);
+  }
+#if defined(CSV2_BENCHMARK_ENABLE_MODERN_WRITER_OPERATIONS)
+  else if (options.operation == "writer_raw_direct") {
+    csv2::basic_writer<csv2::delimiter<','>, std::ostream, csv2::stream_ownership::leave_open,
+                       csv2::quote_policy::none>
+        writer(output);
+    for (std::size_t run = 0; run < options.iterations; ++run)
+      for (const auto row : reader)
+        writer.write_row(RawRow<CommonReader::Row, RawDirectField>(row));
+  } else if (options.operation == "writer_raw_streamable") {
+    csv2::basic_writer<csv2::delimiter<','>, std::ostream, csv2::stream_ownership::leave_open,
+                       csv2::quote_policy::none>
+        writer(output);
+    for (std::size_t run = 0; run < options.iterations; ++run)
+      for (const auto row : reader)
+        writer.write_row(RawRow<CommonReader::Row, RawStreamableField>(row));
+  } else if (options.operation == "writer_escaped_direct") {
+    csv2::EscapingWriter<csv2::delimiter<','>, std::ostream, csv2::stream_ownership::leave_open>
+        writer(output);
+    for (std::size_t run = 0; run < options.iterations; ++run)
+      writer.write_rows(prepared_rows);
+  } else if (options.operation == "writer_escaped_streamable") {
+    csv2::EscapingWriter<csv2::delimiter<','>, std::ostream, csv2::stream_ownership::leave_open>
+        writer(output);
+    for (std::size_t run = 0; run < options.iterations; ++run)
+      for (StringRows::const_iterator row = prepared_rows.begin(); row != prepared_rows.end();
+           ++row)
+        writer.write_row(StreamableStringRow(*row));
+  }
+#endif
+  const std::chrono::steady_clock::time_point stop = std::chrono::steady_clock::now();
+
+  result.rows = sample.rows * options.iterations;
+  result.cells = sample.cells * options.iterations;
+  result.row_bytes = sample.row_bytes * options.iterations;
+  checksum = buffer.checksum;
+  elapsed_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(stop - start).count();
+  return true;
+}
+
+const char *operation_scope(const std::string &operation) {
+  if (operation == "rows_cells")
+    return "traversal_only";
+  if (operation == "legacy_mmap_rows_cells")
+    return "mmap_and_traversal";
+  return "writer_only";
+}
+
 } // namespace
 
 int main(int argc, char **argv) {
   if (argc == 2 && std::string(argv[1]) == "--describe") {
     std::cout << "protocol=" << protocol << " revision=" << CSV2_BENCHMARK_REVISION
-              << " operations=rows_cells"
+              << " operations=rows_cells,legacy_writer_raw"
+#if defined(CSV2_BENCHMARK_ENABLE_MODERN_WRITER_OPERATIONS)
+              << ",writer_raw_direct,writer_raw_streamable,writer_escaped_direct,"
+                 "writer_escaped_streamable"
+#endif
 #if CSV2_HAS_MMAP
               << ",legacy_mmap_rows_cells" << " sources=buffer,mmap"
 #else
               << " sources=buffer"
 #endif
-              << " prepared_scope=traversal_only legacy_scope=mmap_and_traversal\n";
+              << " prepared_scope=traversal_only legacy_scope=mmap_and_traversal"
+                 " writer_scope=writer_only\n";
     return EXIT_SUCCESS;
   }
 
@@ -222,7 +456,7 @@ int main(int argc, char **argv) {
                            ? run_prepared(options, result, checksum, elapsed_ns)
                        : options.operation == "legacy_mmap_rows_cells"
                            ? run_legacy_mmap(options, result, checksum, elapsed_ns)
-                           : false;
+                           : run_writer(options, result, checksum, elapsed_ns);
   if (!success) {
     std::cerr << "error: unsupported operation/source or input failure\n";
     return EXIT_FAILURE;
@@ -232,8 +466,7 @@ int main(int argc, char **argv) {
     elapsed_ns = 1;
   benchmark_sink = result.rows ^ result.cells ^ result.row_bytes ^ checksum;
   std::cout << "protocol=" << protocol << " revision=" << CSV2_BENCHMARK_REVISION
-            << " operation=" << options.operation << " scope="
-            << (options.operation == "rows_cells" ? "traversal_only" : "mmap_and_traversal")
+            << " operation=" << options.operation << " scope=" << operation_scope(options.operation)
             << " source=" << options.source << " bytes=" << bytes
             << " iterations=" << options.iterations << " elapsed_ns=" << elapsed_ns
             << " rows=" << result.rows << " cells=" << result.cells
