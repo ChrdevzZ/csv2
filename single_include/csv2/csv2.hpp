@@ -2712,9 +2712,9 @@ namespace detail {
 
 #if CSV2_HAS_RANGES
 template <class T>
-concept marked_row_view = requires {
-  typename std::remove_cv_t<T>::csv2_row_view_marker;
-  requires std::is_same_v<typename std::remove_cv_t<T>::csv2_row_view_marker, std::remove_cv_t<T>>;
+concept marked_row_view = std::is_same_v<T, std::remove_cv_t<T>> && requires {
+  typename T::csv2_row_view_marker;
+  requires std::is_same_v<typename T::csv2_row_view_marker, T>;
 };
 #endif
 
