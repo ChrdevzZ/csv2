@@ -17,6 +17,7 @@ import tempfile
 import time
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Iterable
 
 
 COUNTER_FIELDS = ("cycles", "instructions", "branch_misses")
@@ -65,6 +66,70 @@ def sha256_file(path: Path) -> str:
         for block in iter(lambda: source.read(1024 * 1024), b""):
             digest.update(block)
     return digest.hexdigest()
+
+
+def canonical_existing(path: Path, label: str) -> Path:
+    try:
+        return path.expanduser().resolve(strict=True)
+    except (OSError, RuntimeError) as error:
+        raise RuntimeError(f"{label} does not exist or cannot be resolved: {path}") from error
+
+
+def canonical_output(path: Path) -> Path:
+    try:
+        return path.expanduser().resolve(strict=False)
+    except (OSError, RuntimeError) as error:
+        raise RuntimeError(f"output path cannot be resolved: {path}") from error
+
+
+def paths_alias(left: Path, right: Path) -> bool:
+    try:
+        return os.path.samefile(left, right)
+    except OSError:
+        return left.resolve(strict=False) == right.resolve(strict=False)
+
+
+def reject_output_alias(
+    output: Path, protected_paths: Iterable[tuple[str, Path]]
+) -> None:
+    for label, protected in protected_paths:
+        if paths_alias(output, protected):
+            raise RuntimeError(f"output path aliases {label}: {protected}")
+
+
+def replace_report(temporary: Path, output: Path) -> None:
+    for attempt in range(100):
+        try:
+            os.replace(temporary, output)
+            return
+        except PermissionError as error:
+            if os.name != "nt" or error.winerror not in (5, 32) or attempt == 99:
+                raise
+            time.sleep(0.01)
+
+
+def write_report(path: Path, report: dict[str, object]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    descriptor, temporary_name = tempfile.mkstemp(
+        dir=path.parent, prefix=f".{path.name}.", suffix=".tmp"
+    )
+    temporary = Path(temporary_name)
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8", newline="\n") as destination:
+            descriptor = -1
+            json.dump(report, destination, indent=2, sort_keys=True)
+            destination.write("\n")
+            destination.flush()
+            os.fsync(destination.fileno())
+        replace_report(temporary, path)
+    except BaseException:
+        if descriptor >= 0:
+            os.close(descriptor)
+        try:
+            temporary.unlink()
+        except FileNotFoundError:
+            pass
+        raise
 
 
 def artifact_metadata(path: Path, revision: str | None = None) -> dict[str, object]:
@@ -539,29 +604,48 @@ def main() -> None:
         parser.error("--iterations must be positive")
     if args.runs < 20 and not args.skip_counters:
         parser.error("--runs must be at least 20 for fixed-machine counter collection")
-    args.executable = args.executable.resolve()
+    args.executable = args.executable.expanduser()
     if args.allocation_executable is None:
         args.allocation_executable = args.executable.with_name(
             f"{args.executable.stem}_allocations{args.executable.suffix}"
         )
-    args.allocation_executable = args.allocation_executable.resolve()
-    args.input = args.input.resolve()
+    args.allocation_executable = args.allocation_executable.expanduser()
+    args.input = args.input.expanduser()
     clean_build = time_build(args.build_command) if args.build_command else None
-    if not args.executable.is_file():
-        parser.error(f"benchmark executable does not exist: {args.executable}")
-    if not args.allocation_executable.is_file():
-        parser.error(
-            "allocation benchmark executable does not exist: "
-            f"{args.allocation_executable}"
+    try:
+        collector_path = canonical_existing(Path(__file__), "collector")
+        args.executable = canonical_existing(args.executable, "benchmark executable")
+        args.allocation_executable = canonical_existing(
+            args.allocation_executable, "allocation benchmark executable"
         )
-    if not args.input.is_file():
-        parser.error(f"input does not exist: {args.input}")
+        args.input = canonical_existing(args.input, "input")
+        args.output = canonical_output(args.output)
+        if not args.executable.is_file():
+            raise RuntimeError(f"benchmark executable is not a file: {args.executable}")
+        if not args.allocation_executable.is_file():
+            raise RuntimeError(
+                "allocation benchmark executable is not a file: "
+                f"{args.allocation_executable}"
+            )
+        if not args.input.is_file():
+            raise RuntimeError(f"input is not a file: {args.input}")
+        reject_output_alias(
+            args.output,
+            (
+                ("collector", collector_path),
+                ("benchmark executable", args.executable),
+                ("allocation benchmark executable", args.allocation_executable),
+                ("input", args.input),
+            ),
+        )
+    except RuntimeError as error:
+        parser.error(str(error))
 
     expected_bytes = args.input.stat().st_size
     if expected_bytes <= 0:
         parser.error("benchmark input must not be empty")
 
-    collector_metadata = artifact_metadata(Path(__file__))
+    collector_metadata = artifact_metadata(collector_path)
     executable_metadata = artifact_metadata(args.executable, args.revision)
     allocation_executable_metadata = artifact_metadata(
         args.allocation_executable, args.revision
@@ -629,10 +713,7 @@ def main() -> None:
     )
     verify_artifact_unchanged(dataset_metadata, "dataset")
 
-    args.output.parent.mkdir(parents=True, exist_ok=True)
-    temporary = args.output.with_name(args.output.name + ".tmp")
-    temporary.write_text(json.dumps(report, indent=2, sort_keys=True), encoding="utf-8")
-    os.replace(temporary, args.output)
+    write_report(args.output, report)
 
 
 if __name__ == "__main__":
