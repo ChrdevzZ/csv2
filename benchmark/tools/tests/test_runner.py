@@ -12,7 +12,7 @@ from csv2bench import runner
 
 def result(revision: str, elapsed: int = 100) -> dict[str, str]:
     return {
-        "protocol": "csv2-common-v2",
+        "protocol": "csv2-common-v3",
         "revision": revision,
         "operation": "rows_cells",
         "scope": "traversal_only",
@@ -24,6 +24,7 @@ def result(revision: str, elapsed: int = 100) -> dict[str, str]:
         "cells": "2",
         "row_bytes": "3",
         "checksum": "42",
+        "timed_reader_steps": "3",
     }
 
 
@@ -32,7 +33,7 @@ class RunnerTests(unittest.TestCase):
         line = " ".join(f"{key}={value}" for key, value in result("x").items())
         self.assertEqual(runner.parse_output(line)["revision"], "x")
         with self.assertRaisesRegex(RuntimeError, "unsupported benchmark protocol"):
-            runner.parse_output(line.replace("csv2-common-v2", "csv2-common-v1"))
+            runner.parse_output(line.replace("csv2-common-v3", "csv2-common-v2"))
 
     def test_selection_rejects_unknown_duplicate_and_empty_entries(self) -> None:
         with self.assertRaisesRegex(ValueError, "unknown"):
@@ -62,6 +63,7 @@ class RunnerTests(unittest.TestCase):
                 runs=2,
                 iterations=1,
                 warmups=0,
+                expected_scope="traversal_only",
                 calibration_noise=0.0,
                 baseline_revision="base",
                 candidate_revision="candidate",
@@ -69,6 +71,24 @@ class RunnerTests(unittest.TestCase):
             )
         self.assertEqual(launches, ["base", "candidate", "candidate", "base"])
         self.assertFalse(case["regression"])
+
+    def test_writer_only_result_rejects_timed_reader_work(self) -> None:
+        writer_result = result("candidate")
+        writer_result.update(
+            operation="writer_raw_direct",
+            scope="writer_only",
+            timed_reader_steps="1",
+        )
+        with self.assertRaisesRegex(RuntimeError, "Reader state"):
+            runner.validate_result(
+                writer_result,
+                "writer_raw_direct",
+                "buffer",
+                1,
+                expected_scope="writer_only",
+                expected_bytes=4,
+                expected_revision="candidate",
+            )
 
     def test_calibration_rejects_v2_schema(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

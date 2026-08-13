@@ -39,10 +39,11 @@ def comparison_report() -> dict[str, object]:
     side = {
         "artifact": artifact(revision),
         "description": {
-            "protocol": "csv2-common-v2",
+            "protocol": "csv2-common-v3",
             "revision": revision,
             "operations": "rows_cells",
             "sources": "buffer",
+            "operation_contracts": "rows_cells:traversal_only:buffer",
         },
         "description_invocation": invocation(),
     }
@@ -59,7 +60,7 @@ def comparison_report() -> dict[str, object]:
             "stderr": "",
             "throughput_gib_per_second": 1.0,
             "result": {
-                "protocol": "csv2-common-v2",
+                "protocol": "csv2-common-v3",
                 "revision": revision,
                 "operation": "rows_cells",
                 "scope": "traversal_only",
@@ -71,6 +72,7 @@ def comparison_report() -> dict[str, object]:
                 "cells": "1",
                 "row_bytes": "1",
                 "checksum": "1",
+                "timed_reader_steps": "2",
             },
         }
 
@@ -320,6 +322,19 @@ class ProtocolTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "launches"):
             protocol.validate_comparison_report(comparison)
 
+    def test_comparison_uses_declared_operation_contracts(self) -> None:
+        report = comparison_report()
+        report["candidate"]["description"]["operation_contracts"] = (
+            "rows_cells:writer_only:buffer"
+        )
+        with self.assertRaisesRegex(RuntimeError, "scope differs"):
+            protocol.validate_comparison_report(report)
+
+        report = comparison_report()
+        del report["cases"][0]["launches"][0]["result"]["timed_reader_steps"]
+        with self.assertRaisesRegex(RuntimeError, "timed_reader_steps"):
+            protocol.validate_comparison_report(report)
+
     def test_schemas_close_the_top_level_and_require_controlled_evidence(self) -> None:
         schema_root = Path(__file__).resolve().parents[2] / "protocol" / "schemas"
         comparison = json.loads(
@@ -358,15 +373,29 @@ class ProtocolTests(unittest.TestCase):
             with self.subTest(evidence=evidence, status=status):
                 self.assertFalse(protocol.decision_eligible(evidence, status))
 
-    def test_common_v2_is_accepted_and_v1_is_rejected(self) -> None:
+    def test_common_v3_is_accepted_and_v2_is_rejected(self) -> None:
         result = protocol.parse_common(
-            "protocol=csv2-common-v2 revision=x", {"revision"}
+            "protocol=csv2-common-v3 revision=x", {"revision"}
         )
         self.assertEqual(result["revision"], "x")
-        with self.assertRaisesRegex(RuntimeError, "expected csv2-common-v2"):
+        with self.assertRaisesRegex(RuntimeError, "expected csv2-common-v3"):
             protocol.parse_common(
-                "protocol=csv2-common-v1 revision=x", {"revision"}
+                "protocol=csv2-common-v2 revision=x", {"revision"}
             )
+
+    def test_operation_contracts_are_strict_and_self_describing(self) -> None:
+        contracts = protocol.parse_operation_contracts(
+            "rows_cells:traversal_only:buffer+mmap;"
+            "writer_raw_direct:writer_only:buffer"
+        )
+        self.assertEqual(contracts["rows_cells"][0], "traversal_only")
+        self.assertEqual(contracts["rows_cells"][1], frozenset({"buffer", "mmap"}))
+        with self.assertRaisesRegex(RuntimeError, "duplicate operation contract"):
+            protocol.parse_operation_contracts(
+                "rows_cells:traversal_only:buffer;rows_cells:traversal_only:mmap"
+            )
+        with self.assertRaisesRegex(RuntimeError, "unsupported operation scope"):
+            protocol.parse_operation_contracts("rows_cells:guessed:buffer")
 
     def test_current_v2_parses_exact_uint64_fields(self) -> None:
         output = (
