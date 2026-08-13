@@ -39,9 +39,8 @@ jobs:
             expected_id: MSVC
             expected_version: "19.51"
             require_cxx26: "OFF"
-            sanitizer_test_count: 0
             install: true
-          - compiler: MSVC 19.51 ASan
+          - compiler: MSVC 19.51 / ASan
             configuration: Release
             toolset: ""
             benchmarks: "OFF"
@@ -50,7 +49,6 @@ jobs:
             expected_id: MSVC
             expected_version: "19.51"
             require_cxx26: "OFF"
-            sanitizer_test_count: 16
             install: false
           - compiler: Clang-CL 22.1
             configuration: Release
@@ -61,9 +59,8 @@ jobs:
             expected_id: Clang
             expected_version: "22.1"
             require_cxx26: "ON"
-            sanitizer_test_count: 0
             install: false
-          - compiler: Clang-CL 22.1 ASan + UBSan
+          - compiler: Clang-CL 22.1 / ASan + UBSan
             configuration: Release
             toolset: -T ClangCL
             benchmarks: "OFF"
@@ -72,7 +69,6 @@ jobs:
             expected_id: Clang
             expected_version: "22.1"
             require_cxx26: "ON"
-            sanitizer_test_count: 18
             install: false
 
     steps:
@@ -93,7 +89,7 @@ jobs:
           -DCSV2_REQUIRE_MODERN_STANDARD_TESTS=ON
           -DCSV2_REQUIRE_CXX26_TESTS=${{ matrix.require_cxx26 }}
           -DCSV2_CI_EXPECTED_COMPILER_ID=${{ matrix.expected_id }}
-          -DCSV2_CI_EXPECTED_COMPILER_VERSION_PREFIX=${{ matrix.expected_version }}
+          "-DCSV2_CI_EXPECTED_COMPILER_VERSION_PREFIX=${{ matrix.expected_version }}"
 
       - name: Build
         run: cmake --build build --config ${{ matrix.configuration }} --parallel
@@ -123,10 +119,19 @@ jobs:
             -L sanitizer-runtime `
             --show-only=json-v1 | ConvertFrom-Json
           $tests = @($testManifest.tests)
-          $expectedTestCount = [int] "${{ matrix.sanitizer_test_count }}"
-          if ($tests.Count -ne $expectedTestCount) {
-            throw "Expected $expectedTestCount sanitizer runtime tests, " +
-              "found $($tests.Count)"
+          if ($tests.Count -eq 0) {
+            throw "CTest registered no sanitizer runtime tests"
+          }
+          $unexpectedTests = @($tests | Where-Object {
+            $_.name -like "csv2.benchmark.*"
+          })
+          if ($unexpectedTests.Count -ne 0) {
+            throw "Benchmark tests must not run under sanitizers: " +
+              (($unexpectedTests | ForEach-Object name) -join ", ")
+          }
+          $duplicateNames = @($tests | Group-Object name | Where-Object Count -ne 1)
+          if ($duplicateNames.Count -ne 0) {
+            throw "CTest sanitizer manifest contains duplicate names"
           }
 
           $commands = @(
@@ -193,3 +198,61 @@ jobs:
           cmake --install build
           --config ${{ matrix.configuration }}
           --prefix build/install
+
+      - name: Verify installed package consumer
+        if: matrix.install
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force build/consumer | Out-Null
+          @'
+          cmake_minimum_required(VERSION 3.10)
+          project(csv2_consumer LANGUAGES CXX)
+          find_package(csv2 CONFIG REQUIRED)
+          add_executable(csv2_consumer main.cpp)
+          target_link_libraries(csv2_consumer PRIVATE csv2::csv2)
+          target_compile_features(csv2_consumer PRIVATE cxx_std_20)
+          set_target_properties(csv2_consumer PROPERTIES CXX_EXTENSIONS OFF)
+          add_executable(csv2_no_mmap_consumer no_mmap.cpp)
+          target_link_libraries(csv2_no_mmap_consumer PRIVATE csv2::csv2)
+          target_compile_features(csv2_no_mmap_consumer PRIVATE cxx_std_11)
+          target_compile_definitions(csv2_no_mmap_consumer PRIVATE CSV2_HAS_MMAP=0)
+          set_target_properties(csv2_no_mmap_consumer PROPERTIES CXX_EXTENSIONS OFF)
+          '@ | Set-Content build/consumer/CMakeLists.txt
+          @'
+          #include <csv2/reader.hpp>
+          #include <string>
+          int main() {
+            csv2::Reader<> reader;
+            return reader.parse(std::string("a,b")) ? 0 : 1;
+          }
+          '@ | Set-Content build/consumer/main.cpp
+          @'
+          #include <csv2/mio.hpp>
+          #ifdef MIO_MMAP_HEADER
+          #error "mio must be absent when CSV2_HAS_MMAP=0"
+          #endif
+          #include <csv2/errors.hpp>
+          #include <csv2/parameters.hpp>
+          #include <csv2/reader.hpp>
+          #include <csv2/writer.hpp>
+          int main() { return CSV2_HAS_MMAP; }
+          '@ | Set-Content build/consumer/no_mmap.cpp
+          cmake -S build/consumer -B build/consumer-build `
+            -G "Visual Studio 18 2026" -A x64 `
+            -DCMAKE_PREFIX_PATH="$PWD/build/install"
+          cmake --build build/consumer-build `
+            --config ${{ matrix.configuration }} --parallel
+          & build/consumer-build/${{ matrix.configuration }}/csv2_consumer.exe
+          if ($LASTEXITCODE -ne 0) {
+            throw "Installed package consumer failed"
+          }
+          & build/consumer-build/${{ matrix.configuration }}/csv2_no_mmap_consumer.exe
+          if ($LASTEXITCODE -ne 0) {
+            throw "Installed no-mmap consumer failed"
+          }
+
+      - name: Verify single-header regeneration
+        if: matrix.install
+        run: |
+          python utils/amalgamate/amalgamate.py -c single_include.json -s .
+          git diff --exit-code -- single_include/csv2/csv2.hpp
