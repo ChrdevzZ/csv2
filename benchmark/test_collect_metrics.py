@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import contextlib
+import concurrent.futures
 import importlib.util
 import hashlib
 import io
 import json
+import os
 import sys
 import tempfile
 import unittest
@@ -511,6 +513,85 @@ class CollectMetricsTests(unittest.TestCase):
 
             self.assertFalse(output.exists())
 
+    def test_metrics_rejects_output_aliases_of_inputs(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            dataset = root / "data.csv"
+            dataset.write_bytes(b"a,b\n")
+            inputs = (("dataset", dataset),)
+
+            with self.assertRaisesRegex(RuntimeError, "dataset"):
+                METRICS.reject_output_alias(dataset, inputs)
+
+            hardlink = root / "hardlink.json"
+            os.link(dataset, hardlink)
+            with self.assertRaisesRegex(RuntimeError, "dataset"):
+                METRICS.reject_output_alias(hardlink, inputs)
+
+            symlink = root / "symlink.json"
+            try:
+                symlink.symlink_to(dataset)
+            except OSError:
+                return
+            with self.assertRaisesRegex(RuntimeError, "dataset"):
+                METRICS.reject_output_alias(symlink, inputs)
+
+    def test_metrics_atomic_write_cleans_unique_temporary_file(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            output = root / "report.json"
+            with (
+                mock.patch.object(METRICS.os, "replace", side_effect=OSError("replace failed")),
+                self.assertRaisesRegex(OSError, "replace failed"),
+            ):
+                METRICS.write_report(output, {"status": "complete"})
+
+            self.assertEqual(list(root.iterdir()), [])
+
+    def test_metrics_cli_rejects_output_that_aliases_input_before_measurement(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            executable = root / "benchmark"
+            allocation_executable = root / "benchmark_allocations"
+            executable.write_bytes(b"normal")
+            allocation_executable.write_bytes(b"allocations")
+            dataset = root / "data.csv"
+            dataset.write_bytes(b"a,b\n")
+            arguments = [
+                "collect_metrics.py",
+                "--executable",
+                str(executable),
+                "--allocation-executable",
+                str(allocation_executable),
+                "--revision",
+                "working",
+                "--compiler",
+                "g++",
+                "--compiler-flags=-O3",
+                "--operation",
+                "rows_cells",
+                "--input",
+                str(dataset),
+                "--skip-counters",
+                "--skip-rss",
+                "--skip-size",
+                "--output",
+                str(dataset),
+            ]
+            benchmark = mock.Mock()
+            stderr = io.StringIO()
+            with (
+                mock.patch.object(sys, "argv", arguments),
+                mock.patch.object(METRICS, "run_benchmark", benchmark),
+                contextlib.redirect_stderr(stderr),
+                self.assertRaises(SystemExit),
+            ):
+                METRICS.main()
+
+            benchmark.assert_not_called()
+            self.assertEqual(dataset.read_bytes(), b"a,b\n")
+            self.assertIn("output path aliases input", stderr.getvalue())
+
 
 class RunSuiteTests(unittest.TestCase):
     @staticmethod
@@ -680,6 +761,124 @@ class RunSuiteTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "candidate changed"):
                 RUN_SUITE.verify_artifact_unchanged(metadata, "candidate")
 
+    def test_canonical_paths_survive_symlink_redirection(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            first_script = root / "first.py"
+            second_script = root / "second.py"
+            first_script.write_text(
+                "print('protocol=csv2-common-v1 revision=fake operation=rows_cells "
+                "scope=traversal_only source=buffer bytes=4 iterations=1 elapsed_ns=1 "
+                "rows=1 cells=2 row_bytes=3 checksum=9')\n",
+                encoding="utf-8",
+            )
+            second_script.write_text(
+                "print('protocol=csv2-common-v1 revision=fake operation=rows_cells "
+                "scope=traversal_only source=buffer bytes=4 iterations=1 elapsed_ns=1 "
+                "rows=1 cells=2 row_bytes=3 checksum=7')\n",
+                encoding="utf-8",
+            )
+            first_dataset = root / "first.csv"
+            second_dataset = root / "second.csv"
+            first_dataset.write_bytes(b"a,b\n")
+            second_dataset.write_bytes(b"x,y\n")
+            script_link = root / "benchmark.py"
+            dataset_link = root / "data.csv"
+            try:
+                script_link.symlink_to(first_script)
+                dataset_link.symlink_to(first_dataset)
+            except OSError as error:
+                self.skipTest(f"symlinks are unavailable: {error}")
+
+            executable = RUN_SUITE.canonical_existing(script_link, "benchmark")
+            dataset = RUN_SUITE.canonical_existing(dataset_link, "dataset")
+            expected_dataset = str(first_dataset.resolve(strict=True))
+            script_link.unlink()
+            dataset_link.unlink()
+            script_link.symlink_to(second_script)
+            dataset_link.symlink_to(second_dataset)
+
+            result = RUN_SUITE.invoke(
+                (Path(sys.executable), executable),
+                "rows_cells",
+                dataset,
+                "buffer",
+                1,
+            )
+
+        self.assertEqual(result["checksum"], "9")
+        self.assertEqual(json.loads(result["_command"])[5], expected_dataset)
+
+    def test_runner_rejects_output_aliases_of_inputs(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            dataset = root / "data.csv"
+            dataset.write_bytes(b"a,b\n")
+            inputs = (("dataset", dataset),)
+
+            with self.assertRaisesRegex(RuntimeError, "dataset"):
+                RUN_SUITE.reject_output_alias(dataset, inputs)
+
+            hardlink = root / "hardlink.json"
+            os.link(dataset, hardlink)
+            with self.assertRaisesRegex(RuntimeError, "dataset"):
+                RUN_SUITE.reject_output_alias(hardlink, inputs)
+
+            symlink = root / "symlink.json"
+            try:
+                symlink.symlink_to(dataset)
+            except OSError:
+                return
+            with self.assertRaisesRegex(RuntimeError, "dataset"):
+                RUN_SUITE.reject_output_alias(symlink, inputs)
+
+    def test_runner_cli_rejects_output_that_aliases_dataset_before_describe(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            baseline = root / "baseline"
+            candidate = root / "candidate"
+            baseline.write_bytes(b"same executable")
+            candidate.write_bytes(b"same executable")
+            datasets = root / "datasets"
+            datasets.mkdir()
+            dataset = datasets / "data.csv"
+            dataset.write_bytes(b"a,b\n")
+            arguments = [
+                "run_suite.py",
+                "--baseline",
+                str(baseline),
+                "--candidate",
+                str(candidate),
+                "--baseline-revision",
+                "same",
+                "--candidate-revision",
+                "same",
+                "--datasets",
+                str(datasets),
+                "--runs",
+                "20",
+                "--mode",
+                "aa",
+                "--compiler",
+                "g++",
+                "--compiler-flags=-O3",
+                "--output",
+                str(dataset),
+            ]
+            describe = mock.Mock()
+            stderr = io.StringIO()
+            with (
+                mock.patch.object(sys, "argv", arguments),
+                mock.patch.object(RUN_SUITE, "describe", describe),
+                contextlib.redirect_stderr(stderr),
+                self.assertRaises(SystemExit),
+            ):
+                RUN_SUITE.main()
+
+            describe.assert_not_called()
+            self.assertEqual(dataset.read_bytes(), b"a,b\n")
+            self.assertIn("output path aliases dataset data.csv", stderr.getvalue())
+
     def test_parser_rejects_incomplete_or_multiline_results(self) -> None:
         valid = (
             "protocol=csv2-common-v1 revision=base operation=rows_cells "
@@ -793,6 +992,52 @@ class RunSuiteTests(unittest.TestCase):
             path.write_text(json.dumps(report), encoding="utf-8")
             with self.assertRaisesRegex(RuntimeError, "finite"):
                 RUN_SUITE.load_calibration(path)
+
+    def test_calibration_metadata_uses_the_parsed_bytes_and_detects_drift(self) -> None:
+        report = {
+            "schema": "csv2-benchmark-report-v2",
+            "mode": "aa",
+            "status": "completed",
+            "baseline": {"artifact": {"sha256": "same"}},
+            "candidate": {"artifact": {"sha256": "same"}},
+            "cases": [],
+        }
+        encoded = json.dumps(report, sort_keys=True).encode("utf-8")
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "calibration.json"
+            path.write_bytes(encoded)
+
+            _, metadata, loaded = RUN_SUITE.load_calibration(path)
+
+            self.assertEqual(loaded, report)
+            self.assertEqual(metadata["size"], len(encoded))
+            self.assertEqual(metadata["sha256"], hashlib.sha256(encoded).hexdigest())
+            path.write_bytes(encoded + b"\n")
+            with self.assertRaisesRegex(RuntimeError, "calibration changed"):
+                RUN_SUITE.verify_artifact_unchanged(metadata, "calibration")
+
+    def test_runner_atomic_write_cleans_failures_and_supports_concurrency(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            output = root / "report.json"
+            with (
+                mock.patch.object(
+                    RUN_SUITE.os, "replace", side_effect=OSError("replace failed")
+                ),
+                self.assertRaisesRegex(OSError, "replace failed"),
+            ):
+                RUN_SUITE.write_report(output, {"sequence": -1})
+            self.assertEqual(list(root.iterdir()), [])
+
+            reports = [{"sequence": sequence} for sequence in range(16)]
+            with concurrent.futures.ThreadPoolExecutor(max_workers=8) as executor:
+                list(executor.map(lambda report: RUN_SUITE.write_report(output, report), reports))
+
+            self.assertIn(json.loads(output.read_text(encoding="utf-8")), reports)
+            self.assertEqual(
+                [path for path in root.iterdir() if path != output],
+                [],
+            )
 
     def test_selection_rejects_empty_and_duplicates(self) -> None:
         with self.assertRaisesRegex(ValueError, "must not be empty"):
@@ -1085,6 +1330,93 @@ class RunSuiteTests(unittest.TestCase):
 
         self.assertEqual(states, ["running", "failed"])
         self.assertEqual(report["status"], "failed")
+
+    def test_runner_revalidates_calibration_after_measurement(self) -> None:
+        calibration_report = {
+            "schema": "csv2-benchmark-report-v2",
+            "mode": "aa",
+            "status": "completed",
+            "baseline": {"artifact": {"sha256": "same"}},
+            "candidate": {"artifact": {"sha256": "same"}},
+            "cases": [
+                {
+                    "dataset": "data.csv",
+                    "operation": "rows_cells",
+                    "source": "buffer",
+                    "observed_noise": 0.01,
+                }
+            ],
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            baseline = root / "baseline"
+            candidate = root / "candidate"
+            baseline.write_bytes(b"same executable")
+            candidate.write_bytes(b"same executable")
+            datasets = root / "datasets"
+            datasets.mkdir()
+            (datasets / "data.csv").write_bytes(b"a,b\n")
+            calibration = root / "calibration.json"
+            calibration.write_text(json.dumps(calibration_report), encoding="utf-8")
+            output = root / "report.json"
+
+            def mutate_calibration(*_: object, **__: object) -> dict[str, object]:
+                calibration.write_bytes(calibration.read_bytes() + b"\n")
+                return {}
+
+            arguments = [
+                "run_suite.py",
+                "--baseline",
+                str(baseline),
+                "--candidate",
+                str(candidate),
+                "--baseline-revision",
+                "same",
+                "--candidate-revision",
+                "same",
+                "--datasets",
+                str(datasets),
+                "--runs",
+                "20",
+                "--warmups",
+                "0",
+                "--iterations",
+                "1",
+                "--operations",
+                "rows_cells",
+                "--sources",
+                "buffer",
+                "--files",
+                "data.csv",
+                "--mode",
+                "compare",
+                "--calibration",
+                str(calibration),
+                "--compiler",
+                "g++",
+                "--compiler-flags=-O3",
+                "--output",
+                str(output),
+            ]
+            with (
+                mock.patch.object(sys, "argv", arguments),
+                mock.patch.object(
+                    RUN_SUITE, "describe", return_value=self.driver_description()
+                ),
+                mock.patch.object(
+                    RUN_SUITE, "validate_calibration_context", return_value=None
+                ),
+                mock.patch.object(
+                    RUN_SUITE, "measure_case", side_effect=mutate_calibration
+                ),
+                self.assertRaisesRegex(RuntimeError, "calibration changed"),
+            ):
+                RUN_SUITE.main()
+
+            report = json.loads(output.read_text(encoding="utf-8"))
+
+        self.assertEqual(report["status"], "failed")
+        self.assertIn("calibration changed", report["error"])
 
     def test_invoke_runs_a_fake_executable_and_parses_its_contract(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

@@ -12,6 +12,8 @@ import platform
 import random
 import statistics
 import subprocess
+import tempfile
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable, Iterable, Sequence
@@ -48,6 +50,46 @@ def sha256_file(path: Path) -> str:
         for block in iter(lambda: source.read(1024 * 1024), b""):
             digest.update(block)
     return digest.hexdigest()
+
+
+def canonical_existing(path: Path, label: str) -> Path:
+    try:
+        return path.expanduser().resolve(strict=True)
+    except (OSError, RuntimeError) as error:
+        raise RuntimeError(f"{label} does not exist or cannot be resolved: {path}") from error
+
+
+def canonical_output(path: Path) -> Path:
+    try:
+        return path.expanduser().resolve(strict=False)
+    except (OSError, RuntimeError) as error:
+        raise RuntimeError(f"output path cannot be resolved: {path}") from error
+
+
+def paths_alias(left: Path, right: Path) -> bool:
+    try:
+        return os.path.samefile(left, right)
+    except OSError:
+        return left.resolve(strict=False) == right.resolve(strict=False)
+
+
+def reject_output_alias(
+    output: Path, protected_paths: Iterable[tuple[str, Path]]
+) -> None:
+    for label, protected in protected_paths:
+        if paths_alias(output, protected):
+            raise RuntimeError(f"output path aliases {label}: {protected}")
+
+
+def replace_report(temporary: Path, output: Path) -> None:
+    for attempt in range(100):
+        try:
+            os.replace(temporary, output)
+            return
+        except PermissionError as error:
+            if os.name != "nt" or error.winerror not in (5, 32) or attempt == 99:
+                raise
+            time.sleep(0.01)
 
 
 def cpu_identity() -> tuple[str, str]:
@@ -228,10 +270,10 @@ def verify_artifact_unchanged(metadata: dict[str, object], label: str) -> None:
         raise RuntimeError(f"{label} changed during benchmark execution")
 
 
-def dataset_metadata(path: Path) -> dict[str, object]:
+def dataset_metadata(path: Path, logical_name: str | None = None) -> dict[str, object]:
     resolved = path.resolve(strict=True)
     return {
-        "name": path.name,
+        "name": logical_name if logical_name is not None else path.name,
         "path": str(resolved),
         "size": resolved.stat().st_size,
         "sha256": sha256_file(resolved),
@@ -492,7 +534,8 @@ def case_key(dataset: str, operation: str, source: str) -> str:
 def load_calibration(
     path: Path,
 ) -> tuple[dict[str, float], dict[str, object], dict[str, object]]:
-    report = json.loads(path.read_text(encoding="utf-8"))
+    contents = path.read_bytes()
+    report = json.loads(contents.decode("utf-8"))
     if (
         report.get("schema") != SCHEMA
         or report.get("mode") != "aa"
@@ -522,8 +565,9 @@ def load_calibration(
     return (
         noise,
         {
-            "path": str(path.resolve()),
-            "sha256": sha256_file(path),
+            "path": str(path.resolve(strict=True)),
+            "size": len(contents),
+            "sha256": hashlib.sha256(contents).hexdigest(),
             "schema": report["schema"],
         },
         report,
@@ -592,9 +636,26 @@ def validate_calibration_context(
 
 def write_report(path: Path, report: dict[str, object]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    temporary = path.with_name(path.name + ".tmp")
-    temporary.write_text(json.dumps(report, indent=2, sort_keys=True), encoding="utf-8")
-    os.replace(temporary, path)
+    descriptor, temporary_name = tempfile.mkstemp(
+        dir=path.parent, prefix=f".{path.name}.", suffix=".tmp"
+    )
+    temporary = Path(temporary_name)
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8", newline="\n") as destination:
+            descriptor = -1
+            json.dump(report, destination, indent=2, sort_keys=True)
+            destination.write("\n")
+            destination.flush()
+            os.fsync(destination.fileno())
+        replace_report(temporary, path)
+    except BaseException:
+        if descriptor >= 0:
+            os.close(descriptor)
+        try:
+            temporary.unlink()
+        except FileNotFoundError:
+            pass
+        raise
 
 
 def main() -> None:
@@ -629,6 +690,50 @@ def main() -> None:
     if args.mode == "compare" and not args.calibration and not args.allow_uncalibrated:
         parser.error("comparison runs require --calibration or --allow-uncalibrated")
 
+    try:
+        runner_path = canonical_existing(Path(__file__), "runner")
+        args.baseline = canonical_existing(args.baseline, "baseline executable")
+        args.candidate = canonical_existing(args.candidate, "candidate executable")
+        args.adapter_source = canonical_existing(args.adapter_source, "adapter source")
+        args.datasets = canonical_existing(args.datasets, "dataset directory")
+        for label, path in (
+            ("runner", runner_path),
+            ("baseline executable", args.baseline),
+            ("candidate executable", args.candidate),
+            ("adapter source", args.adapter_source),
+        ):
+            if not path.is_file():
+                raise RuntimeError(f"{label} is not a file: {path}")
+        if not args.datasets.is_dir():
+            raise RuntimeError(f"dataset path is not a directory: {args.datasets}")
+        if args.calibration is not None:
+            args.calibration = canonical_existing(args.calibration, "calibration")
+            if not args.calibration.is_file():
+                raise RuntimeError(f"calibration is not a file: {args.calibration}")
+        args.output = canonical_output(args.output)
+
+        discovered_datasets = sorted(args.datasets.glob("*.csv"))
+        dataset_paths = []
+        for path in discovered_datasets:
+            resolved = canonical_existing(path, f"dataset {path.name}")
+            if not resolved.is_file():
+                raise RuntimeError(f"dataset is not a file: {path.name}")
+            dataset_paths.append((path.name, resolved))
+        protected_paths = [
+            ("runner", runner_path),
+            ("adapter source", args.adapter_source),
+            ("baseline executable", args.baseline),
+            ("candidate executable", args.candidate),
+        ]
+        protected_paths.extend(
+            (f"dataset {name}", path) for name, path in dataset_paths
+        )
+        if args.calibration is not None:
+            protected_paths.append(("calibration", args.calibration))
+        reject_output_alias(args.output, protected_paths)
+    except RuntimeError as error:
+        parser.error(str(error))
+
     baseline_description = describe(args.baseline)
     candidate_description = describe(args.candidate)
     if baseline_description["revision"] != args.baseline_revision:
@@ -641,12 +746,11 @@ def main() -> None:
     if args.mode == "aa" and baseline_artifact["sha256"] != candidate_artifact["sha256"]:
         parser.error("A/A calibration requires byte-identical executables")
 
-    dataset_paths = sorted(args.datasets.glob("*.csv"))
     if not dataset_paths:
         parser.error(f"no CSV datasets found in {args.datasets}")
-    by_name = {path.name: path for path in dataset_paths}
+    by_name = dict(dataset_paths)
     try:
-        datasets = selected(args.files, (path.name for path in dataset_paths))
+        datasets = selected(args.files, (name for name, _ in dataset_paths))
         operations = selected(args.operations, OPERATIONS)
         sources = selected(args.sources, SOURCES)
         validate_case_matrix(operations, sources)
@@ -683,7 +787,7 @@ def main() -> None:
         "compiler": args.compiler,
         "compiler_flags": args.compiler_flags,
         "host": host_metadata(),
-        "runner": artifact_metadata(Path(__file__), "runner-source"),
+        "runner": artifact_metadata(runner_path, "runner-source"),
         "adapter_source": artifact_metadata(args.adapter_source, "shared-source"),
         "baseline": {
             "artifact": baseline_artifact,
@@ -695,7 +799,7 @@ def main() -> None:
             "description": public_result(candidate_description),
             "description_invocation": invocation_record(candidate_description),
         },
-        "datasets": [dataset_metadata(by_name[name]) for name in datasets],
+        "datasets": [dataset_metadata(by_name[name], name) for name in datasets],
         "calibration": calibration_metadata,
         "cases": [],
     }
@@ -734,6 +838,8 @@ def main() -> None:
         verify_artifact_unchanged(candidate_artifact, "candidate executable")
         for dataset in report["datasets"]:
             verify_artifact_unchanged(dataset, f"dataset {dataset['name']}")
+        if calibration_metadata is not None:
+            verify_artifact_unchanged(calibration_metadata, "calibration")
         report["status"] = "completed"
         report["completed_at_utc"] = datetime.now(timezone.utc).isoformat()
         write_report(args.output, report)
