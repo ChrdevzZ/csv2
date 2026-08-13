@@ -3,6 +3,47 @@ if(NOT 20 IN_LIST csv2_supported_standards)
     "CSV2_BUILD_BENCHMARKS requires CMake and a compiler with C++20 support")
 endif()
 
+# Resolve mmap once at configure time, then compile the benchmark executables
+# and register their tests from the same value. The compile probe follows the
+# header's auto-detection and also observes a global -DCSV2_HAS_MMAP=0 flag.
+if(DEFINED CSV2_HAS_MMAP AND
+   NOT CSV2_HAS_MMAP STREQUAL "0" AND
+   NOT CSV2_HAS_MMAP STREQUAL "1")
+  message(FATAL_ERROR "CSV2_HAS_MMAP must be 0 or 1 when set as a CMake variable")
+endif()
+
+if(DEFINED CSV2_HAS_MMAP AND NOT CSV2_HAS_MMAP)
+  set(csv2_benchmark_has_mmap FALSE)
+else()
+  include(CheckCXXSourceCompiles)
+  set(csv2_saved_required_definitions ${CMAKE_REQUIRED_DEFINITIONS})
+  set(csv2_saved_required_includes ${CMAKE_REQUIRED_INCLUDES})
+  if(DEFINED CSV2_HAS_MMAP)
+    list(APPEND CMAKE_REQUIRED_DEFINITIONS -DCSV2_HAS_MMAP=1)
+  endif()
+  list(APPEND CMAKE_REQUIRED_INCLUDES ${csv2_SOURCE_DIR}/include)
+  unset(CSV2_BENCHMARK_MMAP_PROBE CACHE)
+  check_cxx_source_compiles(
+    "#include <csv2/reader.hpp>
+#if !CSV2_HAS_MMAP
+#error mmap is unavailable
+#endif
+int main() { csv2::Reader<> reader; (void)reader; return 0; }"
+    CSV2_BENCHMARK_MMAP_PROBE)
+  set(CMAKE_REQUIRED_DEFINITIONS ${csv2_saved_required_definitions})
+  set(CMAKE_REQUIRED_INCLUDES ${csv2_saved_required_includes})
+  set(csv2_benchmark_has_mmap ${CSV2_BENCHMARK_MMAP_PROBE})
+  if(DEFINED CSV2_HAS_MMAP AND NOT csv2_benchmark_has_mmap)
+    message(FATAL_ERROR "CSV2_HAS_MMAP=1 was requested, but mmap is unavailable")
+  endif()
+endif()
+
+if(csv2_benchmark_has_mmap)
+  set(csv2_benchmark_mmap_value 1)
+else()
+  set(csv2_benchmark_mmap_value 0)
+endif()
+
 add_executable(csv2_benchmark main.cpp)
 add_executable(csv2_benchmark_allocations main.cpp)
 add_executable(csv2_common_benchmark common_driver.cpp)
@@ -10,7 +51,8 @@ target_link_libraries(csv2_common_benchmark PRIVATE csv2::csv2)
 set(CSV2_BENCHMARK_REVISION "unstamped" CACHE STRING
   "Revision embedded in the version-neutral benchmark driver")
 target_compile_definitions(csv2_common_benchmark PRIVATE
-  CSV2_BENCHMARK_REVISION="${CSV2_BENCHMARK_REVISION}")
+  CSV2_BENCHMARK_REVISION="${CSV2_BENCHMARK_REVISION}"
+  CSV2_HAS_MMAP=${csv2_benchmark_mmap_value})
 set_target_properties(csv2_common_benchmark PROPERTIES
   CXX_STANDARD 11
   CXX_STANDARD_REQUIRED ON
@@ -20,7 +62,8 @@ target_compile_definitions(csv2_benchmark_allocations PRIVATE
 foreach(target IN ITEMS csv2_benchmark csv2_benchmark_allocations)
   target_link_libraries(${target} PRIVATE csv2::csv2)
   target_compile_definitions(${target} PRIVATE
-    CSV2_BENCHMARK_REVISION="${CSV2_BENCHMARK_REVISION}")
+    CSV2_BENCHMARK_REVISION="${CSV2_BENCHMARK_REVISION}"
+    CSV2_HAS_MMAP=${csv2_benchmark_mmap_value})
   set_target_properties(${target} PROPERTIES
     CXX_STANDARD 20
     CXX_STANDARD_REQUIRED ON
@@ -138,7 +181,7 @@ if(CSV2_BUILD_TESTS)
       --track-allocations --expect-allocations 0)
   set_tests_properties(csv2.benchmark.allocations.rows_cells PROPERTIES
     LABELS benchmark-checksum)
-  if(CSV2_HAS_MMAP OR NOT DEFINED CSV2_HAS_MMAP)
+  if(csv2_benchmark_has_mmap)
     add_test(NAME csv2.benchmark.checksum.map_only
       COMMAND csv2_benchmark --operation map_only
         --input ${csv2_benchmark_mmap_fixture} --source mmap --iterations 1
@@ -151,5 +194,12 @@ if(CSV2_BUILD_TESTS)
         --expect-checksum 8674000034234409885)
     set_tests_properties(csv2.benchmark.checksum.rows_cells_mmap PROPERTIES
       LABELS benchmark-checksum)
+  else()
+    add_test(NAME csv2.benchmark.reject.mmap_disabled
+      COMMAND csv2_benchmark --operation map_only
+        --input ${csv2_benchmark_mmap_fixture} --source mmap --iterations 1)
+    set_tests_properties(csv2.benchmark.reject.mmap_disabled PROPERTIES
+      LABELS benchmark-checksum
+      WILL_FAIL TRUE)
   endif()
 endif()

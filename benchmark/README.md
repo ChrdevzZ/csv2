@@ -210,3 +210,9 @@ corresponding Linux facilities.
 
 Hosted CI compiles the suite and verifies small-fixture checksums. It never
 enforces timing or hardware-counter thresholds.
+
+When `CSV2_HAS_MMAP` is not set as a CMake variable, the benchmark build probes
+the same public header used by its executables and registers mmap checksum tests
+only when that probe succeeds. Configure with `-DCSV2_HAS_MMAP=0` for an
+explicit no-mmap benchmark build; the value is propagated to every benchmark
+target, and the checksum suite verifies that mmap operations are rejected.

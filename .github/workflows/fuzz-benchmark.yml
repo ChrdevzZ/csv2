@@ -63,3 +63,26 @@ jobs:
           -L benchmark-checksum
           --no-tests=error
           --output-on-failure
+
+      - name: Verify no-mmap benchmark configuration
+        run: |
+          cmake -S . -B build-no-mmap -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_CXX_COMPILER=clang++-18 \
+            -DCMAKE_COMPILE_WARNING_AS_ERROR=ON \
+            -DCSV2_BUILD_TESTS=ON \
+            -DCSV2_BUILD_BENCHMARKS=ON \
+            -DCSV2_BUILD_FUZZERS=OFF \
+            -DCSV2_HAS_MMAP=0 \
+            -DCSV2_CI_EXPECTED_COMPILER_ID=Clang \
+            -DCSV2_CI_EXPECTED_COMPILER_VERSION_PREFIX=18
+          cmake --build build-no-mmap --parallel \
+            --target csv2_benchmark csv2_benchmark_allocations \
+            csv2_common_benchmark
+          ctest --test-dir build-no-mmap -L benchmark-checksum \
+            --no-tests=error --output-on-failure
+          if ctest --test-dir build-no-mmap -N | \
+              grep -E 'csv2\.benchmark\.checksum\.(map_only|rows_cells_mmap)'; then
+            echo "mmap checksum tests were registered in a no-mmap build" >&2
+            exit 1
+          fi
