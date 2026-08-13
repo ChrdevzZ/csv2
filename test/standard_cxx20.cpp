@@ -32,8 +32,17 @@ static_assert(!CSV2_HAS_SPAN, "missing span must disable its optional API");
 #endif
 #if CSV2_HAS_RANGES
 static_assert(std::ranges::forward_range<cxx20_reader>);
+static_assert(std::ranges::enable_view<cxx20_reader::Row>);
+static_assert(std::ranges::enable_borrowed_range<cxx20_reader::Row>);
+static_assert(!std::ranges::enable_view<const cxx20_reader::Row>);
+static_assert(!std::ranges::enable_view<volatile cxx20_reader::Row>);
+static_assert(!std::ranges::enable_view<const volatile cxx20_reader::Row>);
+static_assert(!std::ranges::enable_borrowed_range<const cxx20_reader::Row>);
+static_assert(!std::ranges::enable_borrowed_range<volatile cxx20_reader::Row>);
+static_assert(!std::ranges::enable_borrowed_range<const volatile cxx20_reader::Row>);
 static_assert(std::ranges::view<cxx20_reader::Row>);
 static_assert(std::ranges::borrowed_range<cxx20_reader::Row>);
+static_assert(std::ranges::forward_range<cxx20_reader::Row>);
 static_assert(!std::ranges::borrowed_range<cxx20_reader>);
 static_assert(std::ranges::range<cxx20_owning_row>);
 static_assert(!std::ranges::view<cxx20_owning_row>);
