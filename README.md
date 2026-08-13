@@ -123,36 +123,33 @@ already present in the output container.
 
 ### Performance Benchmark
 
-`csv2_benchmark` measures one operation in the current source tree: mapping,
-row and cell traversal, extraction, ranges, integer conversion, or writing.
-Source preparation is outside each operation timer except for `map_only`, where
-mapping is the operation being measured. GiB/s always uses input-corpus bytes
-as its denominator, including writer operations; it is not writer output
-bandwidth. The benchmark emits a semantic checksum and optional allocation or
-hardware-counter data. Hosted CI verifies checksums and the zero-allocation
-traversal contract; hosted timing is never used to accept or reject a change.
+The independent benchmark subproject provides a registry of source, traversal,
+extraction, validation, conversion, ranges, index, and Writer operations. Each
+kernel has an explicit setup/timed/verification boundary. Exact checksums and
+allocation contracts are verified separately from Google Benchmark timing;
+GiB/s consistently uses input-corpus bytes. Hosted CI builds every operation
+group and checks protocol, checksum, CLI, and zero-allocation contracts, but
+never accepts or rejects a change from hosted timing.
 
 ```bash
-CANDIDATE="$(git rev-parse HEAD)"
-cmake -S . -B build-benchmark \
+cmake -S . -B build-benchmark -G Ninja \
+  -DCMAKE_BUILD_TYPE=Release \
   -DCSV2_BUILD_BENCHMARKS=ON \
-  -DCSV2_BENCHMARK_REVISION="$CANDIDATE" \
-  -DCMAKE_BUILD_TYPE=Release
-cmake --build build-benchmark --target csv2_benchmark
-./build-benchmark/benchmark/csv2_benchmark \
-  --operation rows_cells --input /absolute/path/input.csv \
-  --source mmap --iterations 20
+  -DCSV2_BUILD_BENCHMARK_CHECKS=ON \
+  -DCSV2_BENCHMARK_REVISION="$(git rev-parse HEAD)"
+cmake --build build-benchmark --parallel
+ctest --test-dir build-benchmark -L benchmark-checksum \
+  --no-tests=error --output-on-failure
 ```
 
-Cross-revision claims use the separate C++11 `common_driver.cpp`, extracted
-from the candidate commit and compiled unchanged against both exact archived
-header trees. See
-[`benchmark/README.md`](benchmark/README.md) for reproducible extraction and
-build commands, A/A calibration, paired execution, raw-sample retention, and
-the provenance required for a reviewable result. No comparative performance
-number is published without its machine-specific JSON report. Benchmark
-numeric options accept unsigned ASCII decimal digits only; signs, whitespace,
-overflow, and zero iterations are rejected before measurement.
+Cross-revision claims use the same C++11
+[`common_driver.cpp`](benchmark/compare/common_driver.cpp) against both exact
+header archives, followed by A/A calibration and alternating A/B runs. Reports
+bind revisions, binaries, driver, corpus, machine, compiler, raw samples, and
+statistics by hash. Hosted results are marked `exploratory`; only a fixed
+Linux machine satisfying the `controlled` protocol is decision-eligible. See
+[`benchmark/README.md`](benchmark/README.md) for operations, deterministic
+corpus generation, protocol versions, and reproducible commands.
 
 ### Reader API
 
@@ -414,26 +411,35 @@ at compile time. `EscapingWriter` is its minimal-quoting convenience alias.
 ## Compiling Tests
 
 ```bash
-cmake -S . -B build -DCSV2_BUILD_TESTS=ON
-cmake --build build --config Debug
-ctest --test-dir build -C Debug --output-on-failure
+cmake -S . -B build -DCSV2_BUILD_TESTS=ON \
+  -DCSV2_VERIFICATION_PROFILE=quick
+cmake --build build --parallel
+ctest --test-dir build --output-on-failure
 ```
 
-The test build runs the same behavioral suite against the modular and
-single-header forms in strict C++11, C++14, C++17, C++20, and C++23 modes. It
-also adds C++26 forward-compatibility compile-only targets when CMake and the compiler
-advertise that mode. CMake 3.12 or newer is required to request C++20, CMake
-3.20 or newer is required to request C++23, and CMake 3.30 or newer is required
-to request C++26. C++11 through C++23 prove behavior; C++26 only proves that
-the public surface still compiles and does not enable any C++26-only feature.
-These standard-specific targets prove compatibility with the selected language
-mode; they do not claim that a compiler or standard library completely
-implements every feature of that standard. Older supported toolchains register
-every mode they understand. The build also checks every public header
-independently in C++11, C++17, C++20, and C++23 modes, runs
-no-mmap through C++23, runs no-exceptions in C++11/C++20/C++23, compiles
-standard-specific contract translation units, and includes deterministic fuzz
-and benchmark checksum smoke tests.
+Verification components are off by default and independently selectable:
+
+| Option | Purpose |
+| --- | --- |
+| `CSV2_BUILD_TESTS` | runtime domains and compile contracts |
+| `CSV2_BUILD_BENCHMARKS` | current and common benchmark executables |
+| `CSV2_BUILD_BENCHMARK_CHECKS` | deterministic benchmark CTest checks; requires benchmarks |
+| `CSV2_BUILD_FUZZERS` | non-Windows Clang/libFuzzer Reader and Writer targets |
+
+`CSV2_VERIFICATION_PROFILE` accepts `quick`, `full`, or `perf` and controls
+depth only; it never enables a component. The root remains CMake 3.10
+compatible when all options are off. Enabling tests, fuzzers, or benchmarks
+enters an isolated CMake 3.16 subdirectory and uses only offline vendored
+verification dependencies.
+
+The quick profile runs C++11 and C++20 behavior through modular and
+single-header forms, a C++23 feature slice, and no-mmap/no-exceptions endpoint
+variants. The full profile expands supported C++11/14/17/20/23 combinations;
+C++26 remains compile-only. Each `standard × header form × variant` builds one
+aggregate executable, while 13 stable domains are separately selectable by
+CTest name and labels. C++11 and every no-exceptions variant use a small
+non-throwing runner; C++14–23 normal variants use the vendored Catch2 split
+library.
 
 `-DCSV2_ENABLE_SANITIZERS=ON` enables ASan and UBSan with GCC, Clang, and
 AppleClang. With the Microsoft compiler it enables MSVC AddressSanitizer only.
@@ -444,28 +450,26 @@ must use a non-Debug CRT configuration; CI uses Release because Clang-CL ASan
 does not support the Debug CRT. The Clang-CL configuration disables only the
 UBSan `object-size` check because it diagnoses the MSVC standard library's
 `forward_list` pseudo-node implementation. Linux enables leak detection through
-ASan; Windows disables it because LeakSanitizer is not supported there.
+ASan; Windows disables it because LeakSanitizer is not supported there. Windows
+sanitizer jobs still use the CTest JSON manifest as the source of truth, but a
+small runner executes each exact command with an inherited console because
+CTest output capture can deadlock instrumented MSVC/Clang-CL processes. The
+runner preserves each command, working directory, timeout, and JUnit result.
 
-| Standard | Modular runtime test | Single-header runtime test |
-|:---------|:---------------------|:---------------------------|
-| C++11 | `csv2.module.cxx11` | `csv2.single_header.cxx11` |
-| C++14 | `csv2.module.cxx14` | `csv2.single_header.cxx14` |
-| C++17 | `csv2.module.cxx17` | `csv2.single_header.cxx17` |
-| C++20 | `csv2.module.cxx20` | `csv2.single_header.cxx20` |
-| C++23 | `csv2.module.cxx23` | `csv2.single_header.cxx23` |
-| C++26 compile-only | `csv2_standard_contract_module_cxx26` | `csv2_standard_contract_single_cxx26` |
+Runtime CTest names follow:
 
-The `CSV2_REQUIRE_MODERN_STANDARD_TESTS` option is an enforcement switch for
-modern CI: configuration fails unless all four exact C++20/C++23 CTest names
-in the table are registered. Local compatibility remains conditional, while
-all Linux, Windows, and macOS CI jobs enable this switch so that a toolchain
-change cannot silently remove those four variants.
+```text
+csv2.runtime.<domain>.<modular|single>.cxx<standard>.<normal|no_mmap|no_exceptions>
+```
+
+`CSV2_REQUIRE_MODERN_STANDARD_TESTS` is an enforcement switch for modern CI:
+configuration fails if the required C++20/C++23 slices are not registered.
 
 `CSV2_REQUIRE_CXX26_TESTS` is a separate opt-in enforcement switch. CI enables
 it only for stable compiler lines whose CMake feature set advertises
-`cxx_std_26`; configuration then fails unless both exact C++26 compile-only
-targets in the table are registered. Other compiler rows continue to enforce
-C++20 and C++23 without making a false C++26 support claim.
+`cxx_std_26`; configuration then fails unless both modular and single-header
+C++26 compile-only targets are registered. Other compiler rows continue to
+enforce C++20 and C++23 without making a false C++26 support claim.
 
 CI selects stable compiler lines already supplied by the stable hosted runner
 or its distribution. It deliberately avoids preview runner images, compiler
@@ -473,23 +477,24 @@ snapshots, PPAs, and nightly LLVM repositories. The compiler ID and version
 line are verified by CMake during configuration; stable runner servicing may
 advance the patch component without silently changing the enforced line.
 
-CI is split into Linux, Windows, and macOS workflows, with warnings treated as
-errors throughout:
+Automatic quick workflows preserve the existing Linux, Windows, macOS, and
+fuzz/benchmark check identities. Manual `Full verification` and `Performance
+evidence` workflows provide the exhaustive matrix and version-bound evidence:
 
-| Platform | Normal coverage | Sanitizer coverage |
-|:---------|:----------------|:-------------------|
-| Linux | GCC 14 and Clang 18 with libc++; full tests, benchmark checksums, installation consumer | Separate GCC 14 and Clang 18 ASan/UBSan jobs with leak detection |
-| Windows | MSVC 19.51 and Clang-CL 22.1; MSVC verifies benchmark checksums and installation consumer | MSVC ASan and Clang-CL ASan/UBSan |
-| macOS | AppleClang 21 full tests, benchmark checksums, installation consumer | — |
+| Tier | Trigger | Scope |
+| --- | --- | --- |
+| quick | pull request/push | representative runtime matrix, contracts, checksum/allocation checks, install consumers, fuzz smoke |
+| full | manual | full standard/header/variant matrix, C++26 compile-only, extended fuzz, install consumers, non-blocking coverage |
+| perf | manual | generated corpus, A/A and A/B reports, current-tree metrics; hosted is always exploratory |
 
-The Linux GCC job also builds an independent
-`find_package(csv2 CONFIG REQUIRED)` consumer and verifies single-header
-regeneration. The non-sanitized Linux Clang job checks first-party formatting
-with Clang Format 18. Sanitizer jobs run the labeled runtime suite; Windows
-executes its generated CTest manifest directly to avoid CTest/ASan
-process-management problems. A separate pull-request, weekly, and manually
-dispatchable workflow runs the deterministic fuzz smoke, a 5,000-input
-libFuzzer corpus smoke, and all benchmark checksums.
+Every platform verifies that installing with all verification components
+enabled exports no Catch2 or Google Benchmark files and builds the tracked
+CMake consumer under `test/contracts/consumer`. Linux also exercises its
+relocatable pkg-config consumer. CI uploads JUnit, coverage, corpus manifests,
+and benchmark reports as artifacts and never depends on a hard-coded test
+count. Full topology and contributor instructions are in
+[`test/README.md`](test/README.md), [`benchmark/README.md`](benchmark/README.md),
+and [`CONTRIBUTING.md`](CONTRIBUTING.md).
 
 ## Installing and Consuming with CMake
 

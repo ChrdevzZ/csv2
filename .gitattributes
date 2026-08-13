@@ -1,6 +1,7 @@
 * text=auto eol=lf
 
 *.png binary
-test/fixtures/**/*.csv -text
-test/fuzz/corpus/** -text
-benchmark/datasets/fixtures/**/*.csv -text
+test/fixtures/**/*.csv -text -whitespace
+test/fuzz/corpus/** -text -whitespace
+benchmark/datasets/fixtures/**/*.csv -text -whitespace
+third_party/verification/** -whitespace
