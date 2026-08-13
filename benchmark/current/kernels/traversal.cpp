@@ -33,8 +33,10 @@ void register_traversal_operations(Registry &registry) {
 #if CSV2_HAS_MMAP
   sources |= source_mmap;
 #endif
-  registry.add("traversal/rows", sources, rows<false>, rows<true>, true);
-  registry.add("traversal/rows-cells", sources, rows_cells<false>, rows_cells<true>, true);
+  registry.add("traversal/rows", sources, prepare_reader, OperationScope::traversal,
+               rows<false>, rows<true>, true);
+  registry.add("traversal/rows-cells", sources, prepare_reader, OperationScope::traversal,
+               rows_cells<false>, rows_cells<true>, true);
 }
 
 } // namespace csv2_benchmark

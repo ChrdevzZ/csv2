@@ -169,6 +169,25 @@ csv2_add_benchmark_check(csv2.benchmark.current.observer_audit.writer
   PASS_REGEX
     "value_observations=[1-9][0-9]* memory_observations=[1-9][0-9]*")
 
+csv2_add_benchmark_check(csv2.benchmark.current.preparation.file_read
+  COMMAND csv2_benchmark --csv2-input ${csv2_check_fixture}
+    --csv2-source file --csv2-operation source/file-read
+    --csv2-preparation-audit
+  PASS_REGEX "prepared=metadata-only decoded_rows=0 streamable_rows=0 output_capacity=0")
+
+csv2_add_benchmark_check(csv2.benchmark.current.preparation.traversal
+  COMMAND csv2_benchmark --csv2-input ${csv2_check_fixture}
+    --csv2-source buffer --csv2-operation traversal/rows-cells
+    --csv2-preparation-audit
+  PASS_REGEX "prepared=data,buffer-reader decoded_rows=0 streamable_rows=0 output_capacity=0")
+
+csv2_add_benchmark_check(csv2.benchmark.current.preparation.writer
+  COMMAND csv2_benchmark --csv2-input ${csv2_quote_fixture}
+    --csv2-source buffer --csv2-operation writer/raw-streamable
+    --csv2-preparation-audit
+  PASS_REGEX
+    "prepared=data,buffer-reader,decoded-rows,streamable-rows,output decoded_rows=[1-9][0-9]* streamable_rows=[1-9][0-9]* output_capacity=[1-9][0-9]*")
+
 set(csv2_group_checks
   "source/parse-borrowed|buffer|${csv2_check_fixture}"
   "traversal/rows-cells|buffer|${csv2_check_fixture}"

@@ -22,6 +22,7 @@ public:
   char *data() noexcept { return storage_.data(); }
   const char *data() const noexcept { return storage_.data(); }
   std::size_t size() const noexcept;
+  std::size_t capacity() const noexcept { return storage_.size(); }
   bool overflowed() const noexcept { return overflowed_; }
 };
 

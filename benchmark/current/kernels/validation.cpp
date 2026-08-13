@@ -33,10 +33,14 @@ void register_validation_operations(Registry &registry) {
 #if CSV2_HAS_MMAP
   sources |= source_mmap;
 #endif
-  registry.add("validation/strict", sources, validate<false>, validate<true>, true);
-  registry.add("validation/invalid-early", sources, validate<false>, validate<true>, true);
-  registry.add("validation/invalid-middle", sources, validate<false>, validate<true>, true);
-  registry.add("validation/invalid-late", sources, validate<false>, validate<true>, true);
+  registry.add("validation/strict", sources, prepare_reader, OperationScope::validation,
+               validate<false>, validate<true>, true);
+  registry.add("validation/invalid-early", sources, prepare_reader, OperationScope::validation,
+               validate<false>, validate<true>, true);
+  registry.add("validation/invalid-middle", sources, prepare_reader, OperationScope::validation,
+               validate<false>, validate<true>, true);
+  registry.add("validation/invalid-late", sources, prepare_reader, OperationScope::validation,
+               validate<false>, validate<true>, true);
 }
 
 } // namespace csv2_benchmark

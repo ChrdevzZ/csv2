@@ -158,16 +158,21 @@ template <bool Verify> Result parse_span(Context &context, Source, TimedObserver
 } // namespace
 
 void register_source_operations(Registry &registry) {
-  registry.add("source/file-read", source_file, file_read<false>, file_read<true>);
+  registry.add("source/file-read", source_file, prepare_none, OperationScope::source_only,
+               file_read<false>, file_read<true>);
 #if CSV2_HAS_MMAP
-  registry.add("source/mmap-open", source_mmap, mmap_open<false>, mmap_open<true>);
-  registry.add("source/mmap-touch", source_mmap, mmap_touch<false>, mmap_touch<true>);
+  registry.add("source/mmap-open", source_mmap, prepare_none, OperationScope::source_only,
+               mmap_open<false>, mmap_open<true>);
+  registry.add("source/mmap-touch", source_mmap, prepare_mapping, OperationScope::source_only,
+               mmap_touch<false>, mmap_touch<true>);
 #endif
-  registry.add("source/parse-borrowed", source_buffer, parse_borrowed<false>, parse_borrowed<true>,
-               true);
-  registry.add("source/parse-owned", source_buffer, parse_owned<false>, parse_owned<true>);
+  registry.add("source/parse-borrowed", source_buffer, prepare_data, OperationScope::source_only,
+               parse_borrowed<false>, parse_borrowed<true>, true);
+  registry.add("source/parse-owned", source_buffer, prepare_data, OperationScope::source_only,
+               parse_owned<false>, parse_owned<true>);
 #if CSV2_HAS_SPAN
-  registry.add("source/parse-span", source_buffer, parse_span<false>, parse_span<true>, true);
+  registry.add("source/parse-span", source_buffer, prepare_data, OperationScope::source_only,
+               parse_span<false>, parse_span<true>, true);
 #endif
 }
 

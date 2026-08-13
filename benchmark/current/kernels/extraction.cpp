@@ -123,23 +123,29 @@ void register_extraction_operations(Registry &registry) {
 #if CSV2_HAS_MMAP
   sources |= source_mmap;
 #endif
-  registry.add("extraction/row-raw/reused-string", sources, row_raw<false>, row_raw<true>, true);
-  registry.add("extraction/cell-raw/reused-string", sources, raw_reused_string<false>,
-               raw_reused_string<true>, true);
-  registry.add("extraction/cell-raw/fresh-string", sources, raw_fresh_string<false>,
-               raw_fresh_string<true>);
-  registry.add("extraction/cell-decoded/reused-string", sources, decoded_reused_string<false>,
-               decoded_reused_string<true>, true);
-  registry.add("extraction/cell-decoded/fresh-string", sources, decoded_fresh_string<false>,
-               decoded_fresh_string<true>);
-  registry.add("extraction/cell-decoded/reused-vector", sources, decoded_reused_vector<false>,
-               decoded_reused_vector<true>, true);
-  registry.add("extraction/cell-decoded/fresh-vector", sources, decoded_fresh_vector<false>,
-               decoded_fresh_vector<true>);
-  registry.add("extraction/cell-content/reused-string", sources, content_reused_string<false>,
-               content_reused_string<true>, true);
-  registry.add("extraction/cell-content/fresh-string", sources, content_fresh_string<false>,
-               content_fresh_string<true>);
+  registry.add("extraction/row-raw/reused-string", sources,
+               prepare_reader | prepare_string_scratch, OperationScope::extraction,
+               row_raw<false>, row_raw<true>, true);
+  registry.add("extraction/cell-raw/reused-string", sources,
+               prepare_reader | prepare_string_scratch, OperationScope::extraction,
+               raw_reused_string<false>, raw_reused_string<true>, true);
+  registry.add("extraction/cell-raw/fresh-string", sources, prepare_reader,
+               OperationScope::extraction, raw_fresh_string<false>, raw_fresh_string<true>);
+  registry.add("extraction/cell-decoded/reused-string", sources,
+               prepare_reader | prepare_string_scratch, OperationScope::extraction,
+               decoded_reused_string<false>, decoded_reused_string<true>, true);
+  registry.add("extraction/cell-decoded/fresh-string", sources, prepare_reader,
+               OperationScope::extraction, decoded_fresh_string<false>, decoded_fresh_string<true>);
+  registry.add("extraction/cell-decoded/reused-vector", sources,
+               prepare_reader | prepare_vector_scratch, OperationScope::extraction,
+               decoded_reused_vector<false>, decoded_reused_vector<true>, true);
+  registry.add("extraction/cell-decoded/fresh-vector", sources, prepare_reader,
+               OperationScope::extraction, decoded_fresh_vector<false>, decoded_fresh_vector<true>);
+  registry.add("extraction/cell-content/reused-string", sources,
+               prepare_reader | prepare_string_scratch, OperationScope::extraction,
+               content_reused_string<false>, content_reused_string<true>, true);
+  registry.add("extraction/cell-content/fresh-string", sources, prepare_reader,
+               OperationScope::extraction, content_fresh_string<false>, content_fresh_string<true>);
 }
 
 } // namespace csv2_benchmark

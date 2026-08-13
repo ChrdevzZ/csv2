@@ -18,11 +18,24 @@ inline void observe_result(TimedObserver &observer, Result &result) noexcept {
   observer.value(result.cells);
 }
 
-enum SourceMask { source_none = 0, source_file = 1, source_buffer = 2, source_mmap = 4 };
+enum class OperationScope {
+  source_only,
+  traversal,
+  extraction,
+  validation,
+  conversion,
+  ranges,
+  index,
+  writer_only
+};
+
+const char *operation_scope_name(OperationScope scope) noexcept;
 
 struct Operation {
   std::string id;
   unsigned sources;
+  unsigned preparations;
+  OperationScope scope;
   bool expect_zero_allocations;
   Kernel timed_kernel;
   Kernel verification_kernel;
@@ -32,7 +45,8 @@ class Registry {
   std::vector<Operation> operations_;
 
 public:
-  void add(const char *id, unsigned sources, Kernel timed_kernel, Kernel verification_kernel,
+  void add(const char *id, unsigned sources, unsigned preparations, OperationScope scope,
+           Kernel timed_kernel, Kernel verification_kernel,
            bool expect_zero_allocations = false);
   const std::vector<Operation> &operations() const noexcept { return operations_; }
   const Operation *find(const std::string &id) const noexcept;

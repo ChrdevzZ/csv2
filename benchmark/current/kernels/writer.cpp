@@ -79,14 +79,18 @@ template <bool Verify> Result always_direct(Context &context, Source, TimedObser
 } // namespace
 
 void register_writer_operations(Registry &registry) {
-  registry.add("writer/raw-direct", source_buffer, raw_direct<false>, raw_direct<true>, true);
-  registry.add("writer/raw-streamable", source_buffer, raw_streamable<false>, raw_streamable<true>);
-  registry.add("writer/escaped-direct", source_buffer, escaped_direct<false>, escaped_direct<true>,
-               true);
-  registry.add("writer/escaped-streamable", source_buffer, escaped_streamable<false>,
-               escaped_streamable<true>);
-  registry.add("writer/always-direct", source_buffer, always_direct<false>, always_direct<true>,
-               true);
+  const unsigned direct = prepare_reader | prepare_decoded_rows | prepare_output;
+  const unsigned streamable = direct | prepare_streamable_rows;
+  registry.add("writer/raw-direct", source_buffer, direct, OperationScope::writer_only,
+               raw_direct<false>, raw_direct<true>, true);
+  registry.add("writer/raw-streamable", source_buffer, streamable, OperationScope::writer_only,
+               raw_streamable<false>, raw_streamable<true>);
+  registry.add("writer/escaped-direct", source_buffer, direct, OperationScope::writer_only,
+               escaped_direct<false>, escaped_direct<true>, true);
+  registry.add("writer/escaped-streamable", source_buffer, streamable,
+               OperationScope::writer_only, escaped_streamable<false>, escaped_streamable<true>);
+  registry.add("writer/always-direct", source_buffer, direct, OperationScope::writer_only,
+               always_direct<false>, always_direct<true>, true);
 }
 
 } // namespace csv2_benchmark
