@@ -1,5 +1,30 @@
 cmake_minimum_required(VERSION 3.16)
 
+list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
+include(Csv2TestDependencies)
+
+if(CSV2_BUILD_TESTS AND 14 IN_LIST csv2_supported_standards)
+  csv2_load_catch2()
+endif()
+
+if(CSV2_BUILD_TESTS)
+  find_package(Python3 3.10 COMPONENTS Interpreter QUIET)
+  if(Python3_Interpreter_FOUND)
+    add_test(NAME csv2.vendor.integrity
+      COMMAND ${Python3_EXECUTABLE}
+        ${csv2_SOURCE_DIR}/tools/vendor/update_verification_dependencies.py
+        check)
+    set_tests_properties(csv2.vendor.integrity PROPERTIES
+      LABELS "vendor-integrity;verification")
+    add_test(NAME csv2.vendor.tooling_contract
+      COMMAND ${Python3_EXECUTABLE}
+        ${csv2_SOURCE_DIR}/tools/vendor/test_update_verification_dependencies.py
+        -v)
+    set_tests_properties(csv2.vendor.tooling_contract PROPERTIES
+      LABELS "vendor-integrity;verification")
+  endif()
+endif()
+
 # Fuzzer targets are independently selectable. Keep this narrow early-return
 # path until the dedicated fuzz subdirectory owns them later in the migration.
 if(NOT CSV2_BUILD_TESTS)
