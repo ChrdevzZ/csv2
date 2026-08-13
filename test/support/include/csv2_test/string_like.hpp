@@ -73,9 +73,7 @@ struct ThrowingOwnedStringLike {
   std::size_t size() const { return 3; }
 };
 
-inline std::size_t oversized_owned_string_size() {
-  return (std::numeric_limits<std::size_t>::max)();
-}
+std::size_t oversized_owned_string_size();
 
 struct OversizedOwnedStringLike {
   const char *c_str() const { return "x"; }

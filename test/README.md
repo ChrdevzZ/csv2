@@ -22,9 +22,9 @@ test/
 `test/support/include/csv2_test/test_support.hpp` is a compatibility umbrella.
 New support code belongs in the focused header that owns it: `sinks.hpp`,
 `streams.hpp`, `string_like.hpp`, `temporary_file.hpp`, `platform.hpp`, or
-`reader_support.hpp`. The `csv2_test_support` target supplies only test include
-paths and fixture definitions; it does not install, export, or propagate into
-`csv2::csv2`.
+`reader_support.hpp`. The `csv2_test_support` target supplies only test support
+code, include paths, and fixture definitions; it does not install, export, or
+propagate into `csv2::csv2`.
 
 ## Runtime domains and stable IDs
 
@@ -192,3 +192,10 @@ with `EXCLUDE_FROM_ALL`, receive neither CSV2 Werror/sanitizer/coverage flags
 nor install/export rules, and are absent when only C++11/no-exceptions tests or
 fuzzers are configured. See
 [`third_party/verification/README.md`](../third_party/verification/README.md).
+
+GNU 14 runtime-test aggregates retain `-Warray-bounds` and
+`-Wstringop-overread` as warnings rather than errors. At `-O3`, GCC can issue
+these diagnostics for the unreachable 64-byte scanner branch after propagating
+the object size of short `std::string` fixtures through the header-only Reader.
+The exception is limited to those two diagnostics and to runtime-test targets;
+all other first-party warnings remain errors.

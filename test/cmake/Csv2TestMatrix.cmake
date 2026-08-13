@@ -79,6 +79,19 @@ function(csv2_add_runtime_variant standard header_mode variant)
     csv2_enable_test_options(${target})
   endif()
 
+  # GCC 14 can diagnose an unreachable 64-byte scanner branch after it
+  # propagates the object size of a short std::string test fixture through the
+  # header-only Reader. Keep these optimizer diagnostics visible without
+  # turning the known false positives into build failures. All other warnings
+  # remain covered by CMAKE_COMPILE_WARNING_AS_ERROR.
+  if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU" AND
+     CMAKE_CXX_COMPILER_VERSION VERSION_GREATER_EQUAL 14 AND
+     CMAKE_CXX_COMPILER_VERSION VERSION_LESS 15)
+    target_compile_options(${target} PRIVATE
+      -Wno-error=array-bounds
+      -Wno-error=stringop-overread)
+  endif()
+
   foreach(domain IN LISTS selected_domains)
     csv2_register_domain_test(${target} ${domain} ${header_mode}
       ${standard} ${variant} ${backend})
