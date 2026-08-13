@@ -6,10 +6,10 @@
 #include <catch2/catch_test_macros.hpp>
 
 #define CSV2_TEST_CASE(id, domain) TEST_CASE(id, "[" domain "]")
-#define CSV2_CHECK(expression) CHECK(expression)
-#define CSV2_REQUIRE(expression) REQUIRE(expression)
-#define CSV2_CHECK_EQ(actual, expected) CHECK((actual) == (expected))
-#define CSV2_REQUIRE_FALSE(expression) REQUIRE_FALSE(expression)
+#define CSV2_CHECK(expression) CHECK(static_cast<bool>(expression))
+#define CSV2_REQUIRE(expression) REQUIRE(static_cast<bool>(expression))
+#define CSV2_CHECK_EQ(actual, expected) CHECK(static_cast<bool>((actual) == (expected)))
+#define CSV2_REQUIRE_FALSE(expression) REQUIRE_FALSE(static_cast<bool>(expression))
 #define CSV2_REQUIRE_THROWS(expression) REQUIRE_THROWS(expression)
 #define CSV2_REQUIRE_THROWS_AS(expression, exception) REQUIRE_THROWS_AS(expression, exception)
 #define CSV2_CHECK_THROWS_AS(expression, exception) CHECK_THROWS_AS(expression, exception)
