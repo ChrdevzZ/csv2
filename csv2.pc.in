@@ -1,4 +1,4 @@
-includedir=@CMAKE_INSTALL_FULL_INCLUDEDIR@
+includedir=${pcfiledir}/@CSV2_PC_INCLUDEDIR_FROM_PCDIR@
 
 Name: @PROJECT_NAME@
 Description: Fast CSV parser and writer for Modern C++
