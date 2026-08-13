@@ -24,9 +24,19 @@ deterministic checksum plus GiB/s, rows/s, cells/s, and optional allocation
 counts. GiB/s is normalized by input-corpus bytes for every operation,
 including writers; it is not writer output bandwidth. Supported operations are
 `map_only`, `rows_only`, `rows_cells`, `raw_to_string`, `decoded_to_string`,
-`decoded_to_vector`, `ranges_pipeline`, `integer_conversion`, `writer_raw`,
-and `writer_escaped`. All operations except `map_only` accept buffer and mmap
-sources.
+`decoded_to_vector`, `ranges_pipeline`, `integer_conversion`,
+`writer_raw_direct`, `writer_raw_streamable`, `writer_escaped_direct`, and
+`writer_escaped_streamable`. All operations except `map_only` accept buffer
+and mmap sources.
+
+The writer names describe the dispatch path as well as the output policy.
+`direct` passes contiguous character fields without an `operator<<` overload;
+`streamable` uses an explicit inserter to force generic stream formatting.
+The escaped operations share the same strings decoded before the timer,
+hardware-counter scope, and allocation reset: the direct form passes each
+`std::string`, while the streamable form passes a non-owning wrapper. CSV
+decoding remains the separate `decoded_to_string` operation. The direct writer
+allocation checks require zero allocations inside the measured operation.
 
 The separate `csv2_benchmark_allocations` executable replaces C++
 `new`/`new[]` to count calls and requested bytes inside the timed operation.
@@ -88,18 +98,40 @@ g++ -std=c++11 -O3 -DNDEBUG \
 "$COMPARE/candidate" --describe
 ```
 
-The shared protocol exposes two scopes:
+The shared protocol always exposes these comparison operations:
 
 - `rows_cells`: input preparation is outside the timer; only row/cell
   traversal is timed. Buffer and mmap sources are supported when available.
+- `legacy_writer_raw`: raw rows are materialized before the timer and only the
+  historical Writer call is timed. It is available against the pre-modernized
+  header tree and uses the `writer_only` scope.
 - `legacy_mmap_rows_cells`: each iteration maps and traverses the file inside
   the timer, while reader destruction and unmapping remain outside it. This
   reproduces the scope of the original positional benchmark. This operation
   only supports the `mmap` source; the runner rejects a selection that requests
   it without `mmap` rather than silently changing the requested source.
 
-Both scopes compute an untimed raw-content checksum. The runner rejects any
-semantic mismatch before making a performance decision.
+Defining `CSV2_BENCHMARK_ENABLE_MODERN_WRITER_OPERATIONS=1` when compiling both
+sides additionally exposes the current four direct/streamable Writer
+operations. Use that mode only when both compared header revisions provide the
+modern Writer interfaces. Leave it undefined for the `9504e0b` modernization
+comparison. For example, a Review(3)-only comparison against `5235deb` adds
+the same definition to both compile commands:
+
+```bash
+MODERN_WRITER=-DCSV2_BENCHMARK_ENABLE_MODERN_WRITER_OPERATIONS=1
+g++ -std=c++11 -O3 -DNDEBUG $MODERN_WRITER \
+  -I"$COMPARE/base-tree/include" \
+  -DCSV2_BENCHMARK_REVISION="\"$BASE\"" "$DRIVER" -o "$COMPARE/baseline"
+g++ -std=c++11 -O3 -DNDEBUG $MODERN_WRITER \
+  -I"$COMPARE/candidate-tree/include" \
+  -DCSV2_BENCHMARK_REVISION="\"$CANDIDATE\"" "$DRIVER" -o "$COMPARE/candidate"
+```
+
+Every comparison operation emits a deterministic checksum. Traversal operations
+compute an untimed raw-content checksum; Writer operations hash the bytes sent
+to the output stream inside the measured scope. The runner rejects any
+same-operation semantic mismatch before making a performance decision.
 
 Calibrate A/A noise with the exact candidate executable that will be compared.
 Then run A/B with the same datasets, cases, iterations, compiler description,
@@ -107,7 +139,8 @@ flags, and machine:
 
 ```bash
 COMPILER="$(g++ --version | sed -n '1p')"
-FILES=short_unquoted.csv,quote_heavy.csv,quoted_lf.csv,crlf.csv
+FILES=short_unquoted.csv,wide_rows.csv,quote_heavy.csv,doubled_quotes.csv,\
+quoted_lf.csv,crlf.csv,empty_and_trailing.csv,long_field.csv
 
 python3 benchmark/run_suite.py \
   --baseline "$COMPARE/candidate" \
@@ -137,6 +170,11 @@ python3 benchmark/run_suite.py \
   --output "$COMPARE/comparison.json"
 ```
 
+For the whole-modernization comparison select
+`rows_cells,legacy_mmap_rows_cells,legacy_writer_raw` with the appropriate
+buffer/mmap sources. For a modern Writer-only comparison compile both sides
+with the opt-in definition and select the four modern Writer operations.
+
 The runner alternates launch order and retains every warmup and measured
 launch, command, raw stdout/stderr, and derived throughput. It also records
 executable, adapter, runner, and dataset SHA-256 hashes; declared revisions;
@@ -145,9 +183,15 @@ source; logical CPU count; medians; MAD; and a deterministic paired-bootstrap
 95% interval. Reports are atomically checkpointed after each case and carry
 `running`, `completed`, or `failed` status; only completed A/A reports are
 accepted as calibration.
-Before marking a report completed, the runner revalidates both executables,
-the shared adapter, the runner, and every dataset against their recorded size
-and SHA-256.
+All input artifacts are resolved to canonical paths before description,
+hashing, or invocation. The logical dataset names remain stable in the report,
+but execution and revalidation use the resolved targets. The report output is
+rejected when it is the same path, symlink, or hardlink as the runner, adapter,
+either executable, the calibration, or any selected CSV. Before marking a
+report completed, the runner revalidates both executables, the shared adapter,
+the runner, the calibration, and every dataset against their recorded bytes
+and SHA-256. Checkpoints use a unique temporary file in the output directory,
+flush and sync it, then atomically replace the report.
 
 A regression is reported only when candidate median throughput drops by more
 than the maximum of 5%, the comparison's baseline noise, and the matching A/A
@@ -184,10 +228,12 @@ and MAD:
 The current-tree executables emit the configured `CSV2_BENCHMARK_REVISION`;
 the collector rejects a result whose embedded revision differs from
 `--revision`. When `--build-command` is present, that command completes before
-the executables are hashed or measured, and its working directory and raw
-output are retained. Before publishing the report, the collector revalidates
-the collector source, both executables, and the dataset against their recorded
-sizes and SHA-256 hashes.
+the executables are canonicalized, checked for output aliases, hashed, or
+measured, and its working directory and raw output are retained. Before
+publishing the report, the collector revalidates the collector source, both
+executables, and the dataset against their recorded sizes and SHA-256 hashes.
+Its checkpoints use the same unique-temporary-file and atomic-replace protocol
+as the suite runner.
 
 ```bash
 python3 benchmark/collect_metrics.py \

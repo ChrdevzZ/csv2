@@ -329,18 +329,25 @@ protected:
   }
 };
 
-struct RawField {
+struct RawDirectField {
   const char *bytes;
   std::size_t length;
   const char *data() const noexcept { return bytes; }
   std::size_t size() const noexcept { return length; }
 };
 
-std::ostream &operator<<(std::ostream &output, const RawField &field) {
+struct RawStreamableField {
+  const char *bytes;
+  std::size_t length;
+  const char *data() const noexcept { return bytes; }
+  std::size_t size() const noexcept { return length; }
+};
+
+std::ostream &operator<<(std::ostream &output, const RawStreamableField &field) {
   return output.write(field.data(), static_cast<std::streamsize>(field.size()));
 }
 
-template <class Row> class RawRow {
+template <class Row, class Field> class RawRow {
   Row row_;
 
 public:
@@ -350,15 +357,15 @@ public:
     typename Row::CellIterator current_;
 
   public:
-    using value_type = RawField;
+    using value_type = Field;
     using difference_type = std::ptrdiff_t;
-    using reference = RawField;
+    using reference = Field;
     using pointer = void;
     using iterator_category = std::input_iterator_tag;
 
     iterator() = default;
     explicit iterator(typename Row::CellIterator current) : current_(current) {}
-    RawField operator*() const {
+    Field operator*() const {
       const typename Row::Cell cell = *current_;
       return {cell.raw_data(), cell.raw_size()};
     }
@@ -374,34 +381,34 @@ public:
   iterator end() const { return iterator(row_.end()); }
 };
 
-template <class Cell> struct ContentField {
-  Cell cell;
+using DecodedRows = std::vector<std::vector<std::string>>;
+
+struct StreamableStringField {
+  const std::string &value;
 };
 
-template <class Cell>
-std::ostream &operator<<(std::ostream &output, const ContentField<Cell> &field) {
-  field.cell.copy_content_to(std::ostreambuf_iterator<char>(output));
-  return output;
+std::ostream &operator<<(std::ostream &output, const StreamableStringField &field) {
+  return output.write(field.value.data(), static_cast<std::streamsize>(field.value.size()));
 }
 
-template <class Row> class ContentRow {
-  Row row_;
+class StreamableStringRow {
+  const std::vector<std::string> &row_;
 
 public:
-  explicit ContentRow(Row row) : row_(row) {}
+  explicit StreamableStringRow(const std::vector<std::string> &row) : row_(row) {}
 
   class iterator {
-    typename Row::CellIterator current_;
+    std::vector<std::string>::const_iterator current_;
 
   public:
-    using value_type = ContentField<typename Row::Cell>;
+    using value_type = StreamableStringField;
     using difference_type = std::ptrdiff_t;
     using reference = value_type;
     using pointer = void;
     using iterator_category = std::input_iterator_tag;
 
     iterator() = default;
-    explicit iterator(typename Row::CellIterator current) : current_(current) {}
+    explicit iterator(std::vector<std::string>::const_iterator current) : current_(current) {}
     value_type operator*() const { return {*current_}; }
     iterator &operator++() {
       ++current_;
@@ -415,6 +422,18 @@ public:
   iterator end() const { return iterator(row_.end()); }
 };
 
+bool is_raw_writer_operation(const std::string &operation) {
+  return operation == "writer_raw_direct" || operation == "writer_raw_streamable";
+}
+
+bool is_escaped_writer_operation(const std::string &operation) {
+  return operation == "writer_escaped_direct" || operation == "writer_escaped_streamable";
+}
+
+bool is_writer_operation(const std::string &operation) {
+  return is_raw_writer_operation(operation) || is_escaped_writer_operation(operation);
+}
+
 void source_counts(const BenchmarkReader &reader, std::uint64_t &rows, std::uint64_t &cells) {
   rows = 0;
   cells = 0;
@@ -423,6 +442,23 @@ void source_counts(const BenchmarkReader &reader, std::uint64_t &rows, std::uint
     for (const auto cell : row) {
       (void)cell;
       ++cells;
+    }
+  }
+}
+
+void prepare_decoded_rows(const BenchmarkReader &reader, DecodedRows &decoded_rows,
+                          std::uint64_t &rows, std::uint64_t &cells) {
+  rows = 0;
+  cells = 0;
+  decoded_rows.clear();
+  for (const auto row : reader) {
+    ++rows;
+    decoded_rows.emplace_back();
+    std::vector<std::string> &decoded_row = decoded_rows.back();
+    for (const auto cell : row) {
+      ++cells;
+      decoded_row.emplace_back();
+      cell.copy_content_to(std::back_inserter(decoded_row.back()));
     }
   }
 }
@@ -505,24 +541,37 @@ bool run_reader_operation(const std::string &operation, const BenchmarkReader &r
 }
 
 bool run_writer_operation(const std::string &operation, const BenchmarkReader &reader,
-                          std::size_t iterations, std::uint64_t rows, std::uint64_t cells,
-                          Result &result) {
+                          const DecodedRows &decoded_rows, std::size_t iterations,
+                          std::uint64_t rows, std::uint64_t cells, Result &result) {
   HashBuffer buffer;
   std::ostream output(&buffer);
 
-  if (operation == "writer_raw") {
+  if (operation == "writer_raw_direct") {
     csv2::basic_writer<csv2::delimiter<','>, std::ostream, csv2::stream_ownership::leave_open,
                        csv2::quote_policy::none>
         writer(output);
     for (std::size_t run = 0; run < iterations; ++run)
       for (const auto row : reader)
-        writer.write_row(RawRow<BenchmarkReader::Row>(row));
-  } else if (operation == "writer_escaped") {
-    csv2::EscapingWriter<csv2::delimiter<','>, std::ostream, csv2::stream_ownership::leave_open>
+        writer.write_row(RawRow<BenchmarkReader::Row, RawDirectField>(row));
+  } else if (operation == "writer_raw_streamable") {
+    csv2::basic_writer<csv2::delimiter<','>, std::ostream, csv2::stream_ownership::leave_open,
+                       csv2::quote_policy::none>
         writer(output);
     for (std::size_t run = 0; run < iterations; ++run)
       for (const auto row : reader)
-        writer.write_row(ContentRow<BenchmarkReader::Row>(row));
+        writer.write_row(RawRow<BenchmarkReader::Row, RawStreamableField>(row));
+  } else if (operation == "writer_escaped_direct") {
+    csv2::EscapingWriter<csv2::delimiter<','>, std::ostream, csv2::stream_ownership::leave_open>
+        writer(output);
+    for (std::size_t run = 0; run < iterations; ++run)
+      for (const auto &row : decoded_rows)
+        writer.write_row(row);
+  } else if (operation == "writer_escaped_streamable") {
+    csv2::EscapingWriter<csv2::delimiter<','>, std::ostream, csv2::stream_ownership::leave_open>
+        writer(output);
+    for (std::size_t run = 0; run < iterations; ++run)
+      for (const auto &row : decoded_rows)
+        writer.write_row(StreamableStringRow(row));
   } else {
     return false;
   }
@@ -579,6 +628,7 @@ int main(int argc, char **argv) {
 
   std::string storage;
   BenchmarkReader reader;
+  DecodedRows decoded_rows;
   std::uint64_t writer_rows = 0;
   std::uint64_t writer_cells = 0;
   bool prepared = true;
@@ -593,8 +643,10 @@ int main(int argc, char **argv) {
       prepared = false;
 #endif
     }
-    if (prepared && (options.operation == "writer_raw" || options.operation == "writer_escaped"))
+    if (prepared && is_raw_writer_operation(options.operation))
       source_counts(reader, writer_rows, writer_cells);
+    else if (prepared && is_escaped_writer_operation(options.operation))
+      prepare_decoded_rows(reader, decoded_rows, writer_rows, writer_cells);
   }
   if (!prepared) {
     std::cerr << "error: unsupported operation/source or input failure\n";
@@ -618,9 +670,9 @@ int main(int argc, char **argv) {
   bool success = false;
   if (options.operation == "map_only") {
     success = options.source == "mmap" && run_map_only(options, result);
-  } else if (options.operation == "writer_raw" || options.operation == "writer_escaped") {
-    success = run_writer_operation(options.operation, reader, options.iterations, writer_rows,
-                                   writer_cells, result);
+  } else if (is_writer_operation(options.operation)) {
+    success = run_writer_operation(options.operation, reader, decoded_rows, options.iterations,
+                                   writer_rows, writer_cells, result);
   } else {
     success = true;
     for (std::size_t run = 0; run < options.iterations && success; ++run)

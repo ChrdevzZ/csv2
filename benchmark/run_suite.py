@@ -21,7 +21,15 @@ from typing import Callable, Iterable, Sequence
 
 PROTOCOL = "csv2-common-v1"
 SCHEMA = "csv2-benchmark-report-v2"
-OPERATIONS = ("rows_cells", "legacy_mmap_rows_cells")
+OPERATIONS = (
+    "rows_cells",
+    "legacy_mmap_rows_cells",
+    "legacy_writer_raw",
+    "writer_raw_direct",
+    "writer_raw_streamable",
+    "writer_escaped_direct",
+    "writer_escaped_streamable",
+)
 SOURCES = ("buffer", "mmap")
 UINT64_MAX = (1 << 64) - 1
 INT64_MAX = (1 << 63) - 1
@@ -356,7 +364,12 @@ def validate_result(
     expected_bytes: int,
     expected_revision: str | None = None,
 ) -> float:
-    expected_scope = "traversal_only" if operation == "rows_cells" else "mmap_and_traversal"
+    if operation == "rows_cells":
+        expected_scope = "traversal_only"
+    elif operation == "legacy_mmap_rows_cells":
+        expected_scope = "mmap_and_traversal"
+    else:
+        expected_scope = "writer_only"
     expected = {
         "protocol": PROTOCOL,
         "operation": operation,

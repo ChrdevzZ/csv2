@@ -599,7 +599,11 @@ class RunSuiteTests(unittest.TestCase):
         return {
             "protocol": "csv2-common-v1",
             "revision": "same",
-            "operations": "rows_cells,legacy_mmap_rows_cells",
+            "operations": (
+                "rows_cells,legacy_mmap_rows_cells,legacy_writer_raw,"
+                "writer_raw_direct,writer_raw_streamable,writer_escaped_direct,"
+                "writer_escaped_streamable"
+            ),
             "sources": "buffer,mmap",
             "prepared_scope": "traversal_only",
             "legacy_scope": "mmap_and_traversal",
@@ -934,6 +938,13 @@ class RunSuiteTests(unittest.TestCase):
             RUN_SUITE.validate_result(
                 result, "rows_cells", "buffer", 1, expected_bytes=5
             )
+
+        writer = dict(result)
+        writer["operation"] = "writer_raw_direct"
+        writer["scope"] = "writer_only"
+        RUN_SUITE.validate_result(
+            writer, "writer_raw_direct", "buffer", 1, expected_bytes=4
+        )
 
     def test_calibration_requires_exact_candidate_and_dataset(self) -> None:
         context = {
