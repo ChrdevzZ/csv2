@@ -55,42 +55,13 @@ if(EXISTS "${CMAKE_BINARY_DIR}/conanbuildinfo.cmake")
     conan_basic_setup()
 endif()
 
-option(CSV2_BUILD_TESTS "Build csv2 tests + enable CTest" OFF)
-option(CSV2_BUILD_BENCHMARKS "Build csv2 benchmarks" OFF)
-option(CSV2_BUILD_FUZZERS "Build the Clang libFuzzer target" OFF)
-option(CSV2_ENABLE_SANITIZERS
-  "Enable AddressSanitizer and, where supported, UndefinedBehaviorSanitizer for tests" OFF)
+include(${CMAKE_CURRENT_LIST_DIR}/cmake/verification/Csv2VerificationOptions.cmake)
 
-# Keep every optional build matrix on one compiler/CMake-supported standard
-# list. CXX_STANDARD 20 and 23 were added in CMake 3.12 and 3.20 respectively.
-set(csv2_supported_standards)
-foreach(csv2_standard IN ITEMS 11 14 17)
-  if(cxx_std_${csv2_standard} IN_LIST CMAKE_CXX_COMPILE_FEATURES)
-    list(APPEND csv2_supported_standards ${csv2_standard})
-  endif()
-endforeach()
-if(CMAKE_VERSION VERSION_GREATER_EQUAL 3.12 AND
-   cxx_std_20 IN_LIST CMAKE_CXX_COMPILE_FEATURES)
-  list(APPEND csv2_supported_standards 20)
-endif()
-if(CMAKE_VERSION VERSION_GREATER_EQUAL 3.20 AND
-   cxx_std_23 IN_LIST CMAKE_CXX_COMPILE_FEATURES)
-  list(APPEND csv2_supported_standards 23)
+if(csv2_verification_enabled)
+  include(${CMAKE_CURRENT_LIST_DIR}/cmake/verification/Csv2VerificationStandards.cmake)
+  include(${CMAKE_CURRENT_LIST_DIR}/cmake/verification/Csv2VerificationTargetOptions.cmake)
 endif()
 
-function(csv2_filter_supported_standards output)
-  set(csv2_filtered_standards)
-  foreach(csv2_standard IN LISTS ARGN)
-    if(csv2_standard IN_LIST csv2_supported_standards)
-      list(APPEND csv2_filtered_standards ${csv2_standard})
-    endif()
-  endforeach()
-  set(${output} ${csv2_filtered_standards} PARENT_SCOPE)
-endfunction()
-
-if(CSV2_BUILD_FUZZERS AND NOT CSV2_BUILD_TESTS)
-  message(FATAL_ERROR "CSV2_BUILD_FUZZERS requires CSV2_BUILD_TESTS=ON")
-endif()
 if(CSV2_BUILD_FUZZERS AND NOT 20 IN_LIST csv2_supported_standards)
   message(FATAL_ERROR
     "CSV2_BUILD_FUZZERS requires CMake and a compiler with C++20 support")
@@ -106,10 +77,13 @@ target_include_directories(csv2 INTERFACE
   $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>
   $<BUILD_INTERFACE:${CMAKE_CURRENT_LIST_DIR}/include>)
 
-if(CSV2_BUILD_TESTS)
+if(CSV2_BUILD_TESTS OR CSV2_BUILD_FUZZERS OR CSV2_BUILD_BENCHMARK_CHECKS)
   if(CSV2_IS_TOP_LEVEL)
     enable_testing()
   endif()
+endif()
+
+if(CSV2_BUILD_TESTS OR CSV2_BUILD_FUZZERS)
   add_subdirectory(test)
 endif()
 

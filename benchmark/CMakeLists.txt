@@ -1,3 +1,5 @@
+cmake_minimum_required(VERSION 3.16)
+
 if(NOT 20 IN_LIST csv2_supported_standards)
   message(FATAL_ERROR
     "CSV2_BUILD_BENCHMARKS requires CMake and a compiler with C++20 support")
@@ -54,10 +56,8 @@ target_compile_definitions(csv2_common_benchmark PRIVATE
   CSV2_BENCHMARK_REVISION="${CSV2_BENCHMARK_REVISION}"
   CSV2_BENCHMARK_ENABLE_MODERN_WRITER_OPERATIONS=1
   CSV2_HAS_MMAP=${csv2_benchmark_mmap_value})
-set_target_properties(csv2_common_benchmark PROPERTIES
-  CXX_STANDARD 11
-  CXX_STANDARD_REQUIRED ON
-  CXX_EXTENSIONS OFF)
+csv2_set_test_standard(csv2_common_benchmark 11)
+csv2_enable_test_options(csv2_common_benchmark)
 target_compile_definitions(csv2_benchmark_allocations PRIVATE
   CSV2_BENCHMARK_ENABLE_ALLOCATION_TRACKING=1)
 foreach(target IN ITEMS csv2_benchmark csv2_benchmark_allocations)
@@ -65,13 +65,20 @@ foreach(target IN ITEMS csv2_benchmark csv2_benchmark_allocations)
   target_compile_definitions(${target} PRIVATE
     CSV2_BENCHMARK_REVISION="${CSV2_BENCHMARK_REVISION}"
     CSV2_HAS_MMAP=${csv2_benchmark_mmap_value})
-  set_target_properties(${target} PROPERTIES
-    CXX_STANDARD 20
-    CXX_STANDARD_REQUIRED ON
-    CXX_EXTENSIONS OFF)
+  csv2_set_test_standard(${target} 20)
+  csv2_enable_test_options(${target})
 endforeach()
 
-if(CSV2_BUILD_TESTS)
+if(CSV2_BUILD_BENCHMARK_CHECKS)
+  find_package(Python3 3.10 COMPONENTS Interpreter QUIET)
+  if(Python3_Interpreter_FOUND)
+    add_test(NAME csv2.benchmark.tooling_contract
+      COMMAND ${Python3_EXECUTABLE}
+        ${csv2_SOURCE_DIR}/benchmark/test_collect_metrics.py -v)
+    set_tests_properties(csv2.benchmark.tooling_contract PROPERTIES
+      LABELS benchmark-checksum)
+  endif()
+
   set(csv2_benchmark_fixture ${csv2_SOURCE_DIR}/test/inputs/test_01.csv)
   set(csv2_benchmark_mmap_fixture
       ${CMAKE_CURRENT_BINARY_DIR}/csv2_benchmark_fixture.csv)
