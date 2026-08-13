@@ -359,8 +359,9 @@ or LF and doubling embedded quotes. `quote_policy::always` quotes every field.
 Contiguous character fields are scanned and written in segments; other
 streamable values are first formatted with a copy of the destination stream's
 locale, flags, precision, and fill state, then escaped. A row with zero values
-writes one newline, as does a raw row containing one empty string, so those two
-raw shapes are not reversibly distinguishable.
+writes one newline, as does a raw or minimally quoted row containing one empty
+string, so those shapes are not reversibly distinguishable. Use
+`quote_policy::always` when that distinction must survive serialization.
 
 ### Writer API
 
