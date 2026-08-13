@@ -2453,6 +2453,18 @@ TEST_CASE("Write empty and forward-iterable rows" * test_suite("Writer")) {
   REQUIRE(output.str() == "\n\na,b\nx,y,z\n");
 }
 
+TEST_CASE("Preserve historical Writer record-byte delimiter policies" * test_suite("Writer")) {
+  std::ostringstream lf_output;
+  csv2::Writer<csv2::delimiter<'\n'>, std::ostringstream> lf_writer(lf_output);
+  lf_writer.write_row(std::vector<std::string>({"a", "b"}));
+  REQUIRE(lf_output.str() == "a\nb\n");
+
+  std::ostringstream cr_output;
+  csv2::Writer<csv2::delimiter<'\r'>, std::ostringstream> cr_writer(cr_output);
+  cr_writer.write_row(std::vector<std::string>({"a", "b"}));
+  REQUIRE(cr_output.str() == "a\rb\n");
+}
+
 TEST_CASE("Write ADL ranges and contiguous character fields directly" * test_suite("Writer")) {
   DirectWriteTrackingStream output;
   csv2::basic_writer<csv2::delimiter<','>, DirectWriteTrackingStream> writer(output);

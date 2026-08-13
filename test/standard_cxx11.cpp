@@ -69,8 +69,20 @@ static_assert(std::is_same<decltype(&cxx11_reader::Cell::template read_value<std
 template <template <class, class> class WriterTemplate> struct cxx11_writer_template_contract {};
 using cxx11_writer_template = cxx11_writer_template_contract<csv2::Writer>;
 using cxx11_writer = csv2::Writer<csv2::delimiter<','>, std::ofstream>;
+using cxx11_lf_writer = csv2::Writer<csv2::delimiter<'\n'>, std::ofstream>;
+using cxx11_cr_writer = csv2::Writer<csv2::delimiter<'\r'>, std::ofstream>;
+using cxx11_lf_escaping_writer = csv2::EscapingWriter<csv2::delimiter<'\n'>, std::ofstream>;
+using cxx11_cr_escaping_writer = csv2::EscapingWriter<csv2::delimiter<'\r'>, std::ofstream>;
 static_assert(std::is_convertible<std::ofstream &, cxx11_writer>::value,
               "the historical Writer stream constructor must remain implicit");
+static_assert(std::is_constructible<cxx11_lf_writer, std::ofstream &>::value,
+              "Writer must retain the historical LF delimiter instantiation");
+static_assert(std::is_constructible<cxx11_cr_writer, std::ofstream &>::value,
+              "Writer must retain the historical CR delimiter instantiation");
+static_assert(std::is_constructible<cxx11_lf_escaping_writer, std::ofstream &>::value,
+              "escaping writers must preserve the Writer delimiter type domain");
+static_assert(std::is_constructible<cxx11_cr_escaping_writer, std::ofstream &>::value,
+              "escaping writers must preserve the Writer delimiter type domain");
 static_assert(std::is_same<decltype(&cxx11_writer::close), void (cxx11_writer::*)()>::value,
               "the historical Writer close member must remain owned by Writer");
 #if CSV2_HAS_MMAP
