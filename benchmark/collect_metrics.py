@@ -20,6 +20,7 @@ from pathlib import Path
 
 
 COUNTER_FIELDS = ("cycles", "instructions", "branch_misses")
+HARDWARE_COUNTER_DOMAIN = "calling_thread_user_kernel"
 UINT64_MAX = (1 << 64) - 1
 SEMANTIC_FIELDS = (
     "revision",
@@ -52,6 +53,7 @@ REQUIRED_BENCHMARK_FIELDS = {
     "source",
     "allocation_tracking",
     "hardware_counter_scope",
+    "hardware_counter_domain",
     *INTEGER_FIELDS,
     *FLOAT_FIELDS,
 }
@@ -232,6 +234,15 @@ def validate_benchmark_result(
             "benchmark hardware counter scope mismatch: "
             f"expected {expected_counter_scope}, got {values.get('hardware_counter_scope')}"
         )
+    expected_counter_domain = (
+        HARDWARE_COUNTER_DOMAIN if track_hardware_counters else "disabled"
+    )
+    if values.get("hardware_counter_domain") != expected_counter_domain:
+        raise RuntimeError(
+            "benchmark hardware counter domain mismatch: "
+            f"expected {expected_counter_domain}, "
+            f"got {values.get('hardware_counter_domain')}"
+        )
     if track_hardware_counters:
         if (
             numeric["hardware_counter_time_enabled"] <= 0
@@ -323,6 +334,10 @@ def summarize_counter_samples(
         require_matching_semantics(reference, sample, "hardware counter tracking")
         if sample.get("hardware_counter_scope") != "timed_operation":
             raise RuntimeError("hardware counters must cover timed_operation")
+        if sample.get("hardware_counter_domain") != HARDWARE_COUNTER_DOMAIN:
+            raise RuntimeError(
+                "hardware counters must cover the calling thread in user and kernel mode"
+            )
         time_enabled = int(sample["hardware_counter_time_enabled"])
         time_running = int(sample["hardware_counter_time_running"])
         if time_enabled <= 0 or time_running <= 0:
@@ -347,6 +362,7 @@ def summarize_counter_samples(
 
     return {
         "scope": "timed_operation",
+        "domain": HARDWARE_COUNTER_DOMAIN,
         "runs": len(normalized),
         "samples": normalized,
         "median": {name: statistics.median(data) for name, data in values.items()},

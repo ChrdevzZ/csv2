@@ -167,8 +167,13 @@ summary numbers without that report are not reproducible results.
 On Linux, `collect_metrics.py` records operation-scoped hardware counters,
 cycles/byte, instructions/byte, branch misses, peak RSS, allocation counts, and
 executable text/data/BSS sizes. The benchmark enables its `perf_event_open`
-group only around the same operation measured by the throughput timer. Peak
-RSS is labeled `whole_process` because it includes source preparation.
+group only around the same operation measured by the throughput timer. Counters
+cover the calling thread in both user and kernel mode (hypervisor execution is
+excluded), so `map_only` includes its mapping syscalls rather than reporting a
+user-space fragment as the complete operation. The fixed machine must permit
+kernel-inclusive per-thread counters; collection fails instead of silently
+falling back to user-only data. Peak RSS is labeled `whole_process` because it
+includes source preparation.
 
 The JSON retains every raw counter sample and multiplexing scale plus machine
 identity, best-effort CPU identity and its source, compiler, flags, revision,

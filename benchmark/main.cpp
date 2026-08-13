@@ -121,7 +121,9 @@ class HardwareCounterGroup {
     attributes.size = sizeof(attributes);
     attributes.config = config;
     attributes.disabled = disabled ? 1 : 0;
-    attributes.exclude_kernel = 1;
+    // Mapping work crosses into the kernel. Keep kernel execution in the same
+    // calling-thread domain so map_only counters cover the complete timed work.
+    attributes.exclude_kernel = 0;
     attributes.exclude_hv = 1;
     attributes.read_format =
         PERF_FORMAT_GROUP | PERF_FORMAT_TOTAL_TIME_ENABLED | PERF_FORMAT_TOTAL_TIME_RUNNING;
@@ -667,6 +669,9 @@ int main(int argc, char **argv) {
             << " allocated_bytes=" << csv2_benchmark_allocation::bytes
             << (options.track_hardware_counters ? " hardware_counter_scope=timed_operation"
                                                 : " hardware_counter_scope=disabled")
+            << (options.track_hardware_counters
+                    ? " hardware_counter_domain=calling_thread_user_kernel"
+                    : " hardware_counter_domain=disabled")
             << " hardware_counter_time_enabled=" << hardware_counter_result.time_enabled
             << " hardware_counter_time_running=" << hardware_counter_result.time_running
             << " cycles=" << hardware_counter_result.cycles
