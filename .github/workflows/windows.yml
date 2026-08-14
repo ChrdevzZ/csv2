@@ -91,6 +91,7 @@ jobs:
           -DCSV2_BUILD_BENCHMARKS=${{ matrix.benchmarks }}
           -DCSV2_BUILD_BENCHMARK_CHECKS=${{ matrix.benchmarks }}
           -DCSV2_VERIFICATION_PROFILE=quick
+          -DCSV2_REQUIRE_PYTHON_AUDITS=ON
           -DCSV2_ENABLE_SANITIZERS=${{ matrix.sanitizers }}
           -DCSV2_REQUIRE_MODERN_STANDARD_TESTS=ON
           -DCSV2_REQUIRE_CXX26_TESTS=${{ matrix.require_cxx26 }}

@@ -42,6 +42,7 @@ jobs:
           -DCSV2_BUILD_BENCHMARKS=ON
           -DCSV2_BUILD_BENCHMARK_CHECKS=ON
           -DCSV2_VERIFICATION_PROFILE=quick
+          -DCSV2_REQUIRE_PYTHON_AUDITS=ON
           -DCSV2_REQUIRE_MODERN_STANDARD_TESTS=ON
           -DCSV2_REQUIRE_CXX26_TESTS=ON
           -DCSV2_CI_EXPECTED_COMPILER_ID=GNU
@@ -54,7 +55,8 @@ jobs:
             -DCMAKE_CXX_COMPILER=g++-14 \
             -DCMAKE_CXX_COMPILE_FEATURES=cxx_std_11 \
             -DCSV2_BUILD_TESTS=ON \
-            -DCSV2_BUILD_BENCHMARKS=OFF
+            -DCSV2_BUILD_BENCHMARKS=OFF \
+            -DCSV2_REQUIRE_PYTHON_AUDITS=ON
           cmake --build build-reduced --target \
             csv2_test csv2_single_header_test \
             csv2_standard_contract_module_cxx11 \
@@ -70,6 +72,15 @@ jobs:
 
       - name: Test
         run: ctest --test-dir build --output-on-failure --output-junit ctest.xml
+
+      - name: Verify Release LTO observer and checksum semantics
+        run: |
+          cmake --build build --target csv2_benchmark_observer_audit --parallel
+          grep -Eq -- '-flto(=| |$)' build/build.ninja
+          ctest --test-dir build \
+            -R '^csv2\.benchmark\.current\.observer_audit\.' \
+            --no-tests=error --output-on-failure \
+            --output-junit observer-lto.xml
 
       - name: Install package
         run: cmake --install build --prefix build/install
@@ -108,7 +119,9 @@ jobs:
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: linux-gcc14-ctest
-          path: build/ctest.xml
+          path: |
+            build/ctest.xml
+            build/observer-lto.xml
           if-no-files-found: error
 
   gcc-sanitizers:
@@ -130,6 +143,7 @@ jobs:
           -DCSV2_BUILD_TESTS=ON
           -DCSV2_BUILD_BENCHMARKS=OFF
           -DCSV2_VERIFICATION_PROFILE=quick
+          -DCSV2_REQUIRE_PYTHON_AUDITS=ON
           -DCSV2_ENABLE_SANITIZERS=ON
           -DCSV2_REQUIRE_MODERN_STANDARD_TESTS=ON
           -DCSV2_REQUIRE_CXX26_TESTS=ON
@@ -190,6 +204,7 @@ jobs:
           -DCSV2_BUILD_BENCHMARKS=${{ matrix.benchmarks }}
           -DCSV2_BUILD_BENCHMARK_CHECKS=${{ matrix.benchmarks }}
           -DCSV2_VERIFICATION_PROFILE=quick
+          -DCSV2_REQUIRE_PYTHON_AUDITS=ON
           -DCSV2_ENABLE_SANITIZERS=${{ matrix.sanitizers }}
           -DCSV2_REQUIRE_MODERN_STANDARD_TESTS=ON
           -DCSV2_REQUIRE_CXX26_TESTS=ON

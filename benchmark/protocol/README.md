@@ -1,59 +1,74 @@
 # Benchmark protocols
 
-CSV2 benchmark artifacts are deliberately versioned and are never converted
-implicitly. A consumer must reject every unknown or older value.
+CSV2 benchmark artifacts are versioned contracts. Producers and consumers
+reject unknown and older versions; there is no implicit migration path.
 
 | Contract | Version | Purpose |
-|---|---|---|
-| common driver wire | `csv2-common-v2` | one C++11 comparison result per process |
+| --- | --- | --- |
+| common driver wire | `csv2-common-v3` | one self-described C++11 comparison result |
 | current verify wire | `csv2-current-v2` | exact checksum and allocation verification |
-| comparison report | `csv2-benchmark-report-v3` | paired A/A or A/B samples and decisions |
-| fixed-machine metrics | `csv2-fixed-machine-metrics-v3` | timing, PMU, RSS, size, and provenance |
+| build manifest | `csv2-benchmark-build-v1` | immutable source and audited build identity |
+| comparison report | `csv2-benchmark-report-v4` | paired A/A or A/B samples and decisions |
+| fixed-machine metrics | `csv2-fixed-machine-metrics-v4` | timing, PMU, RSS, size, and provenance |
+| artifact manifest | `csv2-artifact-manifest-v2` | report, build, and tool-bundle digests |
 
-Wire output is a single whitespace-separated line of unique `key=value`
-fields. Integer checksum fields are decimal `uint64_t`; they are not transported
-through floating-point benchmark counters. Report writers use a unique
-same-directory temporary file, flush and fsync it, then atomically replace the
-destination.
+Wire output is one whitespace-separated line of unique `key=value` fields.
+Integer checksums are canonical decimal `uint64_t`; they never pass through a
+floating-point benchmark counter. A failed or unsupported kernel returns a
+nonzero process status and does not emit a success wire.
 
-The JSON schemas in `schemas/` close and define the stable top-level contract.
-Producers also run the standard-library semantic validators in `protocol.py`
-before publishing a completed report; those validators enforce cross-field
-revision, lifecycle, run-count, affinity, calibration, and evidence rules that
-JSON Schema cannot express concisely. Producers may add data only inside
-explicitly extensible objects; a schema version change is required for
-incompatible meaning or required-field changes.
+JSON producers validate both the closed schemas in `schemas/` and the
+standard-library semantic rules in `tools/csv2bench/protocol.py`. The semantic
+layer enforces lifecycle, revision, owned-build, calibration, affinity,
+sample-count, verification, allocation, timing, PMU, RSS, code-size, and build
+evidence relationships that are awkward to express in JSON Schema. New fields
+are allowed only in objects explicitly marked extensible.
 
-## Producer and consumer rules
+## Build ownership and identity
 
-`csv2-common-v2` and `csv2-current-v2` are process-local verification wires.
-They use canonical unsigned decimal fields, reject duplicate or unknown
-required keys, and return a nonzero status for malformed arguments, semantic
-mismatch, or an allocation-contract failure. Timing output is deliberately a
-separate Google Benchmark JSON document.
+`csv2-benchmark-build-v1` has two kinds:
 
-`csv2-benchmark-report-v3` binds the common driver, both executables, exact
-revisions, selected datasets, compiler context, host identity, every raw launch,
-the complete Python tool source bundle, and derived paired statistics. Its
-lifecycle is `running` → `completed` or
-`failed`; a calibration consumer accepts only a completed A/A report with a
-matching context.
+- `common-driver` exports the exact header tree and the candidate adapter from
+  immutable Git blobs, rejects links and unsafe paths, and records every blob
+  OID/hash, the compiler path/hash/version, full and normalized argv, build
+  output, and executable hash.
+- `current-tree` exports the complete candidate tree, creates an isolated
+  CMake/Ninja Release build, and audits the File API codemodel,
+  `compile_commands.json`, target compile groups, include roots, revision
+  definition, link commands, executables, and generated corpus manifest.
 
-`csv2-fixed-machine-metrics-v3` binds the current-tree executable, allocation
-executable, collector, dataset, revision, compiler context, semantic verify,
-timing samples, and the requested PMU/RSS/size/build measurements. Controlled
-reports bind the compiler executable and `compile_commands.json`, cannot omit
-any requested PMU counter, RSS, size, clean-build timing, or untimed generated
-corpus restoration evidence, and are not decision-eligible until successful
-completion.
+The tools re-read Git objects and all build inputs before completion. A build
+identity digest omits incidental workspace paths but includes every semantic
+input and output. Baseline and candidate common drivers must use equivalent
+normalized commands apart from the declared revision/include/output slots.
 
-Every completed report is accompanied by `csv2-artifact-manifest-v1`, which
-records the report path and SHA-256. Producers canonicalize and hash every
-input before use, reject output aliases, revalidate inputs before completion,
-and publish with a same-directory atomic replace. These checks prevent a report
-from describing one artifact while executing or overwriting another.
+Owned builds are the default. `--external-artifacts` is an explicit legacy
+escape hatch restricted to `exploratory`; it can never make a report
+decision-eligible.
 
-An `exploratory` report is never decision-eligible. A `controlled` comparison
-must also satisfy the runner's minimum repetitions, affinity, and A/A
-calibration contracts. Protocol validity establishes provenance and semantics;
-it does not by itself prove stable hardware conditions.
+## Reports
+
+`csv2-benchmark-report-v4` embeds both common-driver build manifests, exact
+artifacts and descriptions, operation scope/source contracts, datasets, host,
+compiler context, complete Python runner bundle, launch order, raw samples,
+and derived statistics. A/B accepts only a completed A/A report with the same
+candidate build identity, runner/adapter bundle, datasets, affinity, flags,
+run count, warmups, and iterations.
+
+`csv2-fixed-machine-metrics-v4` embeds the owned current-tree build manifest
+and binds semantic verification, allocation verification, Google Benchmark
+samples, PMU counters, peak RSS, code size, and clean isolated build timing.
+Controlled reports require cycles, instructions, branch misses, RSS, size,
+positive warmup, at least 20 repetitions, exact affinity, and complete
+invocation records.
+
+Report lifecycle is `running` to `completed` or `failed`. Only a completed,
+owned, controlled document satisfying every semantic gate may set
+`decision_eligible=true`. Protocol validity proves the recorded artifact and
+measurement relationship; it does not independently prove that a machine is
+thermally or operationally stable.
+
+Every completed report is accompanied by `csv2-artifact-manifest-v2`. Writers
+reject direct, symlink, and hardlink output aliases, create a unique temporary
+file in the destination directory, flush and fsync it, atomically replace the
+destination, and then publish the bound SHA-256 manifest.

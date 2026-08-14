@@ -55,6 +55,7 @@ jobs:
           -DCSV2_BUILD_BENCHMARK_CHECKS=ON
           -DCSV2_BUILD_FUZZERS=${{ matrix.fuzzers }}
           -DCSV2_VERIFICATION_PROFILE=full
+          -DCSV2_REQUIRE_PYTHON_AUDITS=ON
           -DCSV2_REQUIRE_MODERN_STANDARD_TESTS=ON
           -DCSV2_REQUIRE_CXX26_TESTS=ON
           -DCSV2_CI_EXPECTED_COMPILER_ID=${{ matrix.expected_id }}
@@ -127,6 +128,7 @@ jobs:
           -DCSV2_BUILD_BENCHMARK_CHECKS=ON
           -DCSV2_BUILD_FUZZERS=OFF
           -DCSV2_VERIFICATION_PROFILE=full
+          -DCSV2_REQUIRE_PYTHON_AUDITS=ON
           -DCSV2_REQUIRE_MODERN_STANDARD_TESTS=ON
           -DCSV2_REQUIRE_CXX26_TESTS=OFF
           -DCSV2_CI_EXPECTED_COMPILER_ID=MSVC
@@ -194,6 +196,7 @@ jobs:
           -DCSV2_BUILD_BENCHMARK_CHECKS=ON
           -DCSV2_BUILD_FUZZERS=OFF
           -DCSV2_VERIFICATION_PROFILE=full
+          -DCSV2_REQUIRE_PYTHON_AUDITS=ON
           -DCSV2_REQUIRE_MODERN_STANDARD_TESTS=ON
           -DCSV2_REQUIRE_CXX26_TESTS=ON
           -DCSV2_CI_EXPECTED_COMPILER_ID=AppleClang
@@ -250,6 +253,7 @@ jobs:
           -DCMAKE_EXE_LINKER_FLAGS="-fprofile-instr-generate"
           -DCSV2_BUILD_TESTS=ON
           -DCSV2_VERIFICATION_PROFILE=quick
+          -DCSV2_REQUIRE_PYTHON_AUDITS=ON
 
       - name: Build and run C++20 modular runtime coverage
         env:

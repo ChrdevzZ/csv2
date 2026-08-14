@@ -28,6 +28,7 @@ cmake -S . -B build-benchmark -G Ninja \
   -DCMAKE_BUILD_TYPE=Release \
   -DCSV2_BUILD_BENCHMARKS=ON \
   -DCSV2_BUILD_BENCHMARK_CHECKS=ON \
+  -DCSV2_REQUIRE_PYTHON_AUDITS=ON \
   -DCSV2_VERIFICATION_PROFILE=quick \
   -DCSV2_BENCHMARK_REVISION="$(git rev-parse HEAD)"
 cmake --build build-benchmark --parallel
@@ -36,10 +37,12 @@ ctest --test-dir build-benchmark -L benchmark-checksum \
 ```
 
 `CSV2_BUILD_BENCHMARK_CHECKS` controls CTest registration and requires
-benchmarks to be enabled. With checks off, the two benchmark executables and
-common driver still build; Python is not required. The current benchmark uses
-C++23 when available and otherwise C++20. Google Benchmark itself is built as
-C++17 and is never installed or exported.
+benchmarks to be enabled. With checks off, the benchmark executables and common
+driver still build. A quick local configuration may proceed without Python but
+prints every skipped Python audit; full/perf and
+`CSV2_REQUIRE_PYTHON_AUDITS=ON` require Python 3.10+. The current benchmark
+uses C++23 when available and otherwise C++20. Google Benchmark itself is built
+as C++17 and is never installed or exported.
 
 ## Current-tree operation registry
 
@@ -60,19 +63,30 @@ configuration.
 
 `file-read` measures opening and reading the file. `mmap-open` measures a fresh
 mapping; `mmap-touch` touches one byte per page and the final byte of an
-already prepared mapping. All parsing, traversal, extraction, validation,
-conversion, ranges, index, and writer inputs are prepared before timing.
-Reused extraction buffers and Writer output capacity are also reserved before
-timing.
+already prepared mapping. Each operation declares source compatibility and a
+preparation bitmask. `Context` materializes only that state: source/traversal
+kernels do not decode Writer rows or allocate Writer buffers, and `mmap-open`
+does not pre-map its input. Reused extraction buffers and Writer output capacity
+are reserved before timing only for operations that need them.
 
 Writer direct kernels pass contiguous strings; streamable kernels use a
 non-owning wrapper with an explicit inserter. Both escaped paths consume the
 same predecoded rows, so CSV decoding is measured only by extraction kernels.
 Writer checksum calculation happens after timing. The current-tree registry
 uses distinct timed and verification function pointers, so checksum branches
-and row/cell metadata traversal cannot enter timed kernels. The common driver
-likewise writes into a preallocated fixed buffer and asserts that its checksum
-mixer is never called while the timer is active.
+and row/cell metadata traversal cannot enter timed kernels. Every timed kernel
+also passes its live local result through an inline `TimedObserver`: scalars
+use `DoNotOptimize`, while live contiguous memory escapes its pointer/size
+before `ClobberMemory`. A dedicated Release IPO/LTO audit proves that each
+affected kernel observes a value or memory. The common driver likewise writes
+into a preallocated fixed buffer and asserts that its checksum mixer is never
+called while the timer is active.
+
+Kernel failures are explicit. Input open/read/change, mmap, parse, output
+overflow, and output-stream errors carry a `KernelStatus` plus native error
+code. Verify/list/timing fail when no operation/source pair matches; verify
+never emits a success wire for a failed kernel, timing uses `SkipWithError`,
+and the metrics parser rejects skipped/error Google Benchmark records.
 
 Google Benchmark reports input-corpus bytes through `SetBytesProcessed` for
 all operations. Exact operation/output bytes are a separate counter. This
@@ -161,77 +175,64 @@ the default build and does not start a timing run.
 
 ## Cross-revision common driver
 
-Never compare two revisions' historical benchmark programs. Compile the same
-candidate `benchmark/compare/common_driver.cpp`, compiler, and flags against
-both exact header archives. The driver emits `csv2-common-v2` and supports
-`rows_cells`, `legacy_writer_raw`, and `legacy_mmap_rows_cells`. Define
-`CSV2_BENCHMARK_ENABLE_MODERN_WRITER_OPERATIONS=1` on both sides only when both
-header revisions support the four modern Writer operations.
+Never compare two revisions' historical benchmark programs. The owned-build
+pipeline exports the same candidate `benchmark/compare/common_driver.cpp` and
+each exact header tree directly from immutable Git blobs, then compiles both
+with one audited compiler and normalized command. It rejects links, unsafe
+paths, dirty-worktree substitution, mismatched flags, and output drift.
 
-```bash
-BASE="$(git merge-base master HEAD)"
-CANDIDATE="$(git rev-parse HEAD)"
-COMPARE="build-benchmark/compare"
-mkdir -p "$COMPARE/base" "$COMPARE/candidate" "$COMPARE/bin"
-git archive "$BASE" include | tar -x -C "$COMPARE/base"
-git archive "$CANDIDATE" include | tar -x -C "$COMPARE/candidate"
-
-c++ -std=c++11 -O3 -DNDEBUG -I"$COMPARE/base/include" \
-  -DCSV2_BENCHMARK_REVISION=\"$BASE\" \
-  benchmark/compare/common_driver.cpp -o "$COMPARE/bin/baseline"
-c++ -std=c++11 -O3 -DNDEBUG -I"$COMPARE/candidate/include" \
-  -DCSV2_BENCHMARK_REVISION=\"$CANDIDATE\" \
-  benchmark/compare/common_driver.cpp -o "$COMPARE/bin/candidate"
-```
-
-The driver prepares buffer traversal and Writer rows outside its timer.
-`legacy_mmap_rows_cells` intentionally maps and traverses inside the measured
-scope to reproduce the old positional benchmark. Each operation performs an
-untimed semantic checksum; a mismatch prevents a performance decision.
+The driver emits `csv2-common-v3`. Its `--describe` wire assigns every
+operation an explicit scope and supported source set. `rows_cells` is
+`traversal_only`; Writer operations are `writer_only` and consume pointer/length
+row views prepared before timing; `legacy_mmap_rows_cells` is explicitly
+`mmap_and_traversal`. Direct and streamable Writer variants must agree on
+checksum, rows, and cells. Each operation performs an untimed semantic
+checksum; a mismatch prevents a performance decision.
 
 ## Comparison pipeline
 
 `run_suite.py` is a compatibility wrapper around `tools/csv2bench/runner.py`.
-It resolves every executable, adapter, dataset, calibration, and output path;
-rejects direct, symlink, and hardlink output aliases; hashes all artifacts;
-revalidates them after measurement; and checkpoints reports with a unique
-same-directory temporary file plus atomic replace.
+Owned mode is the default: the tool resolves commits, exports and builds both
+drivers, embeds `csv2-benchmark-build-v1` manifests, revalidates all Git/build/
+dataset/tool inputs, rejects output aliases, and atomically publishes a v4
+report plus its v2 artifact manifest. External executables require
+`--external-artifacts` and are restricted to exploratory evidence.
 
 Run an A/A calibration first, then A/B with the same context:
 
 ```bash
+BASE="$(git merge-base master HEAD)"
+CANDIDATE="$(git rev-parse HEAD)"
+CXX="$(command -v c++)"
+
 python3 benchmark/run_suite.py \
-  --baseline "$COMPARE/bin/candidate" \
-  --candidate "$COMPARE/bin/candidate" \
-  --baseline-revision "$CANDIDATE" \
-  --candidate-revision "$CANDIDATE" \
-  --adapter-source benchmark/compare/common_driver.cpp \
-  --datasets build-benchmark/corpus/fixtures \
+  --repository . \
+  --baseline-ref "$CANDIDATE" --candidate-ref "$CANDIDATE" \
+  --build-root build-benchmark/owned-aa \
+  --compiler-executable "$CXX" \
+  --compiler-flags='-std=c++11 -O3 -DNDEBUG' \
+  --datasets benchmark/datasets/fixtures \
   --operations rows_cells,legacy_writer_raw \
   --sources buffer,mmap \
   --files short_unquoted.csv,quote_heavy.csv,multiline.csv,crlf.csv \
   --runs 20 --warmups 3 --iterations 10 --mode aa \
   --evidence-level controlled --cpu-affinity 0 \
-  --compiler "$(c++ --version | head -1)" \
-  --compiler-flags='-std=c++11 -O3 -DNDEBUG' \
-  --output "$COMPARE/aa.json"
+  --output build-benchmark/aa.json
 
 python3 benchmark/run_suite.py \
-  --baseline "$COMPARE/bin/baseline" \
-  --candidate "$COMPARE/bin/candidate" \
-  --baseline-revision "$BASE" \
-  --candidate-revision "$CANDIDATE" \
-  --adapter-source benchmark/compare/common_driver.cpp \
-  --datasets build-benchmark/corpus/fixtures \
+  --repository . \
+  --baseline-ref "$BASE" --candidate-ref "$CANDIDATE" \
+  --build-root build-benchmark/owned-ab \
+  --compiler-executable "$CXX" \
+  --compiler-flags='-std=c++11 -O3 -DNDEBUG' \
+  --datasets benchmark/datasets/fixtures \
   --operations rows_cells,legacy_writer_raw \
   --sources buffer,mmap \
   --files short_unquoted.csv,quote_heavy.csv,multiline.csv,crlf.csv \
   --runs 20 --warmups 3 --iterations 10 --mode compare \
-  --calibration "$COMPARE/aa.json" \
+  --calibration build-benchmark/aa.json \
   --evidence-level controlled --cpu-affinity 0 \
-  --compiler "$(c++ --version | head -1)" \
-  --compiler-flags='-std=c++11 -O3 -DNDEBUG' \
-  --output "$COMPARE/ab.json"
+  --output build-benchmark/ab.json
 ```
 
 Run the process itself under the declared affinity, for example
@@ -247,45 +248,37 @@ parity.
 
 ## Fixed-machine metrics
 
-`collect_metrics.py` independently verifies the exact current-tree wire before
-accepting timing JSON. It can record allocations, Google Benchmark real-time
-samples, Linux PMU counters, peak RSS, executable text/data/BSS sizes, and an
-optional clean-build duration:
+`collect_metrics.py` exports the full candidate Git tree, configures an
+isolated CMake/Ninja Release build, and audits its File API codemodel,
+target-specific compile commands, include roots, revision definition, link
+commands, executables, and corpus before accepting timing JSON. It records
+allocations, Google Benchmark real-time samples, Linux PMU counters, peak RSS,
+text/data/BSS sizes, and clean owned-build duration:
 
 ```bash
 taskset -c 0 python3 benchmark/collect_metrics.py \
-  --executable build-benchmark/benchmark/current/csv2_benchmark \
-  --allocation-executable \
-    build-benchmark/benchmark/current/csv2_benchmark_allocations \
-  --revision "$CANDIDATE" \
-  --compiler "$(c++ --version | head -1)" \
-  --compiler-flags='-O3 -DNDEBUG' \
+  --repository . --candidate-ref "$CANDIDATE" \
+  --build-root build-benchmark/current-owned --corpus-scale 100 \
   --compiler-executable "$(command -v c++)" \
-  --compile-commands build-benchmark/compile_commands.json \
+  --compiler-flags='-O3 -DNDEBUG' \
   --operation traversal/rows-cells \
-  --input build-benchmark/corpus/fixtures/short_unquoted.csv \
+  --input short_unquoted.csv \
   --source buffer --runs 20 \
   --minimum-time 0.5s --warmup-seconds 0.5 \
   --evidence-level controlled --cpu-affinity 0 \
-  --build-command \
-    'cmake --build build-benchmark --target csv2_benchmark csv2_benchmark_allocations --clean-first --parallel' \
-  --post-build-command \
-    'cmake --build build-benchmark --target csv2_benchmark_corpus' \
   --output build-benchmark/fixed-machine.json
 ```
 
 Controlled metrics currently require Linux, at least 20 repetitions, matching
 CPU affinity, positive warmup, a libpfm-enabled Google Benchmark build, and
 complete cycles/instructions/branch-misses plus RSS/size and clean-build timing
-collection. The untimed post-build command must regenerate and check
-`csv2_benchmark_corpus` after `--clean-first`, so corpus generation does not
-pollute compilation time while the measured input and uploaded manifest remain
-available. The wire revision must exactly match `--revision`. The
-declared compiler executable and the hashed `compile_commands.json` must agree,
-binding the report to the actual current-tree build. Both pipelines hash their
-entry point and complete imported Python helper closure as one deterministic
-source bundle; A/B rejects an A/A calibration produced by a different bundle.
-`--skip-pmu`, `--skip-rss`, and `--skip-size` are smoke-only relaxations.
+collection. Corpus generation is untimed and its checked manifest remains part
+of the owned build identity. The current wire revision, source Git commit,
+codemodel, compile/link commands, compiler executable, and output hashes must
+all agree. Both pipelines hash their entry point and complete imported Python
+helper closure as one deterministic source bundle; A/B rejects an A/A
+calibration produced by a different bundle. `--skip-pmu`, `--skip-rss`, and
+`--skip-size` are exploratory smoke-only relaxations.
 
 ## Evidence classes and protocols
 
@@ -295,15 +288,17 @@ source bundle; A/B rejects an A/A calibration produced by a different bundle.
   calibration, three or more warmups, and at least 20 paired runs. Only a
   completed controlled report is decision-eligible.
 
-The fixed contracts are `csv2-common-v2`, `csv2-current-v2`,
-`csv2-benchmark-report-v3`, and `csv2-fixed-machine-metrics-v3`. Older or
+The fixed contracts are `csv2-common-v3`, `csv2-current-v2`,
+`csv2-benchmark-build-v1`, `csv2-benchmark-report-v4`,
+`csv2-fixed-machine-metrics-v4`, and `csv2-artifact-manifest-v2`. Older or
 unknown versions are rejected rather than converted. Every completed JSON has
-a sibling SHA-256 artifact manifest. See
+a sibling v2 SHA-256 artifact manifest. See
 [`protocol/README.md`](protocol/README.md) for the wire boundary and schemas.
 
 The manual `Performance evidence` workflow produces exploratory artifacts on
 a hosted runner or controlled artifacts only on a self-hosted runner carrying
-the `csv2-perf` label. When `candidate_ref` is supplied, the workflow checks
-out that revision before building the current-tree benchmark and verifies the
-resolved source `HEAD` against the report revision. This Stage B infrastructure
-change makes no library performance claim.
+the `csv2-perf` label. It checks out the exact candidate, verifies `HEAD`, then
+uses only the owned-build APIs for common drivers and current-tree metrics; no
+workflow-local archive/compile path can stamp unrelated sources as that
+revision. This Stage B infrastructure change makes no library performance
+claim.

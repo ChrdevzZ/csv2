@@ -14,14 +14,14 @@ on:
         default: ""
         type: string
       runs:
-        description: Paired runs/repetitions (controlled requires at least 20)
+        description: Paired runs/repetitions
         required: true
-        default: "5"
+        default: "20"
         type: string
       files:
         description: Corpus filenames or all
         required: true
-        default: small_startup.csv,short_unquoted.csv,quote_heavy.csv,multiline.csv,crlf.csv
+        default: all
         type: string
       corpus_scale:
         description: Deterministic corpus row multiplier
@@ -49,16 +49,16 @@ jobs:
     if: inputs.evidence == 'exploratory'
     name: Perf / exploratory / hosted Linux
     runs-on: ubuntu-24.04
-    timeout-minutes: 60
+    timeout-minutes: 90
     steps:
-      - name: Check out candidate repository
+      - name: Check out exact candidate repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ inputs.candidate_ref || github.sha }}
           fetch-depth: 0
           persist-credentials: false
 
-      - name: Resolve immutable revisions and build shared drivers
+      - name: Resolve immutable revisions
         env:
           BASELINE_INPUT: ${{ inputs.baseline_ref }}
           CANDIDATE_INPUT: ${{ inputs.candidate_ref }}
@@ -69,91 +69,82 @@ jobs:
           requested_candidate=$(git rev-parse "${candidate_input}^{commit}")
           candidate=$(git rev-parse 'HEAD^{commit}')
           test "$candidate" = "$requested_candidate"
-          printf 'BASELINE_SHA=%s\nCANDIDATE_SHA=%s\n' "$baseline" "$candidate" >> "$GITHUB_ENV"
-          mkdir -p build-perf/baseline build-perf/candidate build-perf/bin build-perf/reports
-          git archive "$baseline" include | tar -x -C build-perf/baseline
-          git archive "$candidate" include | tar -x -C build-perf/candidate
-          /usr/bin/time -v -o build-perf/reports/common-baseline-build.txt \
-            g++-14 -std=c++11 -O3 -DNDEBUG \
-            -Ibuild-perf/baseline/include benchmark/compare/common_driver.cpp \
-            "-DCSV2_BENCHMARK_REVISION=\"$baseline\"" \
-            -o build-perf/bin/baseline
-          /usr/bin/time -v -o build-perf/reports/common-candidate-build.txt \
-            g++-14 -std=c++11 -O3 -DNDEBUG \
-            -Ibuild-perf/candidate/include benchmark/compare/common_driver.cpp \
-            "-DCSV2_BENCHMARK_REVISION=\"$candidate\"" \
-            -o build-perf/bin/candidate
+          git cat-file -e "${baseline}^{commit}"
+          printf 'BASELINE_SHA=%s\nCANDIDATE_SHA=%s\n' \
+            "$baseline" "$candidate" >> "$GITHUB_ENV"
+          mkdir -p build-perf/reports
 
-      - name: Build current-tree benchmark
+      - name: Collect exploratory current-tree metrics from owned build
         env:
+          RUNS: ${{ inputs.runs }}
           CORPUS_SCALE: ${{ inputs.corpus_scale }}
         run: |
-          cmake -S . -B build-current -G Ninja \
-            -DCMAKE_BUILD_TYPE=Release \
-            -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
-            -DCMAKE_CXX_COMPILER=g++-14 \
-            -DCSV2_BUILD_BENCHMARKS=ON \
-            -DCSV2_BUILD_BENCHMARK_CHECKS=ON \
-            -DCSV2_VERIFICATION_PROFILE=perf \
-            -DCSV2_BENCHMARK_CORPUS_SCALE="$CORPUS_SCALE" \
-            -DCSV2_BENCHMARK_REVISION="$CANDIDATE_SHA"
-          cmake --build build-current --parallel
-          cp build-current/compile_commands.json build-perf/reports/compile_commands.json
-          cmake --build build-current --target csv2_benchmark_corpus
-          ctest --test-dir build-current -L benchmark-checksum \
-            --no-tests=error --output-on-failure \
+          python3 benchmark/collect_metrics.py \
+            --repository . --candidate-ref "$CANDIDATE_SHA" \
+            --build-root build-perf/current-owned \
+            --corpus-scale "$CORPUS_SCALE" \
+            --compiler-executable "$(command -v g++-14)" \
+            --compiler-flags="-O3 -DNDEBUG" \
+            --operation traversal/rows-cells \
+            --input short_unquoted.csv --source buffer --runs "$RUNS" \
+            --minimum-time 0.1s --warmup-seconds 0.1 \
+            --evidence-level exploratory --skip-pmu \
+            --output build-perf/reports/current-metrics.json
+
+      - name: Verify owned current-tree checksums and corpus
+        run: |
+          test -s build-perf/current-owned/build/benchmark-corpus/manifest.json
+          cmake --build build-perf/current-owned/build --parallel
+          ctest --test-dir build-perf/current-owned/build \
+            -L benchmark-checksum --no-tests=error --output-on-failure \
             --output-junit "$GITHUB_WORKSPACE/build-perf/reports/benchmark-checksum.xml"
 
-      - name: Collect exploratory A/A and A/B reports
+      - name: Collect exploratory owned A/A and A/B reports
         env:
           RUNS: ${{ inputs.runs }}
           FILES: ${{ inputs.files }}
         run: |
+          datasets=build-perf/current-owned/build/benchmark-corpus/fixtures
+          compiler=$(command -v g++-14)
           python3 benchmark/run_suite.py \
-            --baseline build-perf/bin/candidate \
-            --candidate build-perf/bin/candidate \
-            --baseline-revision "$CANDIDATE_SHA" \
-            --candidate-revision "$CANDIDATE_SHA" \
-            --datasets build-current/benchmark-corpus/fixtures \
-            --runs "$RUNS" --warmups 3 --iterations 10 \
+            --repository . \
+            --baseline-ref "$CANDIDATE_SHA" \
+            --candidate-ref "$CANDIDATE_SHA" \
+            --build-root build-perf/common-aa \
+            --compiler-executable "$compiler" \
+            --compiler-flags="-std=c++11 -O3 -DNDEBUG" \
+            --datasets "$datasets" --runs "$RUNS" --warmups 3 --iterations 10 \
             --operations rows_cells,legacy_writer_raw \
             --sources buffer,mmap --files "$FILES" --mode aa \
             --evidence-level exploratory \
-            --compiler "GCC 14" --compiler-flags="-std=c++11 -O3 -DNDEBUG" \
             --output build-perf/reports/aa.json
           python3 benchmark/run_suite.py \
-            --baseline build-perf/bin/baseline \
-            --candidate build-perf/bin/candidate \
-            --baseline-revision "$BASELINE_SHA" \
-            --candidate-revision "$CANDIDATE_SHA" \
-            --datasets build-current/benchmark-corpus/fixtures \
-            --runs "$RUNS" --warmups 3 --iterations 10 \
+            --repository . \
+            --baseline-ref "$BASELINE_SHA" \
+            --candidate-ref "$CANDIDATE_SHA" \
+            --build-root build-perf/common-ab \
+            --compiler-executable "$compiler" \
+            --compiler-flags="-std=c++11 -O3 -DNDEBUG" \
+            --datasets "$datasets" --runs "$RUNS" --warmups 3 --iterations 10 \
             --operations rows_cells,legacy_writer_raw \
             --sources buffer,mmap --files "$FILES" --mode compare \
             --calibration build-perf/reports/aa.json \
             --evidence-level exploratory \
-            --compiler "GCC 14" --compiler-flags="-std=c++11 -O3 -DNDEBUG" \
             --output build-perf/reports/ab.json
 
-      - name: Collect exploratory current-tree metrics
-        env:
-          RUNS: ${{ inputs.runs }}
-        run: >-
-          python3 benchmark/collect_metrics.py
-          --executable build-current/benchmark/current/csv2_benchmark
-          --allocation-executable
-          build-current/benchmark/current/csv2_benchmark_allocations
-          --revision "$CANDIDATE_SHA"
-          --compiler "GCC 14"
-          --compiler-flags=-O3
-          --compiler-executable "$(command -v g++-14)"
-          --compile-commands build-perf/reports/compile_commands.json
-          --operation traversal/rows-cells
-          --input build-current/benchmark-corpus/fixtures/short_unquoted.csv
-          --source buffer --runs "$RUNS"
-          --minimum-time 0.1s --warmup-seconds 0.1
-          --evidence-level exploratory --skip-pmu
-          --output build-perf/reports/current-metrics.json
+      - name: Verify exploratory evidence bundle
+        run: |
+          for artifact in \
+            build-perf/reports/aa.json \
+            build-perf/reports/aa.json.sha256.json \
+            build-perf/reports/ab.json \
+            build-perf/reports/ab.json.sha256.json \
+            build-perf/reports/current-metrics.json \
+            build-perf/reports/current-metrics.json.sha256.json \
+            build-perf/reports/benchmark-checksum.xml \
+            build-perf/current-owned/build/benchmark-corpus/manifest.json; do
+            test -s "$artifact"
+          done
 
       - name: Upload exploratory evidence
         if: always()
@@ -162,23 +153,23 @@ jobs:
           name: csv2-perf-exploratory-${{ github.run_id }}
           path: |
             build-perf/reports
-            build-current/benchmark-corpus/manifest.json
+            build-perf/current-owned/build/benchmark-corpus/manifest.json
           if-no-files-found: error
 
   controlled:
     if: inputs.evidence == 'controlled'
     name: Perf / controlled / csv2-perf runner
     runs-on: [self-hosted, linux, x64, csv2-perf]
-    timeout-minutes: 120
+    timeout-minutes: 180
     steps:
-      - name: Check out candidate repository
+      - name: Check out exact candidate repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ inputs.candidate_ref || github.sha }}
           fetch-depth: 0
           persist-credentials: false
 
-      - name: Validate controlled runner and resolve revisions
+      - name: Validate runner and resolve immutable revisions
         env:
           BASELINE_INPUT: ${{ inputs.baseline_ref }}
           CANDIDATE_INPUT: ${{ inputs.candidate_ref }}
@@ -193,102 +184,84 @@ jobs:
           requested_candidate=$(git rev-parse "${candidate_input}^{commit}")
           candidate=$(git rev-parse 'HEAD^{commit}')
           test "$candidate" = "$requested_candidate"
-          printf 'BASELINE_SHA=%s\nCANDIDATE_SHA=%s\n' "$baseline" "$candidate" >> "$GITHUB_ENV"
-          mkdir -p build-perf/baseline build-perf/candidate build-perf/bin build-perf/reports
-          git archive "$baseline" include | tar -x -C build-perf/baseline
-          git archive "$candidate" include | tar -x -C build-perf/candidate
-          /usr/bin/time -v -o build-perf/reports/common-baseline-build.txt \
-            g++ -std=c++11 -O3 -DNDEBUG \
-            -Ibuild-perf/baseline/include benchmark/compare/common_driver.cpp \
-            "-DCSV2_BENCHMARK_REVISION=\"$baseline\"" \
-            -o build-perf/bin/baseline
-          /usr/bin/time -v -o build-perf/reports/common-candidate-build.txt \
-            g++ -std=c++11 -O3 -DNDEBUG \
-            -Ibuild-perf/candidate/include benchmark/compare/common_driver.cpp \
-            "-DCSV2_BENCHMARK_REVISION=\"$candidate\"" \
-            -o build-perf/bin/candidate
+          git cat-file -e "${baseline}^{commit}"
+          printf 'BASELINE_SHA=%s\nCANDIDATE_SHA=%s\n' \
+            "$baseline" "$candidate" >> "$GITHUB_ENV"
+          mkdir -p build-perf/reports
 
-      - name: Build current-tree benchmark
+      - name: Collect controlled current-tree metrics from owned build
         env:
+          RUNS: ${{ inputs.runs }}
           CORPUS_SCALE: ${{ inputs.corpus_scale }}
         run: |
-          cmake -S . -B build-current -G Ninja \
-            -DCMAKE_BUILD_TYPE=Release \
-            -DCMAKE_CXX_COMPILER="$(command -v g++)" \
-            -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
-            -DCSV2_BUILD_BENCHMARKS=ON \
-            -DCSV2_BUILD_BENCHMARK_CHECKS=ON \
-            -DCSV2_VERIFICATION_PROFILE=perf \
-            -DCSV2_BENCHMARK_CORPUS_SCALE="$CORPUS_SCALE" \
-            -DCSV2_BENCHMARK_REVISION="$CANDIDATE_SHA"
-          cmake --build build-current --parallel
-          grep -q 'BENCHMARK_ENABLE_LIBPFM:BOOL=ON' build-current/CMakeCache.txt
-          cp build-current/compile_commands.json build-perf/reports/compile_commands.json
-          cmake --build build-current --target csv2_benchmark_corpus
-          ctest --test-dir build-current -L benchmark-checksum \
-            --no-tests=error --output-on-failure \
+          taskset -c 0 python3 benchmark/collect_metrics.py \
+            --repository . --candidate-ref "$CANDIDATE_SHA" \
+            --build-root build-perf/current-owned \
+            --corpus-scale "$CORPUS_SCALE" \
+            --compiler-executable "$(command -v g++)" \
+            --compiler-flags="-O3 -DNDEBUG" \
+            --operation traversal/rows-cells \
+            --input short_unquoted.csv --source buffer --runs "$RUNS" \
+            --minimum-time 0.5s --warmup-seconds 0.5 \
+            --evidence-level controlled --cpu-affinity 0 \
+            --output build-perf/reports/current-metrics.json
+          grep -q 'BENCHMARK_ENABLE_LIBPFM:BOOL=ON' \
+            build-perf/current-owned/build/CMakeCache.txt
+
+      - name: Verify owned current-tree checksums and corpus
+        run: |
+          test -s build-perf/current-owned/build/benchmark-corpus/manifest.json
+          cmake --build build-perf/current-owned/build --parallel
+          ctest --test-dir build-perf/current-owned/build \
+            -L benchmark-checksum --no-tests=error --output-on-failure \
             --output-junit "$GITHUB_WORKSPACE/build-perf/reports/benchmark-checksum.xml"
 
-      - name: Collect controlled A/A and A/B reports
+      - name: Collect controlled owned A/A and A/B reports
         env:
           RUNS: ${{ inputs.runs }}
           FILES: ${{ inputs.files }}
         run: |
+          datasets=build-perf/current-owned/build/benchmark-corpus/fixtures
+          compiler=$(command -v g++)
           taskset -c 0 python3 benchmark/run_suite.py \
-            --baseline build-perf/bin/candidate \
-            --candidate build-perf/bin/candidate \
-            --baseline-revision "$CANDIDATE_SHA" \
-            --candidate-revision "$CANDIDATE_SHA" \
-            --datasets build-current/benchmark-corpus/fixtures \
-            --runs "$RUNS" --warmups 3 --iterations 10 \
+            --repository . \
+            --baseline-ref "$CANDIDATE_SHA" \
+            --candidate-ref "$CANDIDATE_SHA" \
+            --build-root build-perf/common-aa \
+            --compiler-executable "$compiler" \
+            --compiler-flags="-std=c++11 -O3 -DNDEBUG" \
+            --datasets "$datasets" --runs "$RUNS" --warmups 3 --iterations 10 \
             --operations rows_cells,legacy_writer_raw \
             --sources buffer,mmap --files "$FILES" --mode aa \
             --evidence-level controlled --cpu-affinity 0 \
-            --compiler "$(g++ --version | head -1)" \
-            --compiler-flags="-std=c++11 -O3 -DNDEBUG" \
             --output build-perf/reports/aa.json
           taskset -c 0 python3 benchmark/run_suite.py \
-            --baseline build-perf/bin/baseline \
-            --candidate build-perf/bin/candidate \
-            --baseline-revision "$BASELINE_SHA" \
-            --candidate-revision "$CANDIDATE_SHA" \
-            --datasets build-current/benchmark-corpus/fixtures \
-            --runs "$RUNS" --warmups 3 --iterations 10 \
+            --repository . \
+            --baseline-ref "$BASELINE_SHA" \
+            --candidate-ref "$CANDIDATE_SHA" \
+            --build-root build-perf/common-ab \
+            --compiler-executable "$compiler" \
+            --compiler-flags="-std=c++11 -O3 -DNDEBUG" \
+            --datasets "$datasets" --runs "$RUNS" --warmups 3 --iterations 10 \
             --operations rows_cells,legacy_writer_raw \
             --sources buffer,mmap --files "$FILES" --mode compare \
             --calibration build-perf/reports/aa.json \
             --evidence-level controlled --cpu-affinity 0 \
-            --compiler "$(g++ --version | head -1)" \
-            --compiler-flags="-std=c++11 -O3 -DNDEBUG" \
             --output build-perf/reports/ab.json
 
-      - name: Collect controlled fixed-machine metrics
-        env:
-          RUNS: ${{ inputs.runs }}
-        run: >-
-          taskset -c 0 python3 benchmark/collect_metrics.py
-          --executable build-current/benchmark/current/csv2_benchmark
-          --allocation-executable
-          build-current/benchmark/current/csv2_benchmark_allocations
-          --revision "$CANDIDATE_SHA"
-          --compiler "$(g++ --version | head -1)"
-          --compiler-flags=-O3
-          --compiler-executable "$(command -v g++)"
-          --compile-commands build-perf/reports/compile_commands.json
-          --operation traversal/rows-cells
-          --input build-current/benchmark-corpus/fixtures/short_unquoted.csv
-          --source buffer --runs "$RUNS"
-          --minimum-time 0.5s --warmup-seconds 0.5
-          --evidence-level controlled --cpu-affinity 0
-          --build-command
-          "cmake --build build-current --target csv2_benchmark
-          csv2_benchmark_allocations --clean-first --parallel"
-          --post-build-command
-          "cmake --build build-current --target csv2_benchmark_corpus"
-          --output build-perf/reports/current-metrics.json
-
-      - name: Verify controlled corpus artifact
-        run: test -s build-current/benchmark-corpus/manifest.json
+      - name: Verify controlled evidence bundle
+        run: |
+          for artifact in \
+            build-perf/reports/aa.json \
+            build-perf/reports/aa.json.sha256.json \
+            build-perf/reports/ab.json \
+            build-perf/reports/ab.json.sha256.json \
+            build-perf/reports/current-metrics.json \
+            build-perf/reports/current-metrics.json.sha256.json \
+            build-perf/reports/benchmark-checksum.xml \
+            build-perf/current-owned/build/benchmark-corpus/manifest.json; do
+            test -s "$artifact"
+          done
 
       - name: Upload controlled evidence
         if: always()
@@ -297,5 +270,5 @@ jobs:
           name: csv2-perf-controlled-${{ github.run_id }}
           path: |
             build-perf/reports
-            build-current/benchmark-corpus/manifest.json
+            build-perf/current-owned/build/benchmark-corpus/manifest.json
           if-no-files-found: error
