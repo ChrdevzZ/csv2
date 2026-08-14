@@ -9,3 +9,30 @@ add_library(csv2_minitest STATIC minitest.cpp)
 target_link_libraries(csv2_minitest PUBLIC csv2_test_support)
 csv2_set_test_standard(csv2_minitest 11)
 csv2_enable_test_options(csv2_minitest)
+
+set(csv2_minitest_capacity_source
+  "${CMAKE_CURRENT_BINARY_DIR}/minitest_registry_capacity.cpp")
+file(WRITE "${csv2_minitest_capacity_source}"
+  "#include <csv2_test/case_registry.hpp>\n\n"
+  "namespace {\nint executed = 0;\n")
+foreach(case_index RANGE 0 599)
+  file(APPEND "${csv2_minitest_capacity_source}"
+    "void case_${case_index}() { ++executed; }\n"
+    "csv2_test::registrar registrar_${case_index}(\"registry.capacity.${case_index}\", \"registry.capacity\", &case_${case_index});\n")
+endforeach()
+file(APPEND "${csv2_minitest_capacity_source}"
+  "} // namespace\n\n"
+  "int main() {\n"
+  "  const int result = csv2_test::run_registered_tests(\"registry.capacity\");\n"
+  "  return result == 0 && executed == 600 ? 0 : 1;\n"
+  "}\n")
+
+add_executable(csv2_minitest_registry_capacity
+  "${csv2_minitest_capacity_source}")
+target_link_libraries(csv2_minitest_registry_capacity PRIVATE csv2_minitest)
+csv2_set_test_standard(csv2_minitest_registry_capacity 11)
+csv2_enable_test_options(csv2_minitest_registry_capacity)
+add_test(NAME csv2.minitest.registry_capacity
+  COMMAND csv2_minitest_registry_capacity)
+set_tests_properties(csv2.minitest.registry_capacity PROPERTIES
+  LABELS "minitest;sanitizer-runtime;verification" TIMEOUT 10)

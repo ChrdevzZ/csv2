@@ -32,27 +32,34 @@ std::vector<std::string> split_fields(const std::uint8_t *data, std::size_t size
   return fields;
 }
 
+bool decodes_as_exactly_one_row(const std::string &encoded,
+                                const std::vector<std::string> &expected) {
+  fuzz_reader reader;
+  if (!reader.parse_borrowed(encoded.data(), encoded.size()))
+    return false;
+  csv2::parse_error error;
+  if (!reader.validate(error))
+    return false;
+
+  fuzz_reader::RowIterator row = reader.begin();
+  if (row == reader.end())
+    return false;
+  std::vector<std::string> actual;
+  for (const fuzz_reader::Cell cell : *row) {
+    std::string value;
+    cell.copy_content_to(std::back_inserter(value));
+    actual.push_back(value);
+  }
+  ++row;
+  return row == reader.end() && actual == expected;
+}
+
 bool roundtrip(const std::vector<std::string> &expected) {
   std::ostringstream output;
   csv2::EscapingWriter<csv2::delimiter<','>, std::ostringstream, csv2::stream_ownership::leave_open>
       writer(output);
   writer.write_row(expected);
-  const std::string encoded = output.str();
-
-  fuzz_reader reader;
-  if (!reader.parse_borrowed(encoded.data(), encoded.size()))
-    return false;
-  csv2::parse_error error;
-  if (!reader.validate(error) || reader.begin() == reader.end())
-    return false;
-
-  std::vector<std::string> actual;
-  for (const fuzz_reader::Cell cell : *reader.begin()) {
-    std::string value;
-    cell.copy_content_to(std::back_inserter(value));
-    actual.push_back(value);
-  }
-  return actual == expected;
+  return decodes_as_exactly_one_row(output.str(), expected);
 }
 
 } // namespace
@@ -77,6 +84,10 @@ int main() {
                                lengths[index]) != 0)
       return 1;
   }
+
+  std::vector<std::string> one_row(1, "first");
+  if (decodes_as_exactly_one_row("first\nsecond\n", one_row))
+    return 1;
 
   std::vector<std::uint8_t> generated(512);
   std::uint32_t state = 0x57525452u;

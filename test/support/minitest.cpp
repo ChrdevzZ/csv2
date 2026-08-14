@@ -19,18 +19,11 @@ int &failure_count() {
 } // namespace
 
 registrar::registrar(const char *id, const char *domain, test_function function) {
-  static test_case cases[512];
-  static std::size_t count = 0;
-  if (count >= sizeof(cases) / sizeof(cases[0])) {
-    std::cerr << "csv2 minitest registry capacity exceeded\n";
-    return;
-  }
-  test_case &entry = cases[count++];
-  entry.id = id;
-  entry.domain = domain;
-  entry.function = function;
-  entry.next = registry_head();
-  registry_head() = &entry;
+  entry_.id = id;
+  entry_.domain = domain;
+  entry_.function = function;
+  entry_.next = registry_head();
+  registry_head() = &entry_;
 }
 
 void record_failure(const char *expression, const char *file, int line) {
