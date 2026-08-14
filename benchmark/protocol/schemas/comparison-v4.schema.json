@@ -96,7 +96,16 @@
         "artifact": {"$ref": "#/$defs/revision_artifact"},
         "build": {
           "oneOf": [
-            {"$ref": "build-v1.schema.json"},
+            {
+              "allOf": [
+                {"$ref": "build-v1.schema.json"},
+                {
+                  "type": "object",
+                  "required": ["kind"],
+                  "properties": {"kind": {"const": "common-driver"}}
+                }
+              ]
+            },
             {"type": "null"}
           ]
         },
@@ -266,8 +275,26 @@
       },
       "then": {
         "properties": {
-          "baseline": {"properties": {"build": {"$ref": "build-v1.schema.json"}}},
-          "candidate": {"properties": {"build": {"$ref": "build-v1.schema.json"}}}
+          "baseline": {
+            "properties": {
+              "build": {
+                "allOf": [
+                  {"$ref": "build-v1.schema.json"},
+                  {"properties": {"kind": {"const": "common-driver"}}}
+                ]
+              }
+            }
+          },
+          "candidate": {
+            "properties": {
+              "build": {
+                "allOf": [
+                  {"$ref": "build-v1.schema.json"},
+                  {"properties": {"kind": {"const": "common-driver"}}}
+                ]
+              }
+            }
+          }
         }
       },
       "else": {

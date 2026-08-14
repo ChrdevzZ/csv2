@@ -2,33 +2,79 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "build-v1.schema.json",
   "title": "CSV2 audited benchmark build v1",
-  "type": "object",
-  "required": [
-    "schema", "kind", "generated_at_utc", "revision", "header_export",
-    "adapter_export", "compiler", "compiler_flags", "argv", "normalized_argv",
-    "build_log", "output", "identity_digest", "digest"
+  "oneOf": [
+    {"$ref": "#/$defs/common_driver"},
+    {"$ref": "#/$defs/current_tree"}
   ],
-  "properties": {
-    "schema": {"const": "csv2-benchmark-build-v1"},
-    "kind": {"const": "common-driver"},
-    "generated_at_utc": {"type": "string", "minLength": 1},
-    "revision": {"$ref": "#/$defs/object_id"},
-    "header_export": {"$ref": "#/$defs/git_export"},
-    "adapter_export": {"$ref": "#/$defs/git_export"},
-    "compiler": {"$ref": "#/$defs/compiler"},
-    "compiler_flags": {
-      "type": "array",
-      "items": {"type": "string", "minLength": 1}
-    },
-    "argv": {"$ref": "#/$defs/argv"},
-    "normalized_argv": {"$ref": "#/$defs/argv"},
-    "build_log": {"$ref": "#/$defs/process_result"},
-    "output": {"$ref": "#/$defs/revision_artifact"},
-    "identity_digest": {"$ref": "#/$defs/sha256"},
-    "digest": {"$ref": "#/$defs/sha256"}
-  },
-  "additionalProperties": false,
   "$defs": {
+    "common_driver": {
+      "type": "object",
+      "required": [
+        "schema", "kind", "generated_at_utc", "revision", "header_export",
+        "adapter_export", "compiler", "compiler_flags", "argv", "normalized_argv",
+        "build_log", "output", "identity_digest", "digest"
+      ],
+      "properties": {
+        "schema": {"const": "csv2-benchmark-build-v1"},
+        "kind": {"const": "common-driver"},
+        "generated_at_utc": {"type": "string", "minLength": 1},
+        "revision": {"$ref": "#/$defs/object_id"},
+        "header_export": {"$ref": "#/$defs/git_export"},
+        "adapter_export": {"$ref": "#/$defs/git_export"},
+        "compiler": {"$ref": "#/$defs/compiler"},
+        "compiler_flags": {"$ref": "#/$defs/compiler_flags"},
+        "argv": {"$ref": "#/$defs/argv"},
+        "normalized_argv": {"$ref": "#/$defs/argv"},
+        "build_log": {"$ref": "#/$defs/process_result"},
+        "output": {"$ref": "#/$defs/revision_artifact"},
+        "identity_digest": {"$ref": "#/$defs/sha256"},
+        "digest": {"$ref": "#/$defs/sha256"}
+      },
+      "additionalProperties": false
+    },
+    "current_tree": {
+      "type": "object",
+      "required": [
+        "schema", "kind", "generated_at_utc", "revision", "source_export",
+        "compiler", "compiler_flags", "cmake", "ninja", "configure_argv",
+        "normalized_configure_argv", "build_argv", "configure_log", "build_log",
+        "file_api", "compile_commands", "targets", "corpus_manifest",
+        "source_root", "build_root", "identity_digest", "digest"
+      ],
+      "properties": {
+        "schema": {"const": "csv2-benchmark-build-v1"},
+        "kind": {"const": "current-tree"},
+        "generated_at_utc": {"type": "string", "minLength": 1},
+        "revision": {"$ref": "#/$defs/object_id"},
+        "source_export": {"$ref": "#/$defs/git_export"},
+        "compiler": {"$ref": "#/$defs/compiler"},
+        "compiler_flags": {"$ref": "#/$defs/compiler_flags"},
+        "cmake": {"$ref": "#/$defs/compiler"},
+        "ninja": {"$ref": "#/$defs/compiler"},
+        "configure_argv": {"$ref": "#/$defs/argv"},
+        "normalized_configure_argv": {"$ref": "#/$defs/argv"},
+        "build_argv": {"$ref": "#/$defs/argv"},
+        "configure_log": {"$ref": "#/$defs/timed_process_result"},
+        "build_log": {"$ref": "#/$defs/timed_process_result"},
+        "file_api": {"type": "object"},
+        "compile_commands": {"$ref": "#/$defs/artifact"},
+        "targets": {
+          "type": "object",
+          "required": ["csv2_benchmark", "csv2_benchmark_allocations"],
+          "properties": {
+            "csv2_benchmark": {"$ref": "#/$defs/revision_artifact"},
+            "csv2_benchmark_allocations": {"$ref": "#/$defs/revision_artifact"}
+          },
+          "additionalProperties": false
+        },
+        "corpus_manifest": {"$ref": "#/$defs/artifact"},
+        "source_root": {"type": "string", "minLength": 1},
+        "build_root": {"type": "string", "minLength": 1},
+        "identity_digest": {"$ref": "#/$defs/sha256"},
+        "digest": {"$ref": "#/$defs/sha256"}
+      },
+      "additionalProperties": false
+    },
     "object_id": {
       "type": "string",
       "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$"
@@ -38,6 +84,11 @@
       "pattern": "^[0-9a-f]{64}$"
     },
     "argv": {
+      "type": "array",
+      "minItems": 1,
+      "items": {"type": "string", "minLength": 1}
+    },
+    "compiler_flags": {
       "type": "array",
       "minItems": 1,
       "items": {"type": "string", "minLength": 1}
@@ -107,6 +158,17 @@
       "required": ["returncode", "stdout", "stderr"],
       "properties": {
         "returncode": {"const": 0},
+        "stdout": {"type": "string"},
+        "stderr": {"type": "string"}
+      },
+      "additionalProperties": false
+    },
+    "timed_process_result": {
+      "type": "object",
+      "required": ["returncode", "seconds", "stdout", "stderr"],
+      "properties": {
+        "returncode": {"const": 0},
+        "seconds": {"type": "number", "exclusiveMinimum": 0},
         "stdout": {"type": "string"},
         "stderr": {"type": "string"}
       },

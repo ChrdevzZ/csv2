@@ -250,8 +250,11 @@ parity.
 
 `collect_metrics.py` exports the full candidate Git tree, configures an
 isolated CMake/Ninja Release build, and audits its File API codemodel,
-target-specific compile commands, include roots, revision definition, link
-commands, executables, and corpus before accepting timing JSON. It records
+target-specific compile commands, include roots, revision definition,
+caller-supplied compiler flags, link commands, executables, and corpus before
+accepting timing JSON. Owned metrics require a non-empty native
+`--compiler-flags` value; those flags are applied to both Release targets and
+are not descriptive metadata. It records
 allocations, Google Benchmark real-time samples, Linux PMU counters, peak RSS,
 text/data/BSS sizes, and clean owned-build duration:
 
