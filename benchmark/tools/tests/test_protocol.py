@@ -5,6 +5,8 @@ import unittest
 from pathlib import Path
 
 import _support  # noqa: F401
+from _schema_subset import ValidationError as SchemaValidationError
+from _schema_subset import validate as validate_schema
 from csv2bench import builds, protocol
 
 
@@ -27,6 +29,27 @@ def bundle() -> dict[str, object]:
         "revision": "tool-bundle",
         "sha256": "b" * 64,
         "files": [artifact()],
+    }
+
+
+def fixed_metrics_manifest(*, owned: bool = False) -> dict[str, object]:
+    identities = {
+        "collector": bundle(),
+        "executable": artifact("candidate"),
+        "allocation_executable": artifact("candidate"),
+        "dataset": artifact(),
+    }
+    if owned:
+        identities["compiler_executable"] = artifact()
+        identities["compile_commands"] = artifact()
+    return {
+        "schema": "csv2-artifact-manifest-v2",
+        "kind": "fixed-metrics",
+        "report": artifact(),
+        "inputs": {
+            "artifacts": identities,
+            "build": "c" * 64 if owned else None,
+        },
     }
 
 
@@ -586,9 +609,70 @@ class ProtocolTests(unittest.TestCase):
             },
         }
         protocol.validate_artifact_manifest(manifest)
+        schema_root = Path(__file__).resolve().parents[2] / "protocol" / "schemas"
+        schema = json.loads(
+            (schema_root / "artifact-manifest-v2.schema.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        validate_schema(manifest, schema)
         manifest["schema"] = "csv2-artifact-manifest-v1"
         with self.assertRaisesRegex(RuntimeError, "unsupported schema"):
             protocol.validate_artifact_manifest(manifest)
+
+    def test_fixed_metrics_artifact_manifest_is_closed_and_complete(self) -> None:
+        schema_root = Path(__file__).resolve().parents[2] / "protocol" / "schemas"
+        schema = json.loads(
+            (schema_root / "artifact-manifest-v2.schema.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        for owned in (False, True):
+            with self.subTest(owned=owned):
+                manifest = fixed_metrics_manifest(owned=owned)
+                protocol.validate_artifact_manifest(manifest)
+                validate_schema(manifest, schema)
+
+        structural_mutations = {
+            "unknown input": lambda value: value["inputs"].__setitem__(
+                "unexpected", True
+            ),
+            "empty artifacts": lambda value: value["inputs"].__setitem__(
+                "artifacts", {}
+            ),
+            "missing collector": lambda value: value["inputs"]["artifacts"].pop(
+                "collector"
+            ),
+            "unknown artifact": lambda value: value["inputs"]["artifacts"].__setitem__(
+                "unexpected", artifact()
+            ),
+            "invalid digest": lambda value: value["inputs"]["artifacts"][
+                "dataset"
+            ].__setitem__("sha256", "not-a-digest"),
+            "compiler without commands": lambda value: value["inputs"][
+                "artifacts"
+            ].__setitem__("compiler_executable", artifact()),
+        }
+        for label, mutate in structural_mutations.items():
+            with self.subTest(label=label):
+                manifest = fixed_metrics_manifest()
+                mutate(manifest)
+                with self.assertRaises(RuntimeError):
+                    protocol.validate_artifact_manifest(manifest)
+                with self.assertRaises(SchemaValidationError):
+                    validate_schema(manifest, schema)
+
+        manifest = fixed_metrics_manifest()
+        manifest["inputs"]["artifacts"]["allocation_executable"]["revision"] = "other"
+        with self.assertRaisesRegex(RuntimeError, "revisions are inconsistent"):
+            protocol.validate_artifact_manifest(manifest)
+
+        manifest = fixed_metrics_manifest()
+        manifest["inputs"]["build"] = "c" * 64
+        with self.assertRaisesRegex(RuntimeError, "requires compiler artifacts"):
+            protocol.validate_artifact_manifest(manifest)
+        with self.assertRaises(SchemaValidationError):
+            validate_schema(manifest, schema)
 
     def test_comparison_uses_declared_operation_contracts(self) -> None:
         report = comparison_report()
@@ -623,6 +707,23 @@ class ProtocolTests(unittest.TestCase):
         self.assertFalse(build["$defs"]["common_driver"]["additionalProperties"])
         self.assertFalse(build["$defs"]["current_tree"]["additionalProperties"])
         self.assertFalse(artifact_manifest["additionalProperties"])
+        self.assertEqual(len(artifact_manifest["oneOf"]), 2)
+        self.assertFalse(
+            artifact_manifest["$defs"]["fixed_metrics_inputs"][
+                "additionalProperties"
+            ]
+        )
+        self.assertFalse(
+            artifact_manifest["$defs"]["fixed_metrics_artifacts"][
+                "additionalProperties"
+            ]
+        )
+        self.assertEqual(
+            artifact_manifest["$defs"]["fixed_metrics_artifacts"][
+                "dependentRequired"
+            ]["compiler_executable"],
+            ["compile_commands"],
+        )
         self.assertEqual(comparison["properties"]["schema"]["const"], "csv2-benchmark-report-v4")
         self.assertEqual(metrics["properties"]["schema"]["const"], "csv2-fixed-machine-metrics-v4")
         self.assertEqual(

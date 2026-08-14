@@ -77,4 +77,8 @@ thermally or operationally stable.
 Every completed report is accompanied by `csv2-artifact-manifest-v2`. Writers
 reject direct, symlink, and hardlink output aliases, create a unique temporary
 file in the destination directory, flush and fsync it, atomically replace the
-destination, and then publish the bound SHA-256 manifest.
+destination, and then publish the bound SHA-256 manifest. A fixed-metrics
+manifest closes and validates the collector source bundle, timing and
+allocation executables, dataset, and (for an owned build) the paired compiler
+executable and compile-command artifacts. The two benchmark executables must
+declare the same revision, and every recorded digest is canonical SHA-256.
