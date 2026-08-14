@@ -41,6 +41,10 @@ The tools re-read Git objects and all build inputs before completion. A build
 identity digest omits incidental workspace paths but includes every semantic
 input and output. Baseline and candidate common drivers must use equivalent
 normalized commands apart from the declared revision/include/output slots.
+MSVC common-driver builds add deterministic path mapping and reproducible
+linking arguments so the same Git objects retain one audited identity across
+separate A/A and A/B workspaces; those arguments remain visible in the build
+manifest.
 
 Owned builds are the default. `--external-artifacts` is an explicit legacy
 escape hatch restricted to `exploratory`; it can never make a report

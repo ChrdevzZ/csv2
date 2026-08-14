@@ -426,9 +426,21 @@ def compile_common_driver(
     revision_definition = f'CSV2_BENCHMARK_REVISION="{revision}"'
     modern_definition = "CSV2_BENCHMARK_ENABLE_MODERN_WRITER_OPERATIONS=1"
     if msvc:
+        lower_flags = {flag.lower() for flag in compiler_flags}
+        reproducibility_flags = [
+            *(
+                []
+                if "/experimental:deterministic" in lower_flags
+                else ["/experimental:deterministic"]
+            ),
+            f"/pathmap:{adapter_root}=/_csv2/adapter",
+            f"/pathmap:{header_root}=/_csv2/source",
+            *([] if "/brepro" in lower_flags else ["/Brepro"]),
+        ]
         command = [
             str(compiler),
             *compiler_flags,
+            *reproducibility_flags,
             f"/D{revision_definition}",
             *([f"/D{modern_definition}"] if enable_modern_writer_operations else []),
             f"/I{include_root}",
@@ -475,6 +487,8 @@ def compile_common_driver(
     normalized_argv = normalize_build_argv(
         command,
         (
+            (str(header_root), "{header_root}"),
+            (str(adapter_root), "{adapter_root}"),
             (str(include_root), "{include_root}"),
             (str(adapter_source), "{adapter_source}"),
             (str(temporary_output), "{output}"),
@@ -591,6 +605,19 @@ def validate_build_manifest(manifest: dict[str, object]) -> None:
     for placeholder in ("{revision}", "{include_root}", "{adapter_source}", "{output}"):
         if placeholder not in normalized_text:
             raise RuntimeError(f"build command is missing normalized {placeholder}")
+    if compiler_path.name.lower() in {"cl", "cl.exe"}:
+        required_msvc_arguments = {
+            "/experimental:deterministic",
+            "/Brepro",
+            "/pathmap:{header_root}=/_csv2/source",
+            "/pathmap:{adapter_root}=/_csv2/adapter",
+        }
+        missing = required_msvc_arguments.difference(normalized_argv)
+        if missing:
+            raise RuntimeError(
+                "MSVC build command is missing reproducibility arguments: "
+                + ", ".join(sorted(missing))
+            )
     build_log = manifest["build_log"]
     if (
         not isinstance(build_log, dict)
