@@ -17,6 +17,12 @@ struct test_case {
 class registrar {
 public:
   registrar(const char *id, const char *domain, test_function function);
+
+private:
+  registrar(const registrar &);
+  registrar &operator=(const registrar &);
+
+  test_case entry_;
 };
 
 void record_failure(const char *expression, const char *file, int line);
