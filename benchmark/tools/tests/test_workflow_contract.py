@@ -90,6 +90,14 @@ class WorkflowContractTests(unittest.TestCase):
         self.assertNotIn("cmake -S . -B", perf)
         self.assertIn("benchmark/collect_metrics.py", perf)
 
+    def test_fuzz_benchmark_builds_observer_audit_for_each_checksum_suite(self) -> None:
+        workflow = (
+            BENCHMARK_DIR.parent / ".github" / "workflows" / "fuzz-benchmark.yml"
+        ).read_text(encoding="utf-8")
+
+        self.assertEqual(workflow.count("csv2_benchmark_observer_audit"), 2)
+        self.assertEqual(workflow.count("-L benchmark-checksum"), 2)
+
 
 if __name__ == "__main__":
     unittest.main()
