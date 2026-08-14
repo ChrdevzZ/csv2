@@ -4,11 +4,11 @@
 #include <csv2/mio.hpp>
 #endif
 
+#include <cerrno>
 #include <fstream>
 #include <iterator>
 #include <string>
 #include <system_error>
-#include <cerrno>
 
 #if CSV2_HAS_SPAN
 #include <span>

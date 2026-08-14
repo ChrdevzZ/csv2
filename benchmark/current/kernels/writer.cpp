@@ -87,8 +87,8 @@ void register_writer_operations(Registry &registry) {
                raw_streamable<false>, raw_streamable<true>);
   registry.add("writer/escaped-direct", source_buffer, direct, OperationScope::writer_only,
                escaped_direct<false>, escaped_direct<true>, true);
-  registry.add("writer/escaped-streamable", source_buffer, streamable,
-               OperationScope::writer_only, escaped_streamable<false>, escaped_streamable<true>);
+  registry.add("writer/escaped-streamable", source_buffer, streamable, OperationScope::writer_only,
+               escaped_streamable<false>, escaped_streamable<true>);
   registry.add("writer/always-direct", source_buffer, direct, OperationScope::writer_only,
                always_direct<false>, always_direct<true>, true);
 }

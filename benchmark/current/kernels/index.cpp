@@ -19,8 +19,7 @@ template <bool Verify> Result build(Context &context, Source source, TimedObserv
   return result;
 }
 
-template <bool Verify>
-Result sequential(Context &context, Source source, TimedObserver &observer) {
+template <bool Verify> Result sequential(Context &context, Source source, TimedObserver &observer) {
   BenchmarkReader::RowIndex index = context.reader(source).index();
   Result result;
   result.rows = static_cast<std::uint64_t>(index.size());
@@ -74,8 +73,8 @@ void register_index_operations(Registry &registry) {
                build<true>);
   registry.add("index/sequential", sources, prepare_reader, OperationScope::index,
                sequential<false>, sequential<true>);
-  registry.add("index/random", sources, prepare_reader, OperationScope::index,
-               random_lookup<false>, random_lookup<true>);
+  registry.add("index/random", sources, prepare_reader, OperationScope::index, random_lookup<false>,
+               random_lookup<true>);
 }
 
 } // namespace csv2_benchmark
