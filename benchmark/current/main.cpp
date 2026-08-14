@@ -36,9 +36,8 @@ unsigned selected_sources(const Operation &operation, const Options &options) {
   const Source sources[] = {Source::file, Source::buffer, Source::mmap};
   for (const Source source : sources) {
     if (source_enabled(operation.sources, source) && source_selected(options.source, source))
-      selected |= source == Source::file
-                      ? source_file
-                      : (source == Source::buffer ? source_buffer : source_mmap);
+      selected |= source == Source::file ? source_file
+                                         : (source == Source::buffer ? source_buffer : source_mmap);
   }
   return selected;
 }

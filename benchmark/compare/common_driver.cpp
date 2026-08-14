@@ -254,8 +254,7 @@ public:
     typedef std::input_iterator_tag iterator_category;
 
     iterator() {}
-    explicit iterator(std::vector<RawFieldReference>::const_iterator current)
-        : current_(current) {}
+    explicit iterator(std::vector<RawFieldReference>::const_iterator current) : current_(current) {}
     Field operator*() const {
       Field field = {&*current_};
       return field;
@@ -444,8 +443,7 @@ bool run_writer(const Options &options, Observation &result, std::uint64_t &chec
 #if defined(CSV2_BENCHMARK_ENABLE_MODERN_WRITER_OPERATIONS)
   else if (is_escaped_writer_operation(options.operation))
     extract_decoded_rows(reader, prepared_rows);
-  else if (options.operation == "writer_raw_direct" ||
-           options.operation == "writer_raw_streamable")
+  else if (options.operation == "writer_raw_direct" || options.operation == "writer_raw_streamable")
     extract_raw_references(reader, prepared_raw_rows);
   else if (!is_modern_writer_operation(options.operation))
     return false;
@@ -479,8 +477,8 @@ bool run_writer(const Options &options, Observation &result, std::uint64_t &chec
     for (std::size_t run = 0; run < options.iterations; ++run) {
       buffer.reset();
       output.clear();
-      for (RawRows::const_iterator row = prepared_raw_rows.begin();
-           row != prepared_raw_rows.end(); ++row)
+      for (RawRows::const_iterator row = prepared_raw_rows.begin(); row != prepared_raw_rows.end();
+           ++row)
         writer.write_row(PreparedRawRow<RawDirectField>(*row));
     }
   } else if (options.operation == "writer_raw_streamable") {
@@ -490,8 +488,8 @@ bool run_writer(const Options &options, Observation &result, std::uint64_t &chec
     for (std::size_t run = 0; run < options.iterations; ++run) {
       buffer.reset();
       output.clear();
-      for (RawRows::const_iterator row = prepared_raw_rows.begin();
-           row != prepared_raw_rows.end(); ++row)
+      for (RawRows::const_iterator row = prepared_raw_rows.begin(); row != prepared_raw_rows.end();
+           ++row)
         writer.write_row(PreparedRawRow<RawStreamableField>(*row));
     }
   } else if (options.operation == "writer_escaped_direct") {
@@ -589,8 +587,8 @@ const OperationContract operation_contracts[] = {
 };
 
 const OperationContract *find_operation_contract(const std::string &operation) {
-  for (std::size_t index = 0;
-       index < sizeof(operation_contracts) / sizeof(operation_contracts[0]); ++index) {
+  for (std::size_t index = 0; index < sizeof(operation_contracts) / sizeof(operation_contracts[0]);
+       ++index) {
     if (operation == operation_contracts[index].operation)
       return &operation_contracts[index];
   }

@@ -5,8 +5,7 @@
 namespace csv2_benchmark {
 
 void Registry::add(const char *id, unsigned sources, unsigned preparations, OperationScope scope,
-                   Kernel timed_kernel, Kernel verification_kernel,
-                   bool expect_zero_allocations) {
+                   Kernel timed_kernel, Kernel verification_kernel, bool expect_zero_allocations) {
   if (!id || !*id || !timed_kernel || !verification_kernel || sources == source_none)
     throw std::invalid_argument("invalid benchmark operation registration");
   if (find(id))

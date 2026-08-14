@@ -13,8 +13,7 @@ template <bool Verify> Result rows(Context &context, Source source, TimedObserve
   return result;
 }
 
-template <bool Verify>
-Result rows_cells(Context &context, Source source, TimedObserver &observer) {
+template <bool Verify> Result rows_cells(Context &context, Source source, TimedObserver &observer) {
   Result result;
   for (const BenchmarkReader::Row row : context.reader(source)) {
     ++result.rows;
@@ -33,8 +32,8 @@ void register_traversal_operations(Registry &registry) {
 #if CSV2_HAS_MMAP
   sources |= source_mmap;
 #endif
-  registry.add("traversal/rows", sources, prepare_reader, OperationScope::traversal,
-               rows<false>, rows<true>, true);
+  registry.add("traversal/rows", sources, prepare_reader, OperationScope::traversal, rows<false>,
+               rows<true>, true);
   registry.add("traversal/rows-cells", sources, prepare_reader, OperationScope::traversal,
                rows_cells<false>, rows_cells<true>, true);
 }

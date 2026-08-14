@@ -46,8 +46,7 @@ class Registry {
 
 public:
   void add(const char *id, unsigned sources, unsigned preparations, OperationScope scope,
-           Kernel timed_kernel, Kernel verification_kernel,
-           bool expect_zero_allocations = false);
+           Kernel timed_kernel, Kernel verification_kernel, bool expect_zero_allocations = false);
   const std::vector<Operation> &operations() const noexcept { return operations_; }
   const Operation *find(const std::string &id) const noexcept;
 };

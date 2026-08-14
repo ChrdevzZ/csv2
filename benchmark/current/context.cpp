@@ -107,8 +107,7 @@ bool Context::load(const std::string &path, unsigned requirements, unsigned sour
   const bool mmap_reader_requested =
       (requirements & prepare_reader) != 0 && (sources & source_mmap) != 0;
   const bool data_requested = (requirements & prepare_data) != 0 || buffer_reader_requested;
-  const bool mapping_requested =
-      (requirements & prepare_mapping) != 0 || mmap_reader_requested;
+  const bool mapping_requested = (requirements & prepare_mapping) != 0 || mmap_reader_requested;
 
   if (data_requested) {
     input.seekg(0, std::ios::beg);

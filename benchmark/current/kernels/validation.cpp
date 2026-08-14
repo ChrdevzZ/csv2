@@ -3,8 +3,7 @@
 namespace csv2_benchmark {
 namespace {
 
-template <bool Verify>
-Result validate(Context &context, Source source, TimedObserver &observer) {
+template <bool Verify> Result validate(Context &context, Source source, TimedObserver &observer) {
   Result result;
   csv2::parse_error error;
   bool valid = context.reader(source).validate(error);

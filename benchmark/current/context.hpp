@@ -60,9 +60,9 @@ struct Options {
   bool force_input_read_failure;
 
   Options()
-      : source("all"), verify(false), list(false), observer_audit(false),
-        preparation_audit(false), output_capacity_set(false), output_capacity(0),
-        force_output_stream_failure(false), force_input_read_failure(false) {}
+      : source("all"), verify(false), list(false), observer_audit(false), preparation_audit(false),
+        output_capacity_set(false), output_capacity(0), force_output_stream_failure(false),
+        force_input_read_failure(false) {}
 };
 
 class Context {
@@ -92,8 +92,7 @@ class Context {
 public:
   Context();
 
-  bool load(const std::string &path, unsigned requirements, unsigned sources,
-            std::string &error);
+  bool load(const std::string &path, unsigned requirements, unsigned sources, std::string &error);
   const BenchmarkReader &reader(Source source) const;
 
   const std::string &input_path() const noexcept { return input_path_; }
