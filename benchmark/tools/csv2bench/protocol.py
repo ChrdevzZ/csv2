@@ -153,13 +153,23 @@ def _artifact(value: object, label: str, *, revision: bool) -> dict[str, object]
     if revision:
         required.add("revision")
     _required(artifact, required, label)
-    _closed(artifact, required, label)
     _string(artifact["path"], f"{label}.path")
     _integer(artifact["size"], f"{label}.size")
     _hex_digest(artifact["sha256"], f"{label}.sha256", (64,))
     _integer(artifact["mtime_ns"], f"{label}.mtime_ns")
     if revision:
         _string(artifact["revision"], f"{label}.revision")
+    return artifact
+
+
+def _manifest_artifact(
+    value: object, label: str, *, revision: bool
+) -> dict[str, object]:
+    artifact = _artifact(value, label, revision=revision)
+    fields = {"path", "size", "sha256", "mtime_ns"}
+    if revision:
+        fields.add("revision")
+    _closed(artifact, fields, label)
     return artifact
 
 
@@ -1208,19 +1218,27 @@ def validate_artifact_manifest(manifest: object) -> None:
     kind = document["kind"]
     if kind not in {"comparison", "fixed-metrics"}:
         raise RuntimeError("artifact manifest kind is invalid")
-    _artifact(document["report"], "artifact manifest.report", revision=False)
+    _manifest_artifact(document["report"], "artifact manifest.report", revision=False)
     inputs = _object(document["inputs"], "artifact manifest.inputs")
     if kind == "comparison":
         required = {"baseline", "candidate", "datasets", "builds"}
         _required(inputs, required, "artifact manifest.inputs")
         _closed(inputs, required, "artifact manifest.inputs")
-        _artifact(inputs["baseline"], "artifact manifest.inputs.baseline", revision=True)
-        _artifact(inputs["candidate"], "artifact manifest.inputs.candidate", revision=True)
+        _manifest_artifact(
+            inputs["baseline"], "artifact manifest.inputs.baseline", revision=True
+        )
+        _manifest_artifact(
+            inputs["candidate"], "artifact manifest.inputs.candidate", revision=True
+        )
         datasets = _array(inputs["datasets"], "artifact manifest.inputs.datasets")
         if not datasets:
             raise RuntimeError("artifact manifest datasets must not be empty")
         for index, dataset in enumerate(datasets):
-            _artifact(dataset, f"artifact manifest.inputs.datasets[{index}]", revision=False)
+            _manifest_artifact(
+                dataset,
+                f"artifact manifest.inputs.datasets[{index}]",
+                revision=False,
+            )
         digests = _object(inputs["builds"], "artifact manifest.inputs.builds")
         _required(digests, {"baseline", "candidate"}, "artifact manifest.inputs.builds")
         _closed(digests, {"baseline", "candidate"}, "artifact manifest.inputs.builds")
@@ -1257,17 +1275,17 @@ def validate_artifact_manifest(manifest: object) -> None:
             artifacts_document["collector"],
             "artifact manifest.inputs.artifacts.collector",
         )
-        executable = _artifact(
+        executable = _manifest_artifact(
             artifacts_document["executable"],
             "artifact manifest.inputs.artifacts.executable",
             revision=True,
         )
-        allocation = _artifact(
+        allocation = _manifest_artifact(
             artifacts_document["allocation_executable"],
             "artifact manifest.inputs.artifacts.allocation_executable",
             revision=True,
         )
-        _artifact(
+        _manifest_artifact(
             artifacts_document["dataset"],
             "artifact manifest.inputs.artifacts.dataset",
             revision=False,
@@ -1282,12 +1300,12 @@ def validate_artifact_manifest(manifest: object) -> None:
                 "artifact manifest compiler artifacts must be present as a pair"
             )
         if has_compiler:
-            _artifact(
+            _manifest_artifact(
                 artifacts_document["compiler_executable"],
                 "artifact manifest.inputs.artifacts.compiler_executable",
                 revision=False,
             )
-            _artifact(
+            _manifest_artifact(
                 artifacts_document["compile_commands"],
                 "artifact manifest.inputs.artifacts.compile_commands",
                 revision=False,
