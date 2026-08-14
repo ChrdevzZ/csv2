@@ -17,484 +17,396 @@ The modular headers under `include/csv2/` are the maintained source of truth.
 `single_include/csv2/csv2.hpp` is generated from them and is verified for exact
 synchronization in Linux CI.
 
+## Project Lineage
+
+CSV2 was created by [Pranav (`p-ranav`)](https://github.com/p-ranav) and is developed upstream at
+[p-ranav/csv2](https://github.com/p-ranav/csv2). This repository is an independent downstream fork. It preserves the
+original copyright, contributor history, and MIT license.
+
+| Reference | Location |
+| --- | --- |
+| Original project | [p-ranav/csv2](https://github.com/p-ranav/csv2) |
+| Original author | [Pranav (`p-ranav`)](https://github.com/p-ranav) |
+| Original contributors | [Upstream contributors](https://github.com/p-ranav/csv2/graphs/contributors) |
+| This fork | [ChrdevzZ/csv2](https://github.com/ChrdevzZ/csv2) |
+| Source comparison | [Upstream `master` to fork `master`](https://github.com/p-ranav/csv2/compare/master...ChrdevzZ:csv2:master) |
+| License | [MIT](LICENSE) |
+
+## What This Fork Adds
+
+The fork keeps the original C++11 interface, permissive Reader, and raw Writer as its compatibility baseline. It adds
+the following capabilities without raising the `csv2::csv2` target's minimum language requirement:
+
+- standard-library feature detection and conditional C++17, C++20, and C++23 interfaces;
+- explicit borrowed and owned input APIs, constrained mmap paths, standard iterators and ranges, strict validation,
+  integer conversion, and `RowIndex`;
+- generic append sinks and output iterators, batched field copying, and one shared scanning core for modular and
+  single-header builds;
+- Range-based Writer input, explicit stream ownership, and raw, minimal, or always-quoted output policies;
+- installed CMake and pkg-config metadata, no-mmap and no-exceptions builds, cross-standard tests, sanitizers,
+  Reader/Writer fuzzing, and an auditable benchmark evidence pipeline.
+
+Structural traversal remains allocation-free. Operations that deliberately materialize strings, take ownership of
+input, or build a `RowIndex` may allocate. Performance claims require controlled evidence; hosted timing is never used
+as a regression gate.
+
 ## Table of Contents
 
-*    [CSV Reader](#csv-reader)
-     *    [Performance Benchmark](#performance-benchmark)
-     *    [Reader API](#reader-api)
-*    [CSV Writer](#csv-writer)
-     *    [Writer API](#writer-api)
-*    [Compiling Tests](#compiling-tests)
-*    [Installing and Consuming with CMake](#installing-and-consuming-with-cmake)
-*    [Generating Single Header](#generating-single-header)
-*    [Contributing](#contributing)
-*    [License](#license)
+- [Project Lineage](#project-lineage)
+- [What This Fork Adds](#what-this-fork-adds)
+- [CSV Reader](#csv-reader)
+- [CSV Writer](#csv-writer)
+- [Standards and Compatibility](#standards-and-compatibility)
+- [Performance Benchmark](#performance-benchmark)
+- [Compiling Tests](#compiling-tests)
+- [Installing and Consuming with CMake](#installing-and-consuming-with-cmake)
+- [Generating Single Header](#generating-single-header)
+- [Contributing](#contributing)
+- [Acknowledgements](#acknowledgements)
+- [License](#license)
 
 ## CSV Reader
+
+The original Reader interface remains the shortest path for memory-mapped CSV files. Its template policies select the
+delimiter, quote character, header handling, and trimming behavior:
 
 ```cpp
 #include <csv2/reader.hpp>
 
+#include <string>
+
 int main() {
-  csv2::Reader<csv2::delimiter<','>, 
-               csv2::quote_character<'"'>, 
+  csv2::Reader<csv2::delimiter<','>,
+               csv2::quote_character<'"'>,
                csv2::first_row_is_header<true>,
-               csv2::trim_policy::trim_whitespace> csv;
-               
-  if (csv.mmap("foo.csv")) {
-    const auto header = csv.header();
-    for (const auto row: csv) {
-      for (const auto cell: row) {
-        // Do something with cell value
-        // std::string value;
-        // cell.read_value(value);
-      }
+               csv2::trim_policy::trim_whitespace>
+      csv;
+
+  if (!csv.mmap("foo.csv"))
+    return 1;
+
+  const auto header = csv.header();
+  (void)header;
+
+  for (const auto row : csv) {
+    for (const auto cell : row) {
+      std::string value;
+      cell.read_value(value);
+      // Use value.
     }
   }
 }
 ```
 
-### Input Lifetime and Record Semantics
-
-`Reader::parse()` borrows an lvalue string without copying it. The caller must
-keep both its address and extent valid while csv2 accesses it. Destruction,
-reallocation, or a size change invalidates the Reader's source selection; call
-`parse()` or `parse_borrowed()` again before further access. Any in-place byte
-mutation invalidates every previously obtained Row, Cell, iterator, RowIndex,
-and raw or decoded view. After a same-extent mutation, discard those values and
-reacquire them from the Reader. Concurrent source mutation and parsing or
-iteration are not supported.
-
-Passing an rvalue string transfers the contents to storage owned by the reader,
-so parsing a temporary is safe. When C++17 is available, `parse_view()` remains
-a borrowed API and the `std::string_view` storage has the same address, extent,
-and mutation requirements. Calling `mmap()`, `parse()`, `parse_borrowed()`,
-`parse_owned()`, or `parse_view()` replaces the previous input source. Passing
-an exact range of the same reader's owned or mapped source back to
-`parse_borrowed()` or `parse_view()` keeps that backing storage alive and
-selects the range without copying.
-
-For ownership-visible code, `parse_borrowed(const char*, size_t)` accepts an
-exact byte range and never copies, while `parse_owned(std::string)` stores an
-independent source. C++20 additionally accepts `std::span<const char>` through
-`parse_borrowed`. The legacy `parse()` overloads retain their existing lvalue
-borrow/rvalue ownership behavior.
-
-`Reader::mmap()` returns `false` for ordinary open or mapping failures and
-clears the previous source; it does not translate those failures into
-exceptions. Use the overload accepting `std::error_code&` when the reason is
-needed. Memory mapping can be disabled consistently for all translation units
-with `CSV2_HAS_MMAP=0`. In that mode, including either `csv2/reader.hpp` or the
-modular `csv2/mio.hpp` does not expose or compile the vendored mapping layer.
-
-Mapped paths must provide NUL-terminated storage. Supported path types are
-`const char*`/character arrays and `std::basic_string<char, ...>`; Windows also
-accepts the corresponding wide forms. C++17 adds `std::filesystem::path`.
-Legacy sized character ranges such as `std::vector<char>` are accepted only
-when they contain exactly one NUL at the end and no embedded NUL; otherwise
-mapping fails with `std::errc::invalid_argument`. Every
-`std::basic_string_view` specialization remains rejected because its range does
-not promise an accessible terminator. A native file handle may also be mapped;
-the caller retains ownership and must keep it open for the mapped source's
-lifetime.
-
-`include/csv2/mio.hpp` vendors [mandreyel/mio](https://github.com/mandreyel/mio),
-first imported by csv2 commit `e51a8df` on 2020-04-23. Its MIT license remains
-in `LICENSE.mio`. Local csv2 patches preserve mapping ownership/error handling,
-request readable protection for writable POSIX mappings, support explicit
-no-mmap builds, and restrict file paths to the safe types listed above; no
-independent upstream version tag was recorded by the original import.
-
-Records may be terminated by LF or CRLF. LF and CRLF inside a quoted field are
-part of that field, and doubled quote characters (`""`) do not close it. A final
-record delimiter terminates the last record without creating another empty
-record; delimiters before the final one can still represent empty records.
-Standalone CR characters are treated as record content. Reader field
-delimiters are configurable but cannot be CR or LF because those bytes are
-reserved for record boundaries. `Reader` and `RowIndex` reject those delimiter
-policies at compile time.
-
-A field delimiter at the end of a non-empty record creates a final empty
-`Cell`. A record containing no characters remains an empty `Row` with zero
-cells. `Cell::read_value()` trims according to the configured policy, retains
-outer quote characters, folds each adjacent pair of configured quote
-characters into one, and appends the decoded value without modifying content
-already present in the output container.
-
-### Performance Benchmark
-
-`csv2_benchmark` measures one operation in the current source tree: mapping,
-row and cell traversal, extraction, ranges, integer conversion, or writing.
-Source preparation is outside each operation timer except for `map_only`, where
-mapping is the operation being measured. GiB/s always uses input-corpus bytes
-as its denominator, including writer operations; it is not writer output
-bandwidth. The benchmark emits a semantic checksum and optional allocation or
-hardware-counter data. Hosted CI verifies checksums and the zero-allocation
-traversal contract; hosted timing is never used to accept or reject a change.
-
-```bash
-CANDIDATE="$(git rev-parse HEAD)"
-cmake -S . -B build-benchmark \
-  -DCSV2_BUILD_BENCHMARKS=ON \
-  -DCSV2_BENCHMARK_REVISION="$CANDIDATE" \
-  -DCMAKE_BUILD_TYPE=Release
-cmake --build build-benchmark --target csv2_benchmark
-./build-benchmark/benchmark/csv2_benchmark \
-  --operation rows_cells --input /absolute/path/input.csv \
-  --source mmap --iterations 20
-```
-
-Cross-revision claims use the separate C++11 `common_driver.cpp`, extracted
-from the candidate commit and compiled unchanged against both exact archived
-header trees. See
-[`benchmark/README.md`](benchmark/README.md) for reproducible extraction and
-build commands, A/A calibration, paired execution, raw-sample retention, and
-the provenance required for a reviewable result. No comparative performance
-number is published without its machine-specific JSON report. Benchmark
-numeric options accept unsigned ASCII decimal digits only; signs, whitespace,
-overflow, and zero iterations are rejected before measurement.
-
-### Reader API
-
-Here is the public API available to you:
+The same Reader can borrow an existing buffer. Keep the string alive and unchanged for as long as the Reader uses it:
 
 ```cpp
-template <class delimiter = delimiter<','>, 
-          class quote_character = quote_character<'"'>,
-          class first_row_is_header = first_row_is_header<true>,
-          class trim_policy = trim_policy::trim_whitespace>
-class Reader {
-public:
-  Reader() = default;
-  Reader(const Reader&) = delete;
-  Reader& operator=(const Reader&) = delete;
-  Reader(Reader&&);
-  Reader& operator=(Reader&&);
+#include <csv2/reader.hpp>
 
-  
-  // Present when CSV2_HAS_MMAP is enabled
-  // StringType is a supported NUL-terminated path type, not string_view.
-  template <typename StringType>
-  bool mmap(StringType&& filename);
-  template <typename StringType>
-  bool mmap(StringType&& filename, std::error_code& error);
-
-  // C++23, when std::expected is provided
-  template <typename StringType>
-  std::expected<void, std::error_code> mmap_expected(StringType&& filename);
-
-  // Lvalues are borrowed; rvalues are owned by the Reader
-  template <typename StringType>
-  bool parse(StringType&& contents);
-
-  bool parse_borrowed(const char* data, size_t size);
-  bool parse_owned(std::string contents);
-
-  // C++20
-  bool parse_borrowed(std::span<const char> contents);
-
-  // C++17: externally owned storage remains borrowed. A view into this
-  // Reader's current owned or mapped source retains that backing source.
-  bool parse_view(std::string_view contents);
-
-  // Shape
-  size_t rows(bool ignore_empty_lines = false) const;
-  size_t cols() const;
-
-  // Explicitly allocate one bounds pair per selected logical record.
-  // The returned index borrows this Reader's active source.
-  RowIndex index(bool ignore_empty_lines = false) const;
-
-  // Optional strict, zero-allocation validation. Existing iteration remains
-  // permissive. byte_offset is zero-based; row/column are one-based logical
-  // record and field numbers.
-  // noexcept when trim_policy::trim is noexcept
-  bool validate(parse_error& error) const /* conditionally noexcept */;
-
-  // C++23, when the standard library provides std::expected
-  // noexcept when trim_policy::trim is noexcept
-  std::expected<void, parse_error> validate_expected() const
-      /* conditionally noexcept */;
-  
-  // Row iterator
-  // If first_row_is_header, row iteration will start
-  // from the second row
-  RowIterator begin() const;
-  RowIterator end() const;
-
-  // Access the first row of the CSV
-  Row header() const;
-};
-```
-
-`Row::raw_data()/raw_size()` and `Cell::raw_data()/raw_size()` expose non-owning
-byte ranges that follow the source invalidation rules above.
-`Cell::has_escaped_quotes()` reports whether doubled quote pairs were observed
-during boundary scanning. In C++17,
-`Cell::raw_trimmed_view()` returns the trim-policy-adjusted raw view; the older
-`read_view()` name remains available.
-
-The reusable row and cell implementations are also available as
-namespace-scope `csv2::basic_row` and `csv2::basic_cell`. `Reader::Row` and
-`Reader::Cell` remain real nested classes for source and specialization
-compatibility and are zero-state facades over those implementations. In C++20,
-Row models a view, borrowed range, and forward range, so a temporary Row can
-enter a views pipeline. Reader itself is deliberately not a borrowed range
-because an rvalue Reader may own the selected bytes.
-
-`Reader::validate()` is an explicit strict layer over the same source. It
-rejects quotes in unquoted fields, unclosed quotes, invalid doubled quotes,
-non-trim content after a closing quote, and bare carriage returns. CR and LF
-remain valid inside quoted fields, and rows may contain different numbers of
-fields. Calling it never changes the permissive behavior of iteration.
-
-`Reader::index()` explicitly builds a random-access, sized `RowIndex`. It
-stores the start and content end of each selected logical record, skips the
-configured header, and optionally excludes empty records. Indexed dereference
-is therefore constant time. The index borrows the selected bytes: externally
-borrowed storage remains governed by its caller, while destroying or replacing
-a Reader-owned or mapped source invalidates indexes into that source. A
-RowIndex iterator additionally requires its RowIndex object to remain alive.
-Reader never creates or retains an index implicitly.
-
-Here's the `Row` class:
-
-```cpp
-// Row class
-class Row {
-public:
-  // Address and length of this row's raw logical-record contents
-  const char* address() const noexcept;
-  size_t length() const;
-
-  // Get raw contents of the row
-  void read_raw_value(Container& value) const;
-  
-  // Cell iterator
-  CellIterator begin() const;
-  CellIterator end() const;
-};
-```
-
-and here's the `Cell` class:
-
-```cpp
-// Cell class
-class Cell {
-public:
-  // C++17: trimmed, non-owning view into the Reader's active source
-  std::string_view read_view() const;
-
-  // Get raw contents of the cell
-  void read_raw_value(Container& value) const;
-  
-  // Get converted contents of the cell
-  // Handles escaped content, e.g., 
-  // """foo""" => ""foo""
-  void read_value(Container& value) const;
-
-  // Complete integer conversion, base 2..36. On failure value is unchanged.
-  template<class Integer>
-  bool try_parse(Integer& value, conversion_error& error, int base = 10) const;
-
-  // C++23, when the standard library provides std::expected
-  template<class Integer>
-  std::expected<Integer, conversion_error> parse_expected(int base = 10) const;
-};
-```
-
-Integer conversion excludes `bool` and character types, consumes the whole
-trimmed field content, and strips a valid pair of outer quotes. C++17 and newer
-use `std::from_chars`; the C++11 fallback has the same base, range, sign, and
-complete-consumption rules. Neither path allocates.
-
-## CSV Writer
-
-`Writer` accepts standard ranges through ADL `begin`/`end`, including native
-arrays and C++20 iterator/sentinel views. It preserves the historical
-insertion-first contract, so a custom stream's `operator<<` for a field type
-takes precedence; otherwise contiguous `char` ranges fall back to one
-`write()` call. `basic_writer` uses its direct contiguous-character fast path
-for standard strings and string views. Arithmetic and other streamable values
-preserve the stream's locale and formatting state.
-
-The two-parameter `Writer` preserves the original close-on-destroy behavior.
-Use the four-parameter `basic_writer` with `stream_ownership::leave_open` when
-the caller retains close responsibility. Explicit `basic_writer::close()`
-still closes a close-capable stream under either ownership policy and reports
-its errors.
-
-This library also provides a basic `csv2::Writer` class - one that can be used to write CSV rows to file. Here's a basic usage:
-
-```cpp
-#include <csv2/writer.hpp>
-#include <vector>
 #include <string>
-using namespace csv2;
 
 int main() {
-    std::ofstream stream("foo.csv");
-    {
-        Writer<delimiter<','>> writer(stream);
-        const std::vector<std::vector<std::string>> rows = {
-            {"a", "b", "c"},
-            {"1", "2", "3"},
-            {"4", "5", "6"}
-        };
-        writer.write_rows(rows);
-    } // closes stream
+  std::string input = "name,count\nwidgets,42\n";
+  csv2::Reader<> csv;
+  return csv.parse(input) ? 0 : 1;
 }
 ```
 
-`Writer` borrows the stream object, which must outlive it, but assumes the sole
-responsibility for closing a stream that provides `void close()`. It is
-move-only, and moving it transfers that responsibility. Call `Writer::close()`
-when close errors must be observed; it is idempotent, and the destructor never
-lets a close exception escape. Do not close the underlying stream directly
-while an active `Writer` still owns that responsibility. After a Writer is
-closed or moved from, further write calls have no effect.
+### Input Ownership and Lifetime
 
-The default `quote_policy::none` preserves the original raw behavior: values
-are emitted exactly as supplied. `EscapingWriter` selects
-`quote_policy::minimal`, quoting fields containing the delimiter, a quote, CR,
-or LF and doubling embedded quotes. `quote_policy::always` quotes every field.
-For source compatibility, `Writer` continues to accept CR and LF delimiter
-policies; `basic_writer` and `EscapingWriter` use the same delimiter domain.
-Because every Writer emits LF as the row terminator, those delimiter choices
-produce ambiguous, non-round-trippable output; quoting policies cannot remove
-that ambiguity. Use a delimiter other than CR or LF for output intended to be
-parsed as CSV.
-Contiguous character fields are scanned and written in segments; other
-streamable values are first formatted with a copy of the destination stream's
-locale, flags, precision, and fill state, then escaped. A row with zero values
-writes one newline, as does a raw or minimally quoted row containing one empty
-string, so those shapes are not reversibly distinguishable. Use
-`quote_policy::always` when that distinction must survive serialization.
+| Interface | Ownership | Availability | Contract |
+| --- | --- | --- | --- |
+| `mmap(path)` | Reader owns the mapping | C++11 when mmap is enabled | Returns `false` on ordinary open or mapping failure |
+| `parse(lvalue)` | Borrowed | C++11 | The source address and extent must remain valid |
+| `parse(rvalue)` | Reader-owned | C++11 | The Reader takes or materializes independent storage |
+| `parse_borrowed(data, size)` | Borrowed | C++11 | Borrows exactly the supplied byte range |
+| `parse_owned(string)` | Reader-owned | C++11 | Stores an independent source |
+| `parse_view(string_view)` | Borrowed | C++17 | The view and its backing storage must remain valid |
+| `parse_borrowed(span)` | Borrowed | C++20 | Adapts `std::span<const char>` without copying |
+
+Selecting a source replaces the previous one. Destroying, resizing, reallocating, or mutating borrowed storage
+invalidates all rows, cells, iterators, indexes, and views obtained from it. Concurrent mutation and iteration are not
+supported.
+
+Mapped paths require accessible NUL-terminated storage. Narrow C strings, character arrays, and
+`std::basic_string<char, ...>` are supported; Windows also accepts wide forms, and C++17 adds
+`std::filesystem::path`. A legacy sized character range must contain one final NUL and no embedded NUL.
+`std::basic_string_view` is rejected as a path because it does not guarantee an accessible terminator.
+
+Use the `std::error_code&` mmap overload for diagnostics. The caller retains a native file handle and keeps it open for
+the mapping's lifetime. Define `CSV2_HAS_MMAP=0` consistently to remove the mapping layer.
+
+### Record and Field Semantics
+
+Records may end with LF or CRLF. Inside a quoted field both are content, and a doubled quote does not close the field.
+A final terminator does not add another empty record. Permissive iteration treats a standalone CR as content; strict
+validation rejects one outside a quoted field.
+
+A trailing delimiter creates a final empty cell; an empty record has zero cells. With `first_row_is_header<true>`,
+`header()` returns the first record and iteration starts at the next one. Row widths may differ.
+
+Reader delimiters cannot be CR or LF because those bytes define record boundaries. The configured trim policy applies
+to decoded field access and strict validation; it does not change raw byte ranges.
+
+### Field Extraction
+
+Field access is intentionally split into raw, decoded, and content forms:
+
+| Operation | Result |
+| --- | --- |
+| `raw_data()` / `raw_size()` | Borrowed bytes exactly as stored in the record |
+| `read_raw_value(container)` | Appends the raw bytes to a compatible container |
+| `copy_raw_to(output)` | Copies raw bytes through an output iterator |
+| `raw_trimmed_view()` / `read_view()` | C++17 borrowed view after trim policy, with outer quotes retained |
+| `read_value(container)` | Appends trimmed data and folds doubled quotes; outer quotes remain |
+| `decode_to(output)` | Output-iterator form of `read_value` |
+| `copy_content_to(output)` | Trims, removes a valid outer quote pair, and folds doubled quotes |
+
+These operations append without clearing the destination. They support strings, sequence containers, available PMR
+strings, custom append sinks, and output iterators. `has_escaped_quotes()` reports doubled quote pairs found during
+boundary scanning.
+
+Rows expose the same raw byte view and can copy a complete logical record without rescanning its cells.
+
+### Validation and Integer Conversion
+
+Iteration preserves the original permissive behavior. The read-only, allocation-free `validate(parse_error&)` rejects
+quotes in unquoted fields, unclosed or invalid doubled quotes, non-trim content after a closing quote, and bare CR.
+Errors include a byte offset and logical row and column.
+
+`Cell::try_parse(Integer&, conversion_error&, base)` consumes a complete integer in bases 2–36, excludes bool and
+character types, and leaves the destination unchanged on failure. C++17 can use `std::from_chars`; the C++11 fallback
+has the same result contract.
+
+When the library supplies C++23 `std::expected`, `validate_expected()`, `mmap_expected()`, and
+`parse_expected<Integer>()` are also available. Bool and error-object interfaces remain the portable baseline.
+
+### Ranges and Row Indexing
+
+Row and cell iterators satisfy traditional C++11 iterator interfaces. In C++20, Row is also a forward, borrowed view;
+Reader is not borrowed because an rvalue Reader may own its source.
+
+`Reader::index()` builds a random-access, sized `RowIndex`, allocating one bounds entry per selected row while borrowing
+the source. It follows the header policy, can omit empty records, and is never created or cached implicitly.
+
+### Reader API
+
+The table below is an index, not a replacement for the declarations in
+[`include/csv2/reader.hpp`](include/csv2/reader.hpp).
+
+| Area | Primary interfaces |
+| --- | --- |
+| Source selection | `mmap`, `parse`, `parse_borrowed`, `parse_owned`, `parse_view` |
+| Shape and traversal | `header`, `begin`, `end`, `rows`, `cols` |
+| Raw access | Row/Cell `raw_data`, `raw_size`, `read_raw_value`, `copy_raw_to` |
+| Decoded access | Cell `read_value`, `decode_to`, `copy_content_to`, `raw_trimmed_view` |
+| Validation | `validate`, conditionally `validate_expected` |
+| Conversion | `try_parse`, conditionally `parse_expected` |
+| Indexed access | `index`, `RowIndex::size`, `operator[]`, random-access iterators |
+
+## CSV Writer
+
+The original Writer remains the default raw-output interface. It accepts a stream by reference and can write one row or
+a range of rows:
+
+```cpp
+#include <csv2/writer.hpp>
+
+#include <fstream>
+#include <string>
+#include <vector>
+
+int main() {
+  std::ofstream stream("foo.csv");
+  if (!stream)
+    return 1;
+
+  {
+    csv2::Writer<csv2::delimiter<','>> writer(stream);
+    const std::vector<std::vector<std::string>> rows = {
+        {"a", "b", "c"},
+        {"1", "2", "3"},
+        {"4", "5", "6"},
+    };
+    writer.write_rows(rows);
+  } // The default Writer closes a close-capable stream.
+
+  return stream ? 0 : 1;
+}
+```
+
+### Output Policies
+
+| Interface or policy | Behavior | Intended use |
+| --- | --- | --- |
+| `Writer` / `quote_policy::none` | Writes field representations unchanged | Source compatibility and pre-escaped data |
+| `EscapingWriter` / `quote_policy::minimal` | Quotes fields containing the delimiter, quote, CR, or LF and doubles embedded quotes | General CSV output |
+| `quote_policy::always` | Quotes every field and doubles embedded quotes | Output that must preserve otherwise ambiguous empty shapes |
+
+Raw output may be invalid CSV when a field contains structural characters. Select `EscapingWriter` to apply ordinary
+CSV quoting rules.
+
+### Ranges and Field Dispatch
+
+Writer uses ADL `begin` and `end` for arrays, containers, iterator/sentinel ranges, and C++20 views. Custom stream
+insertion takes precedence; otherwise contiguous character fields use direct writes and other streamable values keep the
+destination's formatting state.
+
+Quoting writers scan contiguous character fields and write segments. Other values are formatted with the destination's
+state before escaping; final stream state and one-shot width follow the normal iostream contract.
+
+### Stream Ownership
+
+Writer borrows a stream that must outlive it. The historical two-parameter Writer closes streams that provide `close()`
+and transfers that responsibility when moved.
+
+Select `stream_ownership::leave_open` when the caller owns closure. Explicit `close()` is idempotent and reports errors
+under either policy; destruction does not emit close exceptions. Closed and moved-from writers ignore writes.
+
+### Round-Trip Boundaries
+
+Every Writer terminates rows with LF. CR or LF remains selectable as a delimiter for compatibility, but produces
+ambiguous output that quoting cannot repair.
+
+A zero-field row and a raw or minimally quoted single empty field both produce one newline. Use
+`quote_policy::always` to distinguish those shapes.
 
 ### Writer API
 
-Here is the public API available to you:
+The authoritative declarations are in [`include/csv2/writer.hpp`](include/csv2/writer.hpp).
 
-```cpp
-template <class delimiter = delimiter<','>, typename Stream = std::ofstream>
-class Writer {
-public:
-  Writer(Stream& stream) noexcept;
-  Writer(const Writer&) = delete;
-  Writer& operator=(const Writer&) = delete;
-  Writer(Writer&&) noexcept;
-  Writer& operator=(Writer&&) noexcept;
+| Interface | Purpose |
+| --- | --- |
+| `Writer<Delimiter, Stream>` | Compatible raw writer with close-on-destroy ownership |
+| `basic_writer<Delimiter, Stream, Ownership, QuotePolicy>` | Explicit ownership and quoting policy |
+| `EscapingWriter<Delimiter, Stream, Ownership>` | Convenience alias for minimal quoting |
+| `write_row(range)` | Writes one row followed by LF |
+| `write_rows(range)` | Writes a range of rows |
+| `close()` | Closes at most once and reports stream errors |
 
-  // Close at most once and report stream exceptions to the caller
-  void close();
+## Standards and Compatibility
 
-  // Use this to write a single row to file
-  void write_row(container_of_strings row);
+`csv2::csv2` declares only `cxx_std_11`. Later adapters appear only when their headers and SD-6 macros are available:
 
-  // Use this to write a list of rows to file
-  void write_rows(container_of_rows rows);
-};
+| Language/library level | CSV2 facilities |
+| --- | --- |
+| C++11 | Reader and Writer compatibility APIs, explicit ownership, generic sinks, strict validation, integer fallback, `RowIndex`, and escaping policies |
+| C++14 | The same public surface with additional constexpr support where permitted |
+| C++17 | `std::string_view` input/views, `std::filesystem::path`, `std::from_chars`, and PMR container support when supplied by the library |
+| C++20 | `std::span<const char>` input and Row range/view integration |
+| C++23 | `std::expected` error adapters and consumer-side ranges facilities when supplied by the library |
+| C++26 | Forward compile checks only; no C++26 CSV2 feature contract |
 
-template <class delimiter = delimiter<','>, typename Stream = std::ofstream,
-          typename Ownership = stream_ownership::close_on_destroy,
-          typename QuotePolicy = quote_policy::none>
-class basic_writer;
+Feature detection lives in [`include/csv2/detail/config.hpp`](include/csv2/detail/config.hpp); a language mode alone does
+not guarantee a library facility. Consumers select their standard explicitly:
 
-template <class delimiter = delimiter<','>, typename Stream = std::ofstream,
-          typename Ownership = stream_ownership::close_on_destroy>
-using EscapingWriter =
-    basic_writer<delimiter, Stream, Ownership, quote_policy::minimal>;
+```cmake
+target_link_libraries(app PRIVATE csv2::csv2)
+target_compile_features(app PRIVATE cxx_std_20)
+set_target_properties(app PROPERTIES CXX_EXTENSIONS OFF)
 ```
 
-The historical two-parameter `Writer` remains the default raw writer and
-closes streams that provide `close()`. Use `basic_writer` when ownership or an
-explicit quote policy must be selected; unsupported policy types are rejected
-at compile time. `EscapingWriter` is its minimal-quoting convenience alias.
+All standards use the same scanner and record semantics. `CSV2_HAS_MMAP=0` removes mapping, and no-exceptions builds
+retain the ordinary interface.
+
+## Performance Benchmark
+
+The benchmark registry covers sources, traversal, extraction, validation, conversion, ranges, indexing, and Writer
+dispatch. Setup, timing, and semantic verification are separate; optimized builds observe live results and failures do
+not produce successful measurements.
+
+Exact checksums and allocation contracts remain outside timing. Hosted CI gates their protocols and observers, but
+hosted throughput is exploratory.
+
+```bash
+cmake -S . -B build-benchmark -G Ninja \
+  -DCMAKE_BUILD_TYPE=Release \
+  -DCSV2_BUILD_BENCHMARKS=ON \
+  -DCSV2_BUILD_BENCHMARK_CHECKS=ON \
+  -DCSV2_REQUIRE_PYTHON_AUDITS=ON \
+  -DCSV2_BENCHMARK_REVISION="$(git rev-parse HEAD)"
+cmake --build build-benchmark --parallel
+ctest --test-dir build-benchmark -L benchmark-checksum \
+  --no-tests=error --output-on-failure
+```
+
+Cross-revision runs export one C++11 driver and both header trees from immutable Git objects. Controlled evidence also
+requires a fixed Linux machine, affinity, A/A calibration, matching checksums, three warmups, 20 paired runs, machine
+metrics, and a finalized evidence bundle. See [`benchmark/README.md`](benchmark/README.md) and
+[`benchmark/protocol/README.md`](benchmark/protocol/README.md).
+
+<details>
+<summary>Historical upstream benchmark — 23 September 2022</summary>
+
+The following system description and results are preserved from the
+[upstream README at `4f3c41d`](https://github.com/p-ranav/csv2/blob/4f3c41db6457465e94b92b91fc560b911c16a16a/README.md#performance-benchmark).
+They measured the older program's combined memory-map and cell-iteration path. They are not current fork results and are
+not comparable with the benchmark pipeline described above.
+
+| Type | Value |
+| --- | --- |
+| Processor | 11th Gen Intel(R) Core(TM) i9-11900KF @ 3.50GHz 3.50 GHz |
+| Installed RAM | 32.0 GB (31.9 GB usable) |
+| SSD | [ADATA SX8200PNP](https://www.adata.com/upload/downloadfile/Datasheet_XPG%20SX8200%20Pro_EN_20181017.pdf) |
+| OS | Ubuntu 20.04 LTS running on WSL in Windows 11 |
+| C++ Compiler | g++ (Ubuntu 10.3.0-1ubuntu1~20.04) 10.3.0 |
+
+| Dataset | File Size | Rows | Cols | Time |
+|:--- | ---:| ---:| ---:| ---:|
+| [Denver Crime Data](https://www.kaggle.com/paultimothymooney/denver-crime-data) | 111 MB | 479,100 | 19 | 0.102s |
+| [AirBnb Paris Listings](https://www.kaggle.com/juliatb/airbnb-paris) | 196 MB | 141,730 | 96 | 0.170s |
+| [2015 Flight Delays and Cancellations](https://www.kaggle.com/usdot/flight-delays) | 574 MB | 5,819,079 | 31 | 0.603s |
+| [StackLite: Stack Overflow questions](https://www.kaggle.com/stackoverflow/stacklite) | 870 MB | 17,203,824 | 7 | 0.911s |
+| [Used Cars Dataset](https://www.kaggle.com/austinreese/craigslist-carstrucks-data) | 1.4 GB | 539,768 | 25 | 0.947s |
+| [Title-Based Semantic Subject Indexing](https://www.kaggle.com/hsrobo/titlebased-semantic-subject-indexing) | 3.7 GB | 12,834,026 | 4 | 2.867s |
+| [Bitcoin tweets - 16M tweets](https://www.kaggle.com/alaix14/bitcoin-tweets-20160101-to-20190329) | 4 GB | 47,478,748 | 9 | 3.290s |
+| [DDoS Balanced Dataset](https://www.kaggle.com/devendra416/ddos-datasets) | 6.3 GB | 12,794,627 | 85 | 6.963s |
+| [Seattle Checkouts by Title](https://www.kaggle.com/city-of-seattle/seattle-checkouts-by-title) | 7.1 GB | 34,892,623 | 11 | 7.698s |
+| [SHA-1 password hash dump](https://www.kaggle.com/urvishramaiya/have-i-been-pwnd) | 11 GB | 2,62,974,241 | 2 | 10.775s |
+| [DOHUI NOH scaled_data](https://www.kaggle.com/seaa0612/scaled-data) | 16 GB | 496,782 | 3213 | 16.553s |
+
+</details>
 
 ## Compiling Tests
 
+Verification is disabled by default. A representative local run is:
+
 ```bash
-cmake -S . -B build -DCSV2_BUILD_TESTS=ON
-cmake --build build --config Debug
-ctest --test-dir build -C Debug --output-on-failure
+cmake -S . -B build \
+  -DCSV2_BUILD_TESTS=ON \
+  -DCSV2_REQUIRE_PYTHON_AUDITS=ON \
+  -DCSV2_VERIFICATION_PROFILE=quick
+cmake --build build --parallel
+ctest --test-dir build --no-tests=error --output-on-failure
 ```
 
-The test build runs the same behavioral suite against the modular and
-single-header forms in strict C++11, C++14, C++17, C++20, and C++23 modes. It
-also adds C++26 forward-compatibility compile-only targets when CMake and the compiler
-advertise that mode. CMake 3.12 or newer is required to request C++20, CMake
-3.20 or newer is required to request C++23, and CMake 3.30 or newer is required
-to request C++26. C++11 through C++23 prove behavior; C++26 only proves that
-the public surface still compiles and does not enable any C++26-only feature.
-These standard-specific targets prove compatibility with the selected language
-mode; they do not claim that a compiler or standard library completely
-implements every feature of that standard. Older supported toolchains register
-every mode they understand. The build also checks every public header
-independently in C++11, C++17, C++20, and C++23 modes, runs
-no-mmap through C++23, runs no-exceptions in C++11/C++20/C++23, compiles
-standard-specific contract translation units, and includes deterministic fuzz
-and benchmark checksum smoke tests.
+| Option | Purpose |
+| --- | --- |
+| `CSV2_BUILD_TESTS` | Runtime domains and compile contracts |
+| `CSV2_BUILD_BENCHMARKS` | Current-tree and common benchmark executables |
+| `CSV2_BUILD_BENCHMARK_CHECKS` | Deterministic benchmark CTest checks; requires benchmarks |
+| `CSV2_BUILD_FUZZERS` | Clang/libFuzzer Reader and Writer targets on supported platforms |
+| `CSV2_ENABLE_SANITIZERS` | Sanitizers for first-party verification targets |
+| `CSV2_REQUIRE_PYTHON_AUDITS` | Fail unless the Python 3.10 audits are available |
 
-`-DCSV2_ENABLE_SANITIZERS=ON` enables ASan and UBSan with GCC, Clang, and
-AppleClang. With the Microsoft compiler it enables MSVC AddressSanitizer only.
-With x64 Clang-CL it enables ASan and UBSan, discovers and validates the
-compiler-rt libraries installed beside the selected compiler, and links the
-required dynamic ASan and standalone UBSan runtimes. Clang-CL sanitizer builds
-must use a non-Debug CRT configuration; CI uses Release because Clang-CL ASan
-does not support the Debug CRT. The Clang-CL configuration disables only the
-UBSan `object-size` check because it diagnoses the MSVC standard library's
-`forward_list` pseudo-node implementation. Linux enables leak detection through
-ASan; Windows disables it because LeakSanitizer is not supported there.
+`CSV2_VERIFICATION_PROFILE=quick|full|perf` changes verification depth without enabling components. The root remains
+CMake 3.10 compatible; enabled test and benchmark subprojects require CMake 3.16.
 
-| Standard | Modular runtime test | Single-header runtime test |
-|:---------|:---------------------|:---------------------------|
-| C++11 | `csv2.module.cxx11` | `csv2.single_header.cxx11` |
-| C++14 | `csv2.module.cxx14` | `csv2.single_header.cxx14` |
-| C++17 | `csv2.module.cxx17` | `csv2.single_header.cxx17` |
-| C++20 | `csv2.module.cxx20` | `csv2.single_header.cxx20` |
-| C++23 | `csv2.module.cxx23` | `csv2.single_header.cxx23` |
-| C++26 compile-only | `csv2_standard_contract_module_cxx26` | `csv2_standard_contract_single_cxx26` |
-
-The `CSV2_REQUIRE_MODERN_STANDARD_TESTS` option is an enforcement switch for
-modern CI: configuration fails unless all four exact C++20/C++23 CTest names
-in the table are registered. Local compatibility remains conditional, while
-all Linux, Windows, and macOS CI jobs enable this switch so that a toolchain
-change cannot silently remove those four variants.
-
-`CSV2_REQUIRE_CXX26_TESTS` is a separate opt-in enforcement switch. CI enables
-it only for stable compiler lines whose CMake feature set advertises
-`cxx_std_26`; configuration then fails unless both exact C++26 compile-only
-targets in the table are registered. Other compiler rows continue to enforce
-C++20 and C++23 without making a false C++26 support claim.
-
-CI selects stable compiler lines already supplied by the stable hosted runner
-or its distribution. It deliberately avoids preview runner images, compiler
-snapshots, PPAs, and nightly LLVM repositories. The compiler ID and version
-line are verified by CMake during configuration; stable runner servicing may
-advance the patch component without silently changing the enforced line.
-
-CI is split into Linux, Windows, and macOS workflows, with warnings treated as
-errors throughout:
-
-| Platform | Normal coverage | Sanitizer coverage |
-|:---------|:----------------|:-------------------|
-| Linux | GCC 14 and Clang 18 with libc++; full tests, benchmark checksums, installation consumer | Separate GCC 14 and Clang 18 ASan/UBSan jobs with leak detection |
-| Windows | MSVC 19.51 and Clang-CL 22.1; MSVC verifies benchmark checksums and installation consumer | MSVC ASan and Clang-CL ASan/UBSan |
-| macOS | AppleClang 21 full tests, benchmark checksums, installation consumer | — |
-
-The Linux GCC job also builds an independent
-`find_package(csv2 CONFIG REQUIRED)` consumer and verifies single-header
-regeneration. The non-sanitized Linux Clang job checks first-party formatting
-with Clang Format 18. Sanitizer jobs run the labeled runtime suite; Windows
-executes its generated CTest manifest directly to avoid CTest/ASan
-process-management problems. A separate pull-request, weekly, and manually
-dispatchable workflow runs the deterministic fuzz smoke, a 5,000-input
-libFuzzer corpus smoke, and all benchmark checksums.
+Quick covers representative C++11, C++20, and C++23 slices and no-mmap/no-exceptions endpoints. Full expands the
+C++11–23, modular/single-header, and variant matrix; C++26 is compile-only. Details live in
+[`test/README.md`](test/README.md), [`CONTRIBUTING.md`](CONTRIBUTING.md), and
+[`third_party/verification/README.md`](third_party/verification/README.md).
 
 ## Installing and Consuming with CMake
 
-csv2 installs an exported CMake package, its modular headers, pkg-config
-metadata, and licenses. A minimal installation is:
+For an in-tree dependency, link the namespaced target:
+
+```cmake
+add_subdirectory(path/to/csv2)
+target_link_libraries(app PRIVATE csv2::csv2)
+```
+
+To install csv2 as a CMake package:
 
 ```bash
 cmake -S . -B build-install -DCMAKE_BUILD_TYPE=Release
@@ -502,7 +414,7 @@ cmake --build build-install
 cmake --install build-install --prefix /absolute/path/to/csv2-prefix
 ```
 
-An independent consumer can then use the namespaced interface target:
+An installed consumer uses:
 
 ```cmake
 cmake_minimum_required(VERSION 3.10)
@@ -513,25 +425,48 @@ add_executable(csv2_consumer main.cpp)
 target_link_libraries(csv2_consumer PRIVATE csv2::csv2)
 ```
 
-Configure that consumer with
-`-DCMAKE_PREFIX_PATH=/absolute/path/to/csv2-prefix`. Linux GCC CI performs this
-configure/build/run check against the freshly installed package.
+Configure with `-DCMAKE_PREFIX_PATH=/absolute/path/to/csv2-prefix`. Unix-like installs also provide
+`pkg-config --cflags csv2`.
+
+The package installs modular headers, CMake/pkg-config metadata, and licenses. It excludes tests, fuzzers, benchmarks,
+third-party verification libraries, and their tools. The generated single header is distributed separately.
 
 ## Generating Single Header
+
+The original amalgamation workflow remains available:
 
 ```bash
 python3 utils/amalgamate/amalgamate.py -c single_include.json -s .
 ```
 
-Commit modular-header and generated single-header changes together. To verify
-that generation is reproducible, run the command above and then:
+Commit modular and generated header changes together. Verify reproducibility:
 
 ```bash
 git diff --exit-code -- single_include/csv2/csv2.hpp
 ```
 
+Applications using the generated distribution add `single_include/` to their include path and include
+`<csv2/csv2.hpp>`.
+
 ## Contributing
-Contributions are welcome, have a look at the [CONTRIBUTING.md](CONTRIBUTING.md) document for more information.
+
+Contributions are welcome. Read [`CONTRIBUTING.md`](CONTRIBUTING.md) before changing behavior, verification, generated
+headers, or vendored sources. The test and benchmark READMEs define their manifests and evidence rules.
+
+Preserve C++11 and default behavior unless a change adds an explicit opt-in interface. Public header changes require
+focused tests and regenerated output.
+
+## Acknowledgements
+
+CSV2 was created by [Pranav (`p-ranav`)](https://github.com/p-ranav). Its
+[contributors](https://github.com/p-ranav/csv2/graphs/contributors) established the Reader, Writer, fixtures, benchmark,
+and amalgamated distribution inherited by this fork.
+
+Memory mapping vendors [mandreyel/mio](https://github.com/mandreyel/mio) under [`LICENSE.mio`](LICENSE.mio).
+Verification-only Catch2 and Google Benchmark provenance is recorded in
+[`third_party/verification/README.md`](third_party/verification/README.md).
 
 ## License
-The project is available under the [MIT](https://opensource.org/licenses/MIT) license.
+
+CSV2 and this fork's modifications are available under the [MIT License](LICENSE).
+Vendored components retain their own license notices.

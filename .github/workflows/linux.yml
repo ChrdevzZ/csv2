@@ -40,6 +40,9 @@ jobs:
           -DCMAKE_COMPILE_WARNING_AS_ERROR=ON
           -DCSV2_BUILD_TESTS=ON
           -DCSV2_BUILD_BENCHMARKS=ON
+          -DCSV2_BUILD_BENCHMARK_CHECKS=ON
+          -DCSV2_VERIFICATION_PROFILE=quick
+          -DCSV2_REQUIRE_PYTHON_AUDITS=ON
           -DCSV2_REQUIRE_MODERN_STANDARD_TESTS=ON
           -DCSV2_REQUIRE_CXX26_TESTS=ON
           -DCSV2_CI_EXPECTED_COMPILER_ID=GNU
@@ -52,7 +55,8 @@ jobs:
             -DCMAKE_CXX_COMPILER=g++-14 \
             -DCMAKE_CXX_COMPILE_FEATURES=cxx_std_11 \
             -DCSV2_BUILD_TESTS=ON \
-            -DCSV2_BUILD_BENCHMARKS=OFF
+            -DCSV2_BUILD_BENCHMARKS=OFF \
+            -DCSV2_REQUIRE_PYTHON_AUDITS=ON
           cmake --build build-reduced --target \
             csv2_test csv2_single_header_test \
             csv2_standard_contract_module_cxx11 \
@@ -67,49 +71,28 @@ jobs:
         run: cmake --build build --parallel
 
       - name: Test
-        run: ctest --test-dir build --output-on-failure
+        run: ctest --test-dir build --output-on-failure --output-junit ctest.xml
+
+      - name: Verify Release LTO observer and checksum semantics
+        run: |
+          cmake --build build --target csv2_benchmark_observer_audit --parallel
+          grep -Eq -- '-flto(=| |$)' build/build.ninja
+          ctest --test-dir build \
+            -R '^csv2\.benchmark\.current\.observer_audit\.' \
+            --no-tests=error --output-on-failure \
+            --output-junit observer-lto.xml
 
       - name: Install package
         run: cmake --install build --prefix build/install
 
+      - name: Verify verification dependencies are not installed
+        run: >-
+          test -z "$(find build/install
+          \( -iname '*catch2*' -o -iname '*benchmark*' \) -print -quit)"
+
       - name: Verify installed package consumer
         run: |
-          mkdir -p build/consumer
-          cat > build/consumer/CMakeLists.txt <<'EOF'
-          cmake_minimum_required(VERSION 3.10)
-          project(csv2_consumer LANGUAGES CXX)
-          find_package(csv2 CONFIG REQUIRED)
-          add_executable(csv2_consumer main.cpp)
-          target_link_libraries(csv2_consumer PRIVATE csv2::csv2)
-          target_compile_features(csv2_consumer PRIVATE cxx_std_20)
-          set_target_properties(csv2_consumer PROPERTIES CXX_EXTENSIONS OFF)
-          add_executable(csv2_no_mmap_consumer no_mmap.cpp)
-          target_link_libraries(csv2_no_mmap_consumer PRIVATE csv2::csv2)
-          target_compile_features(csv2_no_mmap_consumer PRIVATE cxx_std_11)
-          target_compile_definitions(csv2_no_mmap_consumer PRIVATE CSV2_HAS_MMAP=0)
-          set_target_properties(csv2_no_mmap_consumer PROPERTIES CXX_EXTENSIONS OFF)
-          EOF
-          cat > build/consumer/main.cpp <<'EOF'
-          #include <csv2/reader.hpp>
-          #include <string>
-
-          int main() {
-            csv2::Reader<> reader;
-            return reader.parse(std::string("a,b")) ? 0 : 1;
-          }
-          EOF
-          cat > build/consumer/no_mmap.cpp <<'EOF'
-          #include <csv2/mio.hpp>
-          #ifdef MIO_MMAP_HEADER
-          #error "mio must be absent when CSV2_HAS_MMAP=0"
-          #endif
-          #include <csv2/errors.hpp>
-          #include <csv2/parameters.hpp>
-          #include <csv2/reader.hpp>
-          #include <csv2/writer.hpp>
-          int main() { return CSV2_HAS_MMAP; }
-          EOF
-          cmake -S build/consumer -B build/consumer-build -G Ninja \
+          cmake -S test/contracts/consumer -B build/consumer-build -G Ninja \
             -DCMAKE_PREFIX_PATH="$PWD/build/install"
           cmake --build build/consumer-build --parallel
           ./build/consumer-build/csv2_consumer
@@ -121,27 +104,25 @@ jobs:
           csv2_includedir="$(PKG_CONFIG_PATH="$csv2_pc_dir" pkg-config \
             --variable=includedir csv2)"
           test -f "$csv2_includedir/csv2/reader.hpp"
-          cat > build/pkg-config-consumer.cpp <<'EOF'
-          #define CSV2_HAS_MMAP 0
-          #include <csv2/mio.hpp>
-          #ifdef MIO_MMAP_HEADER
-          #error "mio must be absent when CSV2_HAS_MMAP=0"
-          #endif
-          #include <csv2/errors.hpp>
-          #include <csv2/parameters.hpp>
-          #include <csv2/reader.hpp>
-          #include <csv2/writer.hpp>
-          int main() { return CSV2_HAS_MMAP; }
-          EOF
           g++-14 -std=c++11 -Wall -Wextra -Wpedantic -Werror \
             $(PKG_CONFIG_PATH="$csv2_pc_dir" pkg-config --cflags csv2) \
-            build/pkg-config-consumer.cpp -o build/pkg-config-consumer
+            test/contracts/consumer/pkg_config.cpp -o build/pkg-config-consumer
           ./build/pkg-config-consumer
 
       - name: Verify single-header regeneration
         run: |
           python3 utils/amalgamate/amalgamate.py -c single_include.json -s .
           git diff --exit-code -- single_include/csv2/csv2.hpp
+
+      - name: Upload CTest results
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: linux-gcc14-ctest
+          path: |
+            build/ctest.xml
+            build/observer-lto.xml
+          if-no-files-found: error
 
   gcc-sanitizers:
     name: Linux / GCC 14 / ASan + UBSan
@@ -161,6 +142,8 @@ jobs:
           -DCMAKE_COMPILE_WARNING_AS_ERROR=ON
           -DCSV2_BUILD_TESTS=ON
           -DCSV2_BUILD_BENCHMARKS=OFF
+          -DCSV2_VERIFICATION_PROFILE=quick
+          -DCSV2_REQUIRE_PYTHON_AUDITS=ON
           -DCSV2_ENABLE_SANITIZERS=ON
           -DCSV2_REQUIRE_MODERN_STANDARD_TESTS=ON
           -DCSV2_REQUIRE_CXX26_TESTS=ON
@@ -178,6 +161,7 @@ jobs:
           ctest --test-dir build
           -L sanitizer-runtime
           --no-tests=error
+          --output-junit ctest.xml
           --output-on-failure
 
   clang:
@@ -189,10 +173,12 @@ jobs:
       matrix:
         include:
           - compiler: Clang 18 + libc++
+            artifact: clang18-libcxx
             build_type: Release
             benchmarks: "ON"
             sanitizers: "OFF"
           - compiler: Clang 18 + libc++ / ASan + UBSan
+            artifact: clang18-libcxx-sanitizers
             build_type: Debug
             benchmarks: "OFF"
             sanitizers: "ON"
@@ -216,6 +202,9 @@ jobs:
           -DCMAKE_COMPILE_WARNING_AS_ERROR=ON
           -DCSV2_BUILD_TESTS=ON
           -DCSV2_BUILD_BENCHMARKS=${{ matrix.benchmarks }}
+          -DCSV2_BUILD_BENCHMARK_CHECKS=${{ matrix.benchmarks }}
+          -DCSV2_VERIFICATION_PROFILE=quick
+          -DCSV2_REQUIRE_PYTHON_AUDITS=ON
           -DCSV2_ENABLE_SANITIZERS=${{ matrix.sanitizers }}
           -DCSV2_REQUIRE_MODERN_STANDARD_TESTS=ON
           -DCSV2_REQUIRE_CXX26_TESTS=ON
@@ -227,7 +216,9 @@ jobs:
 
       - name: Test
         if: matrix.sanitizers == 'OFF'
-        run: ctest --test-dir build --output-on-failure
+        run: >-
+          ctest --test-dir build --output-on-failure
+          --output-junit ctest.xml
 
       - name: Test with ASan and UBSan
         if: matrix.sanitizers == 'ON'
@@ -241,23 +232,20 @@ jobs:
           ctest --test-dir build
           -L sanitizer-runtime
           --no-tests=error
+          --output-junit ctest.xml
           --output-on-failure
 
       - name: Check first-party C++ formatting
         if: matrix.sanitizers == 'OFF'
         run: |
-          git ls-files -z -- \
-            'include/csv2/detail/*.hpp' \
-            'include/csv2/errors.hpp' \
-            'include/csv2/parameters.hpp' \
-            'include/csv2/reader.hpp' \
-            'include/csv2/writer.hpp' \
-            'benchmark/common_driver.cpp' \
-            'benchmark/main.cpp' \
-            'test/config.cpp' \
-            'test/config_fallback.cpp' \
-            'test/fuzz_reader.cpp' \
-            'test/main.cpp' \
-            'test/mmap_path.cpp' \
-            'test/standard_cxx*.cpp' | \
+          git ls-files -z -- '*.cpp' '*.hpp' \
+            ':!third_party/**' ':!single_include/**' ':!include/csv2/mio.hpp' | \
             xargs -0 clang-format-18 --dry-run --Werror
+
+      - name: Upload CTest results
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: linux-${{ matrix.artifact }}-ctest
+          path: build/ctest.xml
+          if-no-files-found: error

@@ -1,0 +1,332 @@
+name: Performance evidence
+
+on:
+  workflow_dispatch:
+    inputs:
+      baseline_ref:
+        description: Baseline commit or ref
+        required: true
+        default: master
+        type: string
+      candidate_ref:
+        description: Candidate commit or ref (empty uses the dispatched SHA)
+        required: false
+        default: ""
+        type: string
+      runs:
+        description: Paired runs/repetitions
+        required: true
+        default: "20"
+        type: string
+      files:
+        description: Corpus filenames or all; fixed metrics uses the first selection
+        required: true
+        default: all
+        type: string
+      corpus_scale:
+        description: Deterministic corpus row multiplier
+        required: true
+        default: "100"
+        type: string
+      evidence:
+        description: Evidence class
+        required: true
+        default: exploratory
+        type: choice
+        options:
+          - exploratory
+          - controlled
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}-${{ inputs.evidence }}
+  cancel-in-progress: false
+
+jobs:
+  exploratory:
+    if: inputs.evidence == 'exploratory'
+    name: Perf / exploratory / hosted Linux
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - name: Check out exact candidate repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.candidate_ref || github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Resolve immutable revisions
+        env:
+          BASELINE_INPUT: ${{ inputs.baseline_ref }}
+          CANDIDATE_INPUT: ${{ inputs.candidate_ref }}
+        run: |
+          set -euo pipefail
+          baseline=$(git rev-parse "${BASELINE_INPUT}^{commit}")
+          candidate_input=${CANDIDATE_INPUT:-$GITHUB_SHA}
+          requested_candidate=$(git rev-parse "${candidate_input}^{commit}")
+          candidate=$(git rev-parse 'HEAD^{commit}')
+          test "$candidate" = "$requested_candidate"
+          git cat-file -e "${baseline}^{commit}"
+          printf 'BASELINE_SHA=%s\nCANDIDATE_SHA=%s\n' \
+            "$baseline" "$candidate" >> "$GITHUB_ENV"
+          mkdir -p build-perf/reports
+
+      - name: Collect exploratory current-tree metrics from owned build
+        env:
+          RUNS: ${{ inputs.runs }}
+          CORPUS_SCALE: ${{ inputs.corpus_scale }}
+          FILES: ${{ inputs.files }}
+        run: |
+          metrics_file=$(python3 -c \
+            'import sys; v=sys.argv[1]; print("short_unquoted.csv" if v=="all" else v.split(",",1)[0].strip())' \
+            "$FILES")
+          test -n "$metrics_file"
+          python3 benchmark/collect_metrics.py \
+            --repository . --candidate-ref "$CANDIDATE_SHA" \
+            --build-root build-perf/current-owned \
+            --corpus-scale "$CORPUS_SCALE" \
+            --compiler-executable "$(command -v g++-14)" \
+            --compiler-flags="-O3 -DNDEBUG" \
+            --operation traversal/rows-cells \
+            --input "$metrics_file" --source buffer --runs "$RUNS" \
+            --minimum-time 0.1s --warmup-seconds 0.1 \
+            --evidence-level exploratory --skip-pmu \
+            --output build-perf/reports/current-metrics.json
+
+      - name: Verify owned current-tree checksums and corpus
+        run: |
+          test -s build-perf/current-owned/build/benchmark-corpus/manifest.json
+          cmake --build build-perf/current-owned/build --parallel
+          ctest --test-dir build-perf/current-owned/build \
+            -L benchmark-checksum --no-tests=error --output-on-failure \
+            --output-junit "$GITHUB_WORKSPACE/build-perf/reports/benchmark-checksum.xml"
+
+      - name: Collect exploratory owned A/A and A/B reports
+        env:
+          RUNS: ${{ inputs.runs }}
+          FILES: ${{ inputs.files }}
+        run: |
+          datasets=build-perf/current-owned/build/benchmark-corpus/fixtures
+          compiler=$(command -v g++-14)
+          python3 benchmark/run_suite.py \
+            --repository . \
+            --baseline-ref "$CANDIDATE_SHA" \
+            --candidate-ref "$CANDIDATE_SHA" \
+            --build-root build-perf/common-aa \
+            --compiler-executable "$compiler" \
+            --compiler-flags="-std=c++11 -O3 -DNDEBUG" \
+            --datasets "$datasets" --runs "$RUNS" --warmups 3 --iterations 10 \
+            --operations rows_cells,legacy_writer_raw \
+            --sources buffer,mmap --files "$FILES" --mode aa \
+            --evidence-level exploratory \
+            --output build-perf/reports/aa.json
+          python3 benchmark/run_suite.py \
+            --repository . \
+            --baseline-ref "$BASELINE_SHA" \
+            --candidate-ref "$CANDIDATE_SHA" \
+            --build-root build-perf/common-ab \
+            --compiler-executable "$compiler" \
+            --compiler-flags="-std=c++11 -O3 -DNDEBUG" \
+            --datasets "$datasets" --runs "$RUNS" --warmups 3 --iterations 10 \
+            --operations rows_cells,legacy_writer_raw \
+            --sources buffer,mmap --files "$FILES" --mode compare \
+            --calibration build-perf/reports/aa.json \
+            --evidence-level exploratory \
+            --output build-perf/reports/ab.json
+
+      - name: Finalize exploratory evidence bundle
+        run: |
+          python3 benchmark/finalize_evidence.py \
+            --calibration build-perf/reports/aa.json \
+            --calibration-manifest build-perf/reports/aa.json.sha256.json \
+            --comparison build-perf/reports/ab.json \
+            --comparison-manifest build-perf/reports/ab.json.sha256.json \
+            --fixed-metrics build-perf/reports/current-metrics.json \
+            --fixed-metrics-manifest build-perf/reports/current-metrics.json.sha256.json \
+            --corpus-manifest build-perf/current-owned/build/benchmark-corpus/manifest.json \
+            --output build-perf/reports/evidence.json
+
+      - name: Verify exploratory evidence artifacts
+        run: |
+          for artifact in \
+            build-perf/reports/aa.json \
+            build-perf/reports/aa.json.sha256.json \
+            build-perf/reports/ab.json \
+            build-perf/reports/ab.json.sha256.json \
+            build-perf/reports/current-metrics.json \
+            build-perf/reports/current-metrics.json.sha256.json \
+            build-perf/reports/evidence.json \
+            build-perf/reports/evidence.json.sha256.json \
+            build-perf/reports/benchmark-checksum.xml \
+            build-perf/current-owned/build/benchmark-corpus/manifest.json; do
+            test -s "$artifact"
+          done
+
+      - name: Upload exploratory failure diagnostics
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: csv2-perf-exploratory-diagnostics-${{ github.run_id }}
+          path: |
+            build-perf/reports
+            build-perf/current-owned/build/benchmark-corpus/manifest.json
+          if-no-files-found: warn
+
+      - name: Upload exploratory evidence
+        if: success()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: csv2-perf-exploratory-${{ github.run_id }}
+          path: |
+            build-perf/reports
+            build-perf/current-owned/build/benchmark-corpus/manifest.json
+          if-no-files-found: error
+
+  controlled:
+    if: inputs.evidence == 'controlled'
+    name: Perf / controlled / csv2-perf runner
+    runs-on: [self-hosted, linux, x64, csv2-perf]
+    timeout-minutes: 180
+    steps:
+      - name: Check out exact candidate repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.candidate_ref || github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Validate runner and resolve immutable revisions
+        env:
+          BASELINE_INPUT: ${{ inputs.baseline_ref }}
+          CANDIDATE_INPUT: ${{ inputs.candidate_ref }}
+          RUNS: ${{ inputs.runs }}
+        run: |
+          set -euo pipefail
+          test "$RUNS" -ge 20
+          command -v taskset
+          test -r /proc/sys/kernel/perf_event_paranoid
+          baseline=$(git rev-parse "${BASELINE_INPUT}^{commit}")
+          candidate_input=${CANDIDATE_INPUT:-$GITHUB_SHA}
+          requested_candidate=$(git rev-parse "${candidate_input}^{commit}")
+          candidate=$(git rev-parse 'HEAD^{commit}')
+          test "$candidate" = "$requested_candidate"
+          git cat-file -e "${baseline}^{commit}"
+          printf 'BASELINE_SHA=%s\nCANDIDATE_SHA=%s\n' \
+            "$baseline" "$candidate" >> "$GITHUB_ENV"
+          mkdir -p build-perf/reports
+
+      - name: Collect controlled current-tree metrics from owned build
+        env:
+          RUNS: ${{ inputs.runs }}
+          CORPUS_SCALE: ${{ inputs.corpus_scale }}
+          FILES: ${{ inputs.files }}
+        run: |
+          metrics_file=$(python3 -c \
+            'import sys; v=sys.argv[1]; print("short_unquoted.csv" if v=="all" else v.split(",",1)[0].strip())' \
+            "$FILES")
+          test -n "$metrics_file"
+          taskset -c 0 python3 benchmark/collect_metrics.py \
+            --repository . --candidate-ref "$CANDIDATE_SHA" \
+            --build-root build-perf/current-owned \
+            --corpus-scale "$CORPUS_SCALE" \
+            --compiler-executable "$(command -v g++)" \
+            --compiler-flags="-O3 -DNDEBUG" \
+            --operation traversal/rows-cells \
+            --input "$metrics_file" --source buffer --runs "$RUNS" \
+            --minimum-time 0.5s --warmup-seconds 0.5 \
+            --evidence-level controlled --cpu-affinity 0 \
+            --output build-perf/reports/current-metrics.json
+          grep -q 'BENCHMARK_ENABLE_LIBPFM:BOOL=ON' \
+            build-perf/current-owned/build/CMakeCache.txt
+
+      - name: Verify owned current-tree checksums and corpus
+        run: |
+          test -s build-perf/current-owned/build/benchmark-corpus/manifest.json
+          cmake --build build-perf/current-owned/build --parallel
+          ctest --test-dir build-perf/current-owned/build \
+            -L benchmark-checksum --no-tests=error --output-on-failure \
+            --output-junit "$GITHUB_WORKSPACE/build-perf/reports/benchmark-checksum.xml"
+
+      - name: Collect controlled owned A/A and A/B reports
+        env:
+          RUNS: ${{ inputs.runs }}
+          FILES: ${{ inputs.files }}
+        run: |
+          datasets=build-perf/current-owned/build/benchmark-corpus/fixtures
+          compiler=$(command -v g++)
+          taskset -c 0 python3 benchmark/run_suite.py \
+            --repository . \
+            --baseline-ref "$CANDIDATE_SHA" \
+            --candidate-ref "$CANDIDATE_SHA" \
+            --build-root build-perf/common-aa \
+            --compiler-executable "$compiler" \
+            --compiler-flags="-std=c++11 -O3 -DNDEBUG" \
+            --datasets "$datasets" --runs "$RUNS" --warmups 3 --iterations 10 \
+            --operations rows_cells,legacy_writer_raw \
+            --sources buffer,mmap --files "$FILES" --mode aa \
+            --evidence-level controlled --cpu-affinity 0 \
+            --output build-perf/reports/aa.json
+          taskset -c 0 python3 benchmark/run_suite.py \
+            --repository . \
+            --baseline-ref "$BASELINE_SHA" \
+            --candidate-ref "$CANDIDATE_SHA" \
+            --build-root build-perf/common-ab \
+            --compiler-executable "$compiler" \
+            --compiler-flags="-std=c++11 -O3 -DNDEBUG" \
+            --datasets "$datasets" --runs "$RUNS" --warmups 3 --iterations 10 \
+            --operations rows_cells,legacy_writer_raw \
+            --sources buffer,mmap --files "$FILES" --mode compare \
+            --calibration build-perf/reports/aa.json \
+            --evidence-level controlled --cpu-affinity 0 \
+            --output build-perf/reports/ab.json
+
+      - name: Finalize controlled evidence bundle
+        run: |
+          python3 benchmark/finalize_evidence.py \
+            --calibration build-perf/reports/aa.json \
+            --calibration-manifest build-perf/reports/aa.json.sha256.json \
+            --comparison build-perf/reports/ab.json \
+            --comparison-manifest build-perf/reports/ab.json.sha256.json \
+            --fixed-metrics build-perf/reports/current-metrics.json \
+            --fixed-metrics-manifest build-perf/reports/current-metrics.json.sha256.json \
+            --corpus-manifest build-perf/current-owned/build/benchmark-corpus/manifest.json \
+            --output build-perf/reports/evidence.json
+
+      - name: Verify controlled evidence artifacts
+        run: |
+          for artifact in \
+            build-perf/reports/aa.json \
+            build-perf/reports/aa.json.sha256.json \
+            build-perf/reports/ab.json \
+            build-perf/reports/ab.json.sha256.json \
+            build-perf/reports/current-metrics.json \
+            build-perf/reports/current-metrics.json.sha256.json \
+            build-perf/reports/evidence.json \
+            build-perf/reports/evidence.json.sha256.json \
+            build-perf/reports/benchmark-checksum.xml \
+            build-perf/current-owned/build/benchmark-corpus/manifest.json; do
+            test -s "$artifact"
+          done
+
+      - name: Upload controlled failure diagnostics
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: csv2-perf-controlled-diagnostics-${{ github.run_id }}
+          path: |
+            build-perf/reports
+            build-perf/current-owned/build/benchmark-corpus/manifest.json
+          if-no-files-found: warn
+
+      - name: Upload controlled evidence
+        if: success()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: csv2-perf-controlled-${{ github.run_id }}
+          path: |
+            build-perf/reports
+            build-perf/current-owned/build/benchmark-corpus/manifest.json
+          if-no-files-found: error

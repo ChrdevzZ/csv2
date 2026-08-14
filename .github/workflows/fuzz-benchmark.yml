@@ -35,7 +35,10 @@ jobs:
           -DCMAKE_COMPILE_WARNING_AS_ERROR=ON
           -DCSV2_BUILD_TESTS=ON
           -DCSV2_BUILD_BENCHMARKS=ON
+          -DCSV2_BUILD_BENCHMARK_CHECKS=ON
           -DCSV2_BUILD_FUZZERS=ON
+          -DCSV2_VERIFICATION_PROFILE=quick
+          -DCSV2_REQUIRE_PYTHON_AUDITS=ON
           -DCSV2_REQUIRE_MODERN_STANDARD_TESTS=ON
           -DCSV2_REQUIRE_CXX26_TESTS=ON
           -DCSV2_CI_EXPECTED_COMPILER_ID=Clang
@@ -44,24 +47,29 @@ jobs:
       - name: Build smoke targets
         run: >-
           cmake --build build --parallel
-          --target csv2_fuzz csv2_fuzz_smoke
-          csv2_benchmark csv2_benchmark_allocations
+          --target csv2_fuzz csv2_fuzz_writer csv2_fuzz_smoke csv2_fuzz_writer_smoke
+          csv2_benchmark csv2_benchmark_allocations csv2_benchmark_observer_audit
           csv2_common_benchmark
 
       - name: Run deterministic fuzz smoke
-        run: ctest --test-dir build -L fuzz-smoke --no-tests=error --output-on-failure
+        run: >-
+          ctest --test-dir build -L fuzz-smoke --no-tests=error
+          --output-on-failure --output-junit fuzz-smoke.xml
 
       - name: Run libFuzzer corpus smoke
         env:
           ASAN_OPTIONS: detect_leaks=1:halt_on_error=1
           UBSAN_OPTIONS: halt_on_error=1:print_stacktrace=1
-        run: ./build/test/csv2_fuzz -runs=5000 test/fuzz/corpus
+        run: |
+          ./build/test/fuzz/csv2_fuzz -runs=5000 test/fuzz/corpus/reader
+          ./build/test/fuzz/csv2_fuzz_writer -runs=5000 test/fuzz/corpus/writer
 
       - name: Verify benchmark checksums
         run: >-
           ctest --test-dir build
           -L benchmark-checksum
           --no-tests=error
+          --output-junit benchmark-checksum.xml
           --output-on-failure
 
       - name: Verify no-mmap benchmark configuration
@@ -72,17 +80,34 @@ jobs:
             -DCMAKE_COMPILE_WARNING_AS_ERROR=ON \
             -DCSV2_BUILD_TESTS=ON \
             -DCSV2_BUILD_BENCHMARKS=ON \
+            -DCSV2_BUILD_BENCHMARK_CHECKS=ON \
             -DCSV2_BUILD_FUZZERS=OFF \
+            -DCSV2_VERIFICATION_PROFILE=quick \
+            -DCSV2_REQUIRE_PYTHON_AUDITS=ON \
             -DCSV2_HAS_MMAP=0 \
             -DCSV2_CI_EXPECTED_COMPILER_ID=Clang \
             -DCSV2_CI_EXPECTED_COMPILER_VERSION_PREFIX=18
           cmake --build build-no-mmap --parallel \
             --target csv2_benchmark csv2_benchmark_allocations \
+            csv2_benchmark_observer_audit \
             csv2_common_benchmark
           ctest --test-dir build-no-mmap -L benchmark-checksum \
-            --no-tests=error --output-on-failure
+            --no-tests=error --output-on-failure \
+            --output-junit benchmark-checksum.xml
           if ctest --test-dir build-no-mmap -N | \
-              grep -E 'csv2\.benchmark\.checksum\.(map_only|rows_cells_mmap)'; then
+              grep -E 'csv2\.benchmark\.current\.mmap'; then
             echo "mmap checksum tests were registered in a no-mmap build" >&2
             exit 1
           fi
+
+      - name: Upload smoke reports and corpus manifests
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: fuzz-benchmark-smoke
+          path: |
+            build/fuzz-smoke.xml
+            build/benchmark-checksum.xml
+            build-no-mmap/benchmark-checksum.xml
+            benchmark/datasets/manifest.json
+          if-no-files-found: error
