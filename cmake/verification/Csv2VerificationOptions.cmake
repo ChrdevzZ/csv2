@@ -7,6 +7,8 @@ option(CSV2_BUILD_BENCHMARK_CHECKS
   "Register deterministic benchmark protocol and checksum CTest entries" OFF)
 option(CSV2_ENABLE_SANITIZERS
   "Enable sanitizers for first-party verification targets" OFF)
+option(CSV2_REQUIRE_PYTHON_AUDITS
+  "Fail configuration when Python 3.10 audit tooling is unavailable" OFF)
 
 set(CSV2_VERIFICATION_PROFILE "quick" CACHE STRING
   "Verification depth: quick, full, or perf")
