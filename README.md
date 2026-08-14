@@ -125,29 +125,36 @@ already present in the output container.
 
 The independent benchmark subproject provides a registry of source, traversal,
 extraction, validation, conversion, ranges, index, and Writer operations. Each
-kernel has an explicit setup/timed/verification boundary. Exact checksums and
-allocation contracts are verified separately from Google Benchmark timing;
-GiB/s consistently uses input-corpus bytes. Hosted CI builds every operation
-group and checks protocol, checksum, CLI, and zero-allocation contracts, but
-never accepts or rejects a change from hosted timing.
+kernel has an explicit setup/timed/verification boundary, observes live local
+results so optimized builds cannot delete the work, and reports explicit I/O,
+mapping, parse, overflow, and stream failures. Exact checksums and allocation
+contracts are verified separately from Google Benchmark timing; GiB/s
+consistently uses input-corpus bytes. Hosted CI builds every operation group,
+runs a Release LTO observer audit, and checks protocol, checksum, CLI, and
+zero-allocation contracts, but never accepts or rejects a change from hosted
+timing.
 
 ```bash
 cmake -S . -B build-benchmark -G Ninja \
   -DCMAKE_BUILD_TYPE=Release \
   -DCSV2_BUILD_BENCHMARKS=ON \
   -DCSV2_BUILD_BENCHMARK_CHECKS=ON \
+  -DCSV2_REQUIRE_PYTHON_AUDITS=ON \
   -DCSV2_BENCHMARK_REVISION="$(git rev-parse HEAD)"
 cmake --build build-benchmark --parallel
 ctest --test-dir build-benchmark -L benchmark-checksum \
   --no-tests=error --output-on-failure
 ```
 
-Cross-revision claims use the same C++11
+Cross-revision claims use an owned-build pipeline that exports immutable Git
+objects and compiles the same C++11
 [`common_driver.cpp`](benchmark/compare/common_driver.cpp) against both exact
-header archives, followed by A/A calibration and alternating A/B runs. Reports
-bind revisions, binaries, driver, corpus, machine, compiler, raw samples, and
-statistics by hash. Hosted results are marked `exploratory`; only a fixed
-Linux machine satisfying the `controlled` protocol is decision-eligible. See
+header trees, followed by A/A calibration and alternating A/B runs. V4 reports
+bind source trees, compiler and normalized argv, binaries, driver/tool bundle,
+corpus, machine, raw samples, and statistics by hash. External executable mode
+is explicitly exploratory. Hosted results are marked `exploratory`; only a
+fixed Linux machine satisfying the owned `controlled` protocol is
+decision-eligible. See
 [`benchmark/README.md`](benchmark/README.md) for operations, deterministic
 corpus generation, protocol versions, and reproducible commands.
 
@@ -412,6 +419,7 @@ at compile time. `EscapingWriter` is its minimal-quoting convenience alias.
 
 ```bash
 cmake -S . -B build -DCSV2_BUILD_TESTS=ON \
+  -DCSV2_REQUIRE_PYTHON_AUDITS=ON \
   -DCSV2_VERIFICATION_PROFILE=quick
 cmake --build build --parallel
 ctest --test-dir build --output-on-failure
@@ -425,12 +433,18 @@ Verification components are off by default and independently selectable:
 | `CSV2_BUILD_BENCHMARKS` | current and common benchmark executables |
 | `CSV2_BUILD_BENCHMARK_CHECKS` | deterministic benchmark CTest checks; requires benchmarks |
 | `CSV2_BUILD_FUZZERS` | non-Windows Clang/libFuzzer Reader and Writer targets |
+| `CSV2_REQUIRE_PYTHON_AUDITS` | fail unless Python 3.10 audit tooling is available |
 
 `CSV2_VERIFICATION_PROFILE` accepts `quick`, `full`, or `perf` and controls
 depth only; it never enables a component. The root remains CMake 3.10
 compatible when all options are off. Enabling tests, fuzzers, or benchmarks
 enters an isolated CMake 3.16 subdirectory and uses only offline vendored
 verification dependencies.
+
+Full and perf profiles always require Python 3.10. Quick local builds may omit
+it, but configuration emits a visible list of skipped audits; every CI profile
+sets `CSV2_REQUIRE_PYTHON_AUDITS=ON`. Vendored source hashes are still checked
+by CMake without Python.
 
 The quick profile runs C++11 and C++20 behavior through modular and
 single-header forms, a C++23 feature slice, and no-mmap/no-exceptions endpoint

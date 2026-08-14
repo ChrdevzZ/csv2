@@ -43,6 +43,7 @@ cmake -S . -B build -G Ninja \
   -DCSV2_BUILD_TESTS=ON \
   -DCSV2_BUILD_BENCHMARKS=ON \
   -DCSV2_BUILD_BENCHMARK_CHECKS=ON \
+  -DCSV2_REQUIRE_PYTHON_AUDITS=ON \
   -DCSV2_VERIFICATION_PROFILE=quick
 cmake --build build --parallel
 ctest --test-dir build --output-on-failure
@@ -52,6 +53,10 @@ Use `full` before changing standards, feature detection, iterators/ranges,
 ownership, no-mmap/no-exceptions behavior, or platform mapping. Use `perf` only
 with the benchmark evidence process; profile selection is not itself a claim
 that a machine is controlled.
+
+Full/perf profiles and every CI job require Python 3.10 audits. A quick local
+configuration may continue without Python only after printing the skipped
+audit categories; do not report that run as the complete quick gate.
 
 `CSV2_ENABLE_SANITIZERS=ON` applies supported sanitizers only to first-party
 verification targets. GNU-style GCC/Clang and AppleClang use ASan+UBSan; MSVC
@@ -122,14 +127,19 @@ by operation, source, and dataset. Every kernel must define:
 
 - preparation outside timing;
 - the exact timed action;
+- a live local value/memory observation before clear or destruction;
 - untimed checksum verification;
 - input bytes, rows, cells, and operation bytes;
-- whether the timed path must allocate zero times.
+- whether the timed path must allocate zero times;
+- supported sources, preparation requirements, and explicit failure status.
 
 Add a deterministic verify and short dry-run CTest for each operation group.
 Timing never replaces correctness tests. Do not compare historical benchmark
-executables across revisions; compile the same C++11
-`benchmark/compare/common_driver.cpp` against both exact header archives.
+executables or hand-built artifacts across revisions. Use the owned pipeline,
+which exports immutable Git objects and compiles the same C++11
+`benchmark/compare/common_driver.cpp` against both exact header trees with an
+audited compiler and normalized command. `--external-artifacts` is for
+exploratory diagnostics only.
 
 Performance statements require the versioned pipeline, retained JSON, A/A
 noise calibration, alternating A/B runs, matching checksums, and the threshold
@@ -143,8 +153,8 @@ Catch2 and Google Benchmark are test-only, offline snapshots under
 `third_party/verification`. Do not add `FetchContent`, submodules, system-package
 fallbacks, or configure-time network access. Before changing a snapshot:
 
-1. update exact tag/commit, archive SHA-256, SPDX license, whitelist, and
-   snapshot hash in `manifest.json`;
+1. update exact tag/commit, archive SHA-256, SPDX license, whitelist,
+   per-file SHA-256 list, and snapshot hash in `manifest.json`;
 2. fetch and stage only through the maintainer tool's explicit network mode;
 3. keep patches as separate files under `patches/` with rationale and upstream
    issue; never edit a snapshot silently;
@@ -160,7 +170,9 @@ python3 tools/vendor/test_update_verification_dependencies.py -v
 Third-party sources are excluded from CSV2 formatting, Werror, sanitizers, and
 coverage. Dependency loaders must also override `COMPILE_WARNING_AS_ERROR` at
 target scope because CMake's global initializer crosses subdirectory policy
-scopes. See
+scopes. Loaders must reject target collisions and restore the parent Cache
+value/type/help/advanced/strings state exactly; CMake validates every vendored
+file hash even when Python is unavailable. See
 [`third_party/verification/README.md`](third_party/verification/README.md).
 
 ## CI and documentation

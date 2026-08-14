@@ -84,7 +84,9 @@ other macros in `assertions.hpp`:
 The minitest `REQUIRE` path records the failure and returns from the current
 test function; it never uses an exception for control flow. Exception-only
 cases must be guarded so the same semantic source compiles with exceptions
-disabled.
+disabled. Each static registrar owns its intrusive list node, so registration
+has no fixed capacity and performs no dynamic allocation. A separate contract
+registers and executes 600 cases to prevent a silent capacity regression.
 
 ## Profiles
 
@@ -100,6 +102,7 @@ The normal quick workflow is:
 
 ```bash
 cmake -S . -B build -DCSV2_BUILD_TESTS=ON \
+  -DCSV2_REQUIRE_PYTHON_AUDITS=ON \
   -DCSV2_VERIFICATION_PROFILE=quick
 cmake --build build --parallel
 ctest --test-dir build --output-on-failure
@@ -110,6 +113,11 @@ the compiler must advertise a standard before that standard is added.
 `CSV2_REQUIRE_MODERN_STANDARD_TESTS=ON` and
 `CSV2_REQUIRE_CXX26_TESTS=ON` turn missing CI capabilities into configuration
 errors; they do not add language support.
+
+Full/perf profiles require Python 3.10 for vendor tooling and legacy parity.
+Quick local configuration may continue without Python but names those skipped
+audits in a warning. Use `-DCSV2_REQUIRE_PYTHON_AUDITS=ON` for the complete
+quick gate; CI always does so.
 
 Tests and fuzzers are independent:
 
@@ -164,7 +172,9 @@ that invariant:
 - `csv2_fuzz` exercises traversal, extraction, validation, conversion, and
   indexing with default and non-default policies.
 - `csv2_fuzz_writer` converts arbitrary bytes to fields, writes with minimal
-  escaping, parses strictly, and requires exact content round-trip.
+  escaping, parses strictly, and requires exactly one output record, the exact
+  cell count, and exact content round-trip. Its standalone oracle rejects a
+  valid first record followed by any extra record.
 
 Replay committed corpora before starting an open-ended fuzz session:
 
@@ -187,10 +197,12 @@ small reproducer that is useful in both the stable suite and seed corpus.
 
 ## Verification dependencies
 
-Catch2 is an offline, hash-checked test-only snapshot. Its targets are loaded
-with `EXCLUDE_FROM_ALL`, receive neither CSV2 Werror/sanitizer/coverage flags
-nor install/export rules, and are absent when only C++11/no-exceptions tests or
-fuzzers are configured. See
+Catch2 is an offline, per-file hash-checked test-only snapshot. Its targets are
+loaded with `EXCLUDE_FROM_ALL`, receive neither CSV2
+Werror/sanitizer/coverage flags nor install/export rules, and are absent when
+only C++11/no-exceptions tests or fuzzers are configured. The loader rejects
+pre-existing target names and restores the complete parent CMake Cache state.
+See
 [`third_party/verification/README.md`](../third_party/verification/README.md).
 
 GNU 14 runtime-test aggregates retain `-Warray-bounds` and

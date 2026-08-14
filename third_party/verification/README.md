@@ -69,6 +69,11 @@ before loading either dependency. Ordinary configuration and all CI jobs are
 offline: there is no `FetchContent`, submodule update, package-manager fallback,
 or automatic fetch.
 
+Python 3.10 additionally runs the aggregate snapshot and maintenance-tool
+contracts. Full/perf profiles and `CSV2_REQUIRE_PYTHON_AUDITS=ON` fail when it
+is unavailable; a quick local build may continue only with an explicit warning
+listing those skipped audits. The CMake per-file gate is never skipped.
+
 ## Maintainer update procedure
 
 Dependency updates are explicit review operations. First edit a proposed
