@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import copy
 import hashlib
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -16,6 +17,50 @@ REPOSITORY = _support.BENCHMARK_DIR.parent
 
 
 class BuildTests(unittest.TestCase):
+    def test_msvc_owned_build_normalizes_source_paths_reproducibly(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            headers = builds.export_git_tree(
+                REPOSITORY, "HEAD", root / "headers", ("include",)
+            )
+            adapter = builds.export_git_tree(
+                REPOSITORY,
+                "HEAD",
+                root / "adapter",
+                ("benchmark/compare/common_driver.cpp",),
+            )
+            compiler = root / "cl.exe"
+            shutil.copy2(sys.executable, compiler)
+
+            def fake_run(command, **kwargs):
+                del kwargs
+                if "/Bv" in command:
+                    return subprocess.CompletedProcess(
+                        command, 0, "fake MSVC compiler 1\n", ""
+                    )
+                output = next(
+                    Path(argument.removeprefix("/Fe:"))
+                    for argument in command
+                    if argument.startswith("/Fe:")
+                )
+                output.write_bytes(b"owned-driver")
+                return subprocess.CompletedProcess(command, 0, "", "")
+
+            manifest = builds.compile_common_driver(
+                header_export=headers,
+                adapter_export=adapter,
+                compiler=compiler,
+                compiler_flags=("/O2", "/DNDEBUG"),
+                output=root / "driver.exe",
+                run_fn=fake_run,
+            )
+
+        normalized = manifest["normalized_argv"]
+        self.assertIn("/experimental:deterministic", normalized)
+        self.assertIn("/Brepro", normalized)
+        self.assertIn("/pathmap:{header_root}=/_csv2/source", normalized)
+        self.assertIn("/pathmap:{adapter_root}=/_csv2/adapter", normalized)
+
     def test_git_paths_reject_cross_platform_escape_forms(self) -> None:
         self.assertEqual(
             builds.safe_git_path("include/csv2/reader.hpp").as_posix(),
