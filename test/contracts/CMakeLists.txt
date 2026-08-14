@@ -315,3 +315,22 @@ if(CSV2_REQUIRE_CXX26_TESTS)
     endif()
   endforeach()
 endif()
+
+foreach(csv2_superproject_mode IN ITEMS
+    normal catch_collision benchmark_collision)
+  add_test(NAME csv2.vendor.superproject.${csv2_superproject_mode}
+    COMMAND ${CMAKE_COMMAND}
+      -DCSV2_TEST_CONTRACT_ROOT=${CMAKE_CURRENT_BINARY_DIR}/superproject/${csv2_superproject_mode}
+      -DCSV2_TEST_CONTRACT_SOURCE=${CMAKE_CURRENT_SOURCE_DIR}/superproject
+      -DCSV2_TEST_CONTRACT_CSV2_SOURCE=${csv2_SOURCE_DIR}
+      -DCSV2_TEST_CONTRACT_GENERATOR=${CMAKE_GENERATOR}
+      -DCSV2_TEST_CONTRACT_GENERATOR_PLATFORM=${CMAKE_GENERATOR_PLATFORM}
+      -DCSV2_TEST_CONTRACT_GENERATOR_TOOLSET=${CMAKE_GENERATOR_TOOLSET}
+      -DCSV2_TEST_CONTRACT_CXX_COMPILER=${CMAKE_CXX_COMPILER}
+      -DCSV2_TEST_CONTRACT_CMAKE_RC_COMPILER=${CMAKE_RC_COMPILER}
+      -DCSV2_TEST_CONTRACT_CMAKE_MT=${CMAKE_MT}
+      -DCSV2_TEST_CONTRACT_MODE=${csv2_superproject_mode}
+      -P ${CMAKE_CURRENT_SOURCE_DIR}/../cmake/superproject_contract.cmake)
+  set_tests_properties(csv2.vendor.superproject.${csv2_superproject_mode}
+    PROPERTIES LABELS "vendor-integrity;verification" TIMEOUT 180)
+endforeach()

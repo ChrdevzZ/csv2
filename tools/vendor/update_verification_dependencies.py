@@ -105,6 +105,25 @@ def snapshot_hash(root: Path, files: Iterable[str]) -> str:
     return digest.hexdigest()
 
 
+def hash_lines(snapshot: Path, files: Iterable[str]) -> List[str]:
+    return [
+        f"{sha256_file(snapshot.joinpath(*safe_relative_path(value).parts))}  {value}"
+        for value in files
+    ]
+
+
+def write_hash_list(root: Path, name: str) -> None:
+    entry = dependency(load_manifest(root), name)
+    files = read_file_list(root, entry)
+    snapshot = root / str(entry["root"])
+    if files != files_under(snapshot):
+        raise VendorError(f"{name} file-list does not match the snapshot")
+    hash_path = root / str(entry["hash_list"])
+    contents = "\n".join(hash_lines(snapshot, files)) + "\n"
+    hash_path.write_text(contents, encoding="utf-8", newline="\n")
+    print(f"{hash_path}: {len(files)} files")
+
+
 def sha256_file(path: Path) -> str:
     digest = hashlib.sha256()
     with path.open("rb") as stream:
@@ -130,6 +149,14 @@ def check_dependency(root: Path, name: str, entry: Mapping[str, object]) -> str:
         raise VendorError(
             f"{name} snapshot SHA-256 mismatch: expected {expected_hash}, got {actual_hash}"
         )
+    hash_path = root / str(entry["hash_list"])
+    try:
+        expected_hash_lines = hash_path.read_text(encoding="utf-8").splitlines()
+    except OSError as error:
+        raise VendorError(f"{name} hash allowlist is missing: {hash_path}") from error
+    actual_hash_lines = hash_lines(snapshot, expected_files)
+    if expected_hash_lines != actual_hash_lines:
+        raise VendorError(f"{name} per-file SHA-256 allowlist is stale")
     return actual_hash
 
 
@@ -248,6 +275,8 @@ def parse_args(argv: Sequence[str]) -> argparse.Namespace:
     staging.add_argument("dependency")
     staging.add_argument("archive", type=Path)
     staging.add_argument("output", type=Path)
+    hashes = commands.add_parser("write-hashes")
+    hashes.add_argument("dependency")
     return parser.parse_args(argv)
 
 
@@ -263,6 +292,8 @@ def main(argv: Sequence[str] = sys.argv[1:]) -> int:
             download(root, args.dependency, args.output.resolve(), args.allow_network)
         elif args.command == "stage":
             stage(root, args.dependency, args.archive.resolve(), args.output.resolve())
+        elif args.command == "write-hashes":
+            write_hash_list(root, args.dependency)
         else:  # pragma: no cover - argparse enforces the command set
             raise VendorError(f"unsupported command: {args.command}")
     except (OSError, KeyError, TypeError, VendorError, tarfile.TarError) as error:

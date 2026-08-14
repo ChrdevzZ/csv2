@@ -14,6 +14,7 @@
       "license_file": "LICENSE.txt",
       "root": "third_party/verification/catch2",
       "file_list": "third_party/verification/catch2.files",
+      "hash_list": "third_party/verification/catch2.sha256",
       "patches": []
     },
     "google_benchmark": {
@@ -29,6 +30,7 @@
       "license_file": "LICENSE",
       "root": "third_party/verification/google_benchmark",
       "file_list": "third_party/verification/google_benchmark.files",
+      "hash_list": "third_party/verification/google_benchmark.sha256",
       "patches": []
     }
   }

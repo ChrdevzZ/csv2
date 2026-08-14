@@ -1,9 +1,10 @@
 include_guard(GLOBAL)
 
 function(csv2_load_google_benchmark)
-  if(TARGET benchmark::benchmark)
-    return()
-  endif()
+  csv2_vendor_assert_targets_absent(google_benchmark
+    benchmark benchmark_main benchmark::benchmark benchmark::benchmark_main)
+  csv2_verify_vendor_snapshot(google_benchmark)
+  csv2_vendor_cache_snapshot(csv2_benchmark_cache)
 
   set(BENCHMARK_ENABLE_TESTING OFF CACHE BOOL "" FORCE)
   set(BENCHMARK_ENABLE_GTEST_TESTS OFF CACHE BOOL "" FORCE)
@@ -33,8 +34,11 @@ function(csv2_load_google_benchmark)
     "${CMAKE_CURRENT_BINARY_DIR}/third_party/google_benchmark"
     EXCLUDE_FROM_ALL)
 
-  if(NOT TARGET benchmark::benchmark)
-    message(FATAL_ERROR "The vendored Google Benchmark target was not created")
+  csv2_vendor_cache_restore(csv2_benchmark_cache)
+
+  if(NOT TARGET benchmark OR NOT TARGET benchmark_main OR
+     NOT TARGET benchmark::benchmark OR NOT TARGET benchmark::benchmark_main)
+    message(FATAL_ERROR "The vendored Google Benchmark targets were not created")
   endif()
   set_target_properties(benchmark benchmark_main PROPERTIES
     FOLDER "third_party/verification"
