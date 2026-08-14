@@ -5,6 +5,9 @@ include(Csv2BenchmarkFeatures)
 include(Csv2BenchmarkProfile)
 include(Csv2BenchmarkRegistration)
 
+csv2_configure_python_audits(
+  "benchmark checksum, corpus, tooling, and evidence-protocol")
+
 csv2_detect_benchmark_features()
 csv2_configure_benchmark_profile()
 

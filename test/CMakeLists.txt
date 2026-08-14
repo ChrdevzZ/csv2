@@ -6,6 +6,9 @@ include(Csv2TestManifest)
 include(Csv2TestMatrix)
 include(Csv2TestRegistration)
 
+csv2_configure_python_audits(
+  "vendor integrity/tooling and legacy test parity")
+
 if(CSV2_BUILD_TESTS AND 14 IN_LIST csv2_supported_standards)
   csv2_load_catch2()
 endif()
@@ -17,22 +20,21 @@ if(NOT CSV2_BUILD_TESTS)
   return()
 endif()
 
-find_package(Python3 3.10 COMPONENTS Interpreter QUIET)
-if(Python3_Interpreter_FOUND)
+if(CSV2_PYTHON_AUDITS_AVAILABLE)
   add_test(NAME csv2.vendor.integrity
-    COMMAND ${Python3_EXECUTABLE}
+    COMMAND ${CSV2_PYTHON_EXECUTABLE}
       ${csv2_SOURCE_DIR}/tools/vendor/update_verification_dependencies.py check)
   set_tests_properties(csv2.vendor.integrity PROPERTIES
     LABELS "vendor-integrity;verification")
 
   add_test(NAME csv2.vendor.tooling_contract
-    COMMAND ${Python3_EXECUTABLE}
+    COMMAND ${CSV2_PYTHON_EXECUTABLE}
       ${csv2_SOURCE_DIR}/tools/vendor/test_update_verification_dependencies.py -v)
   set_tests_properties(csv2.vendor.tooling_contract PROPERTIES
     LABELS "vendor-integrity;verification")
 
   add_test(NAME csv2.test.legacy_parity
-    COMMAND ${Python3_EXECUTABLE}
+    COMMAND ${CSV2_PYTHON_EXECUTABLE}
       ${CMAKE_CURRENT_SOURCE_DIR}/migration/check_legacy_case_map.py)
   set_tests_properties(csv2.test.legacy_parity PROPERTIES
     LABELS "test-manifest;verification")

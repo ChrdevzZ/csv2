@@ -334,3 +334,21 @@ foreach(csv2_superproject_mode IN ITEMS
   set_tests_properties(csv2.vendor.superproject.${csv2_superproject_mode}
     PROPERTIES LABELS "vendor-integrity;verification" TIMEOUT 180)
 endforeach()
+
+foreach(csv2_python_audit_mode IN ITEMS
+    quick_warning full_required explicit_required)
+  add_test(NAME csv2.python.audit.${csv2_python_audit_mode}
+    COMMAND ${CMAKE_COMMAND}
+      -DCSV2_TEST_CONTRACT_ROOT=${CMAKE_CURRENT_BINARY_DIR}/python-audit/${csv2_python_audit_mode}
+      -DCSV2_TEST_CONTRACT_CSV2_SOURCE=${csv2_SOURCE_DIR}
+      -DCSV2_TEST_CONTRACT_GENERATOR=${CMAKE_GENERATOR}
+      -DCSV2_TEST_CONTRACT_GENERATOR_PLATFORM=${CMAKE_GENERATOR_PLATFORM}
+      -DCSV2_TEST_CONTRACT_GENERATOR_TOOLSET=${CMAKE_GENERATOR_TOOLSET}
+      -DCSV2_TEST_CONTRACT_CMAKE_CXX_COMPILER=${CMAKE_CXX_COMPILER}
+      -DCSV2_TEST_CONTRACT_CMAKE_RC_COMPILER=${CMAKE_RC_COMPILER}
+      -DCSV2_TEST_CONTRACT_CMAKE_MT=${CMAKE_MT}
+      -DCSV2_TEST_CONTRACT_MODE=${csv2_python_audit_mode}
+      -P ${CMAKE_CURRENT_SOURCE_DIR}/../cmake/python_audit_contract.cmake)
+  set_tests_properties(csv2.python.audit.${csv2_python_audit_mode}
+    PROPERTIES LABELS "python-audit;verification" TIMEOUT 180)
+endforeach()

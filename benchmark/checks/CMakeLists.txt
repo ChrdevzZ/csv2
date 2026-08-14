@@ -311,15 +311,14 @@ foreach(csv2_contract IN ITEMS current-legacy-option common-zero-iterations)
     TIMEOUT 5)
 endforeach()
 
-find_package(Python3 3.10 COMPONENTS Interpreter QUIET)
-if(Python3_Interpreter_FOUND)
+if(CSV2_PYTHON_AUDITS_AVAILABLE)
   csv2_add_benchmark_check(csv2.benchmark.current.checksum.manifest
-    COMMAND ${Python3_EXECUTABLE}
+    COMMAND ${CSV2_PYTHON_EXECUTABLE}
       ${CMAKE_CURRENT_SOURCE_DIR}/verify_expected_checksums.py
       --executable $<TARGET_FILE:csv2_benchmark>
       --source-root ${csv2_SOURCE_DIR}
       --manifest ${CMAKE_CURRENT_SOURCE_DIR}/expected_checksums.json)
   csv2_add_benchmark_check(csv2.benchmark.corpus.reproducible
-    COMMAND ${Python3_EXECUTABLE}
+    COMMAND ${CSV2_PYTHON_EXECUTABLE}
       ${csv2_SOURCE_DIR}/benchmark/datasets/generate.py --check)
 endif()

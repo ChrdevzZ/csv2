@@ -61,6 +61,7 @@ if(csv2_verification_enabled)
   include(${CMAKE_CURRENT_LIST_DIR}/cmake/verification/Csv2VerificationStandards.cmake)
   include(${CMAKE_CURRENT_LIST_DIR}/cmake/verification/Csv2VerificationTargetOptions.cmake)
   include(${CMAKE_CURRENT_LIST_DIR}/cmake/verification/Csv2VerificationVendor.cmake)
+  include(${CMAKE_CURRENT_LIST_DIR}/cmake/verification/Csv2VerificationPython.cmake)
 endif()
 
 if(CSV2_BUILD_FUZZERS AND NOT 20 IN_LIST csv2_supported_standards)
