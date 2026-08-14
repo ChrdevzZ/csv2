@@ -23,12 +23,14 @@ def artifact(revision: str | None = None) -> dict[str, object]:
 
 
 def bundle() -> dict[str, object]:
+    member = artifact()
+    member["path"] = "artifact"
     return {
         "kind": "source-bundle",
         "root": "/source",
         "revision": "tool-bundle",
         "sha256": "b" * 64,
-        "files": [artifact()],
+        "files": [member],
     }
 
 
@@ -50,6 +52,79 @@ def fixed_metrics_manifest(*, owned: bool = False) -> dict[str, object]:
             "artifacts": identities,
             "build": "c" * 64 if owned else None,
         },
+    }
+
+
+def evidence_bundle() -> dict[str, object]:
+    checks = {
+        "artifact_manifests": True,
+        "calibration": True,
+        "revisions": True,
+        "source_tree": True,
+        "compiler": True,
+        "machine": True,
+        "datasets": True,
+        "corpus": True,
+    }
+    artifacts = {
+        name: artifact()
+        for name in (
+            "calibration_report",
+            "calibration_manifest",
+            "comparison_report",
+            "comparison_manifest",
+            "fixed_metrics_report",
+            "fixed_metrics_manifest",
+            "corpus_manifest",
+        )
+    }
+    component = {
+        "schema": "csv2-benchmark-report-v4",
+        "revision": "d" * 40,
+        "build_digest": "a" * 64,
+        "controlled_complete": False,
+    }
+    return {
+        "schema": "csv2-performance-evidence-bundle-v1",
+        "status": "completed",
+        "evidence_level": "exploratory",
+        "decision_eligible": False,
+        "generated_at_utc": "now",
+        "completed_at_utc": "later",
+        "baseline_revision": "c" * 40,
+        "candidate_revision": "d" * 40,
+        "source_tree": "e" * 40,
+        "compiler_sha256": "f" * 64,
+        "machine": {
+            "node": "host",
+            "machine": "x86",
+            "cpu_model": "cpu",
+            "logical_cpus": 1,
+            "process_affinity": [0],
+            "python": "3.10",
+        },
+        "datasets": [{"name": "input.csv", "size": 1, "sha256": "b" * 64}],
+        "components": {
+            "calibration": json.loads(json.dumps(component)),
+            "comparison": json.loads(json.dumps(component)),
+            "fixed_metrics": {
+                **component,
+                "schema": "csv2-fixed-machine-metrics-v4",
+            },
+        },
+        "checks": checks,
+        "artifacts": artifacts,
+        "finalizer": bundle(),
+    }
+
+
+def evidence_manifest() -> dict[str, object]:
+    report = evidence_bundle()
+    return {
+        "schema": "csv2-artifact-manifest-v2",
+        "kind": "evidence-bundle",
+        "report": artifact(),
+        "inputs": {**report["artifacts"], "finalizer": report["finalizer"]},
     }
 
 
@@ -122,6 +197,7 @@ def comparison_report() -> dict[str, object]:
         "mode": "aa",
         "status": "completed",
         "evidence_level": "exploratory",
+        "controlled_complete": False,
         "decision_eligible": False,
         "generated_at_utc": "now",
         "completed_at_utc": "later",
@@ -160,6 +236,7 @@ def fixed_metrics_report() -> dict[str, object]:
         "build": None,
         "status": "completed",
         "evidence_level": "exploratory",
+        "controlled_complete": False,
         "decision_eligible": False,
         "generated_at_utc": "now",
         "completed_at_utc": "later",
@@ -238,7 +315,8 @@ def controlled_comparison_report() -> dict[str, object]:
     report["adapter_source"]["sha256"] = adapter_sha256
     report["artifact_mode"] = "owned"
     report["evidence_level"] = "controlled"
-    report["decision_eligible"] = True
+    report["controlled_complete"] = True
+    report["decision_eligible"] = False
     report["compiler_flags"] = "-std=c++11 -O3 -DNDEBUG"
     report["runs"] = 20
     report["warmups"] = 3
@@ -348,7 +426,8 @@ def controlled_comparison_report() -> dict[str, object]:
 def controlled_metrics_report() -> dict[str, object]:
     report = fixed_metrics_report()
     report["evidence_level"] = "controlled"
-    report["decision_eligible"] = True
+    report["controlled_complete"] = True
+    report["decision_eligible"] = False
     report["artifact_mode"] = "owned"
     report["runs"] = 20
     report["compiler_flags"] = "-O3 -DNDEBUG"
@@ -498,6 +577,7 @@ class ProtocolTests(unittest.TestCase):
             build["digest"] = builds.document_digest(build)
         protocol.validate_comparison_report(controlled_comparison)
         protocol.validate_fixed_metrics_report(controlled_metrics_report())
+        protocol.validate_evidence_bundle(evidence_bundle())
 
     def test_empty_eligible_reports_and_unknown_top_level_fields_are_rejected(self) -> None:
         comparison = controlled_comparison_report()
@@ -622,6 +702,8 @@ class ProtocolTests(unittest.TestCase):
             )
         )
         validate_schema(manifest, schema)
+        protocol.validate_artifact_manifest(evidence_manifest())
+        validate_schema(evidence_manifest(), schema)
         manifest["schema"] = "csv2-artifact-manifest-v1"
         with self.assertRaisesRegex(RuntimeError, "unsupported schema"):
             protocol.validate_artifact_manifest(manifest)
@@ -707,13 +789,37 @@ class ProtocolTests(unittest.TestCase):
         artifact_manifest = json.loads(
             (schema_root / "artifact-manifest-v2.schema.json").read_text(encoding="utf-8")
         )
+        evidence = json.loads(
+            (schema_root / "evidence-bundle-v1.schema.json").read_text(encoding="utf-8")
+        )
         self.assertFalse(comparison["additionalProperties"])
         self.assertFalse(metrics["additionalProperties"])
         self.assertEqual(len(build["oneOf"]), 2)
         self.assertFalse(build["$defs"]["common_driver"]["additionalProperties"])
         self.assertFalse(build["$defs"]["current_tree"]["additionalProperties"])
         self.assertFalse(artifact_manifest["additionalProperties"])
-        self.assertEqual(len(artifact_manifest["oneOf"]), 2)
+        self.assertEqual(len(artifact_manifest["oneOf"]), 3)
+        self.assertFalse(evidence["additionalProperties"])
+        self.assertEqual(
+            evidence["properties"]["schema"]["const"],
+            "csv2-performance-evidence-bundle-v1",
+        )
+        validate_schema(evidence_bundle(), evidence)
+        controlled_bundle = evidence_bundle()
+        controlled_bundle["evidence_level"] = "controlled"
+        controlled_bundle["decision_eligible"] = True
+        for component in controlled_bundle["components"].values():
+            component["controlled_complete"] = True
+        validate_schema(controlled_bundle, evidence)
+        invalid_bundle = evidence_bundle()
+        invalid_bundle["decision_eligible"] = True
+        with self.assertRaises(SchemaValidationError):
+            validate_schema(invalid_bundle, evidence)
+        incomplete_controlled = evidence_bundle()
+        incomplete_controlled["evidence_level"] = "controlled"
+        incomplete_controlled["decision_eligible"] = True
+        with self.assertRaises(SchemaValidationError):
+            validate_schema(incomplete_controlled, evidence)
         self.assertFalse(
             artifact_manifest["$defs"]["fixed_metrics_inputs"][
                 "additionalProperties"
@@ -755,15 +861,42 @@ class ProtocolTests(unittest.TestCase):
             )
         )
 
-    def test_only_completed_controlled_reports_are_decision_eligible(self) -> None:
-        self.assertTrue(protocol.decision_eligible("controlled", "completed"))
+    def test_only_completed_owned_controlled_reports_are_component_complete(self) -> None:
+        self.assertTrue(protocol.controlled_complete("controlled", "completed"))
         for evidence, status in (
             ("controlled", "running"),
             ("controlled", "failed"),
             ("exploratory", "completed"),
         ):
             with self.subTest(evidence=evidence, status=status):
-                self.assertFalse(protocol.decision_eligible(evidence, status))
+                self.assertFalse(protocol.controlled_complete(evidence, status))
+
+    def test_component_reports_cannot_claim_final_decision_eligibility(self) -> None:
+        for validator, report in (
+            (protocol.validate_comparison_report, controlled_comparison_report()),
+            (protocol.validate_fixed_metrics_report, controlled_metrics_report()),
+        ):
+            with self.subTest(schema=report["schema"]):
+                report["decision_eligible"] = True
+                with self.assertRaisesRegex(RuntimeError, "cannot claim final"):
+                    validator(report)
+
+        bundle_value = evidence_bundle()
+        bundle_value["components"]["comparison"]["revision"] = "e" * 40
+        with self.assertRaisesRegex(RuntimeError, "differs from the candidate"):
+            protocol.validate_evidence_bundle(bundle_value)
+
+        bundle_value = evidence_bundle()
+        bundle_value["components"]["comparison"]["build_digest"] = "e" * 64
+        with self.assertRaisesRegex(RuntimeError, "candidate builds differ"):
+            protocol.validate_evidence_bundle(bundle_value)
+
+        for unsafe in ("../artifact", "C:/artifact", r"..\artifact", "/artifact"):
+            with self.subTest(path=unsafe):
+                bundle_value = evidence_bundle()
+                bundle_value["finalizer"]["files"][0]["path"] = unsafe
+                with self.assertRaisesRegex(RuntimeError, "safe relative path"):
+                    protocol.validate_evidence_bundle(bundle_value)
 
     def test_common_v3_is_accepted_and_v2_is_rejected(self) -> None:
         result = protocol.parse_common(

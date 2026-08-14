@@ -607,6 +607,7 @@ def main() -> None:
         "build": owned_build,
         "status": "running",
         "evidence_level": args.evidence_level,
+        "controlled_complete": False,
         "decision_eligible": False,
         "generated_at_utc": datetime.now(timezone.utc).isoformat(),
         "machine": machine_metadata(),
@@ -719,7 +720,7 @@ def main() -> None:
         if owned_build is not None:
             builds.verify_current_build_manifest(owned_build)
         report["status"] = "completed"
-        report["decision_eligible"] = protocol.decision_eligible(
+        report["controlled_complete"] = protocol.controlled_complete(
             args.evidence_level,
             report["status"],
             owned_build=artifact_mode == "owned",
@@ -740,6 +741,7 @@ def main() -> None:
         atomic.write_json(args.manifest, manifest)
     except BaseException as error:
         report["status"] = "failed"
+        report["controlled_complete"] = False
         report["decision_eligible"] = False
         report["error"] = str(error)
         atomic.write_json(args.output, report)

@@ -146,8 +146,12 @@ cmake --build build-fuzz --target csv2_fuzz csv2_fuzz_writer
 5. Add a minimal regression fixture only when inline bytes would obscure the
    test. Update `fixtures/SHA256SUMS` and preserve exact bytes.
 6. If the behavior came from the retired doctest suite, update
-   `migration/legacy_case_map.tsv`; its checker requires every old title and
-   every mapped stable ID to exist exactly once where required.
+   `migration/legacy_case_map.tsv`; its checker compares every old title with
+   the immutable `migration/legacy_doctest_inventory.json` from base commit
+   `635e59a`, then requires every mapped stable ID to exist exactly once where
+   required. Full-history checkouts also revalidate the pinned source blob;
+   shallow clones and source packages use the fixed inventory metadata and
+   digests.
 7. Run the focused domain for modular and single-header forms, then the quick
    profile.
 

@@ -6,6 +6,7 @@ COMPARISON_SCHEMA = "csv2-benchmark-report-v4"
 METRICS_SCHEMA = "csv2-fixed-machine-metrics-v4"
 BUILD_SCHEMA = "csv2-benchmark-build-v1"
 ARTIFACT_MANIFEST_SCHEMA = "csv2-artifact-manifest-v2"
+EVIDENCE_SCHEMA = "csv2-performance-evidence-bundle-v1"
 
 __all__ = [
     "COMMON_PROTOCOL",
@@ -14,4 +15,5 @@ __all__ = [
     "METRICS_SCHEMA",
     "BUILD_SCHEMA",
     "ARTIFACT_MANIFEST_SCHEMA",
+    "EVIDENCE_SCHEMA",
 ]

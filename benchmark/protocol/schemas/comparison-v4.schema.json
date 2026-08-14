@@ -4,7 +4,8 @@
   "type": "object",
   "additionalProperties": false,
   "required": [
-    "schema", "artifact_mode", "mode", "status", "evidence_level", "decision_eligible",
+    "schema", "artifact_mode", "mode", "status", "evidence_level",
+    "controlled_complete", "decision_eligible",
     "generated_at_utc", "runs", "warmups", "iterations_per_run", "compiler",
     "compiler_flags", "host", "runner", "adapter_source", "baseline",
     "candidate", "datasets", "calibration", "cases"
@@ -15,7 +16,8 @@
     "mode": {"enum": ["aa", "compare"]},
     "status": {"enum": ["running", "completed", "failed"]},
     "evidence_level": {"enum": ["exploratory", "controlled"]},
-    "decision_eligible": {"type": "boolean"},
+    "controlled_complete": {"type": "boolean"},
+    "decision_eligible": {"const": false},
     "generated_at_utc": {"type": "string", "minLength": 1},
     "completed_at_utc": {"type": "string", "minLength": 1},
     "error": {"type": "string", "minLength": 1},
@@ -237,7 +239,7 @@
       "then": {"required": ["error"]}
     },
     {
-      "if": {"properties": {"decision_eligible": {"const": true}}, "required": ["decision_eligible"]},
+      "if": {"properties": {"controlled_complete": {"const": true}}, "required": ["controlled_complete"]},
       "then": {
         "properties": {
           "status": {"const": "completed"},
@@ -300,6 +302,7 @@
       "else": {
         "properties": {
           "evidence_level": {"const": "exploratory"},
+          "controlled_complete": {"const": false},
           "decision_eligible": {"const": false},
           "baseline": {"properties": {"build": {"type": "null"}}},
           "candidate": {"properties": {"build": {"type": "null"}}}

@@ -5,7 +5,7 @@ from __future__ import annotations
 import math
 from typing import Iterable
 
-from . import COMPARISON_SCHEMA, CURRENT_PROTOCOL, METRICS_SCHEMA
+from . import COMPARISON_SCHEMA, CURRENT_PROTOCOL, EVIDENCE_SCHEMA, METRICS_SCHEMA
 from . import COMMON_PROTOCOL
 
 UINT64_MAX = (1 << 64) - 1
@@ -102,10 +102,10 @@ def finite_nonnegative(value: object, label: str) -> float:
     return parsed
 
 
-def decision_eligible(
+def controlled_complete(
     evidence_level: str, status: str, *, owned_build: bool = True
 ) -> bool:
-    """Return whether a completed report may support a regression decision."""
+    """Return whether one component satisfies its controlled evidence contract."""
     return evidence_level == "controlled" and status == "completed" and owned_build
 
 
@@ -194,6 +194,14 @@ def _source_bundle(value: object, label: str) -> dict[str, object]:
         _required(member, member_fields, member_label)
         _closed(member, member_fields, member_label)
         path = _string(member["path"], f"{member_label}.path")
+        components = path.split("/")
+        if (
+            "\\" in path
+            or path.startswith("/")
+            or any(component in {"", ".", ".."} for component in components)
+            or any(":" in component for component in components)
+        ):
+            raise RuntimeError(f"{member_label}.path must be a safe relative path")
         if path in seen:
             raise RuntimeError(f"{label}.files contains duplicate paths")
         seen.add(path)
@@ -586,7 +594,8 @@ def _current_build(value: object, label: str) -> dict[str, object]:
 def validate_comparison_report(report: object) -> None:
     document = _object(report, "comparison report")
     allowed = {
-        "schema", "artifact_mode", "mode", "status", "evidence_level", "decision_eligible",
+        "schema", "artifact_mode", "mode", "status", "evidence_level",
+        "controlled_complete", "decision_eligible",
         "generated_at_utc", "completed_at_utc", "error", "runs", "warmups",
         "iterations_per_run", "compiler", "compiler_flags", "host", "runner",
         "adapter_source", "baseline", "candidate", "datasets", "calibration",
@@ -608,15 +617,17 @@ def validate_comparison_report(report: object) -> None:
         raise RuntimeError("comparison report status is invalid")
     if document["evidence_level"] not in {"exploratory", "controlled"}:
         raise RuntimeError("comparison report evidence level is invalid")
-    expected_eligible = decision_eligible(
+    expected_complete = controlled_complete(
         str(document["evidence_level"]),
         str(document["status"]),
         owned_build=artifact_mode == "owned",
     )
-    if type(document["decision_eligible"]) is not bool or document[
-        "decision_eligible"
-    ] != expected_eligible:
-        raise RuntimeError("comparison report decision eligibility is inconsistent")
+    if type(document["controlled_complete"]) is not bool or document[
+        "controlled_complete"
+    ] != expected_complete:
+        raise RuntimeError("comparison report controlled completion is inconsistent")
+    if document["decision_eligible"] is not False:
+        raise RuntimeError("comparison reports cannot claim final decision eligibility")
 
     runs = _integer(document["runs"], "comparison report.runs", 1)
     warmups = _integer(document["warmups"], "comparison report.warmups")
@@ -955,14 +966,16 @@ def validate_comparison_report(report: object) -> None:
 def validate_fixed_metrics_report(report: object) -> None:
     document = _object(report, "fixed-machine report")
     allowed = {
-        "schema", "artifact_mode", "build", "status", "evidence_level", "decision_eligible",
+        "schema", "artifact_mode", "build", "status", "evidence_level",
+        "controlled_complete", "decision_eligible",
         "generated_at_utc", "completed_at_utc", "error", "machine", "compiler",
         "compiler_identity", "compiler_flags", "operation", "source", "runs",
         "artifacts", "clean_build", "post_build", "verification", "allocations", "timing",
         "timing_invocation", "pmu", "pmu_invocation", "peak_rss", "code_size",
     }
     required = {
-        "schema", "artifact_mode", "build", "status", "evidence_level", "decision_eligible",
+        "schema", "artifact_mode", "build", "status", "evidence_level",
+        "controlled_complete", "decision_eligible",
         "generated_at_utc", "machine", "compiler", "compiler_identity",
         "compiler_flags", "operation", "source", "runs", "artifacts", "clean_build",
         "post_build",
@@ -988,13 +1001,15 @@ def validate_fixed_metrics_report(report: object) -> None:
         raise RuntimeError("fixed-machine report evidence level is invalid")
     if artifact_mode == "external" and evidence != "exploratory":
         raise RuntimeError("external fixed-machine artifacts are exploratory only")
-    expected_eligible = decision_eligible(
+    expected_complete = controlled_complete(
         str(evidence), str(status), owned_build=artifact_mode == "owned"
     )
-    if type(document["decision_eligible"]) is not bool or document[
-        "decision_eligible"
-    ] != expected_eligible:
-        raise RuntimeError("fixed-machine report decision eligibility is inconsistent")
+    if type(document["controlled_complete"]) is not bool or document[
+        "controlled_complete"
+    ] != expected_complete:
+        raise RuntimeError("fixed-machine report controlled completion is inconsistent")
+    if document["decision_eligible"] is not False:
+        raise RuntimeError("fixed-machine reports cannot claim final decision eligibility")
     runs = _integer(document["runs"], "fixed-machine report.runs", 1)
     _string(document["generated_at_utc"], "fixed-machine report.generated_at_utc")
     _string(document["compiler"], "fixed-machine report.compiler")
@@ -1206,6 +1221,140 @@ def validate_fixed_metrics_report(report: object) -> None:
             )
 
 
+def validate_evidence_bundle(bundle: object) -> None:
+    document = _object(bundle, "performance evidence bundle")
+    fields = {
+        "schema", "status", "evidence_level", "decision_eligible",
+        "generated_at_utc", "completed_at_utc", "baseline_revision",
+        "candidate_revision", "source_tree", "compiler_sha256", "machine",
+        "datasets", "components", "checks", "artifacts", "finalizer",
+    }
+    _required(document, fields, "performance evidence bundle")
+    _closed(document, fields, "performance evidence bundle")
+    if document["schema"] != EVIDENCE_SCHEMA:
+        raise RuntimeError("performance evidence bundle has an unsupported schema")
+    if document["status"] != "completed":
+        raise RuntimeError("performance evidence bundle must be completed")
+    evidence = document["evidence_level"]
+    if evidence not in {"exploratory", "controlled"}:
+        raise RuntimeError("performance evidence bundle evidence level is invalid")
+    if type(document["decision_eligible"]) is not bool or document[
+        "decision_eligible"
+    ] != (evidence == "controlled"):
+        raise RuntimeError("performance evidence bundle decision eligibility is inconsistent")
+    _string(document["generated_at_utc"], "performance evidence bundle.generated_at_utc")
+    _string(document["completed_at_utc"], "performance evidence bundle.completed_at_utc")
+    for field in ("baseline_revision", "candidate_revision", "source_tree"):
+        _hex_digest(document[field], f"performance evidence bundle.{field}", (40, 64))
+    _hex_digest(
+        document["compiler_sha256"],
+        "performance evidence bundle.compiler_sha256",
+        (64,),
+    )
+
+    machine = _object(document["machine"], "performance evidence bundle.machine")
+    machine_fields = {
+        "node", "machine", "cpu_model", "logical_cpus", "process_affinity", "python"
+    }
+    _required(machine, machine_fields, "performance evidence bundle.machine")
+    _closed(machine, machine_fields, "performance evidence bundle.machine")
+    for field in ("node", "machine", "cpu_model", "python"):
+        _string(machine[field], f"performance evidence bundle.machine.{field}")
+    _integer(machine["logical_cpus"], "performance evidence bundle.machine.logical_cpus", 1)
+    affinity = _array(
+        machine["process_affinity"],
+        "performance evidence bundle.machine.process_affinity",
+    )
+    if not affinity:
+        raise RuntimeError("performance evidence bundle process affinity must not be empty")
+    if any(
+        isinstance(value, bool) or not isinstance(value, int) or value < 0
+        for value in affinity
+    ):
+        raise RuntimeError("performance evidence bundle process affinity is invalid")
+
+    datasets = _array(document["datasets"], "performance evidence bundle.datasets")
+    if not datasets:
+        raise RuntimeError("performance evidence bundle datasets must not be empty")
+    names: set[str] = set()
+    for index, value in enumerate(datasets):
+        label = f"performance evidence bundle.datasets[{index}]"
+        dataset = _object(value, label)
+        dataset_fields = {"name", "size", "sha256"}
+        _required(dataset, dataset_fields, label)
+        _closed(dataset, dataset_fields, label)
+        name = _string(dataset["name"], f"{label}.name")
+        if name in names:
+            raise RuntimeError("performance evidence bundle contains duplicate datasets")
+        names.add(name)
+        _integer(dataset["size"], f"{label}.size", 1)
+        _hex_digest(dataset["sha256"], f"{label}.sha256", (64,))
+
+    components = _object(
+        document["components"], "performance evidence bundle.components"
+    )
+    component_names = {"calibration", "comparison", "fixed_metrics"}
+    _required(components, component_names, "performance evidence bundle.components")
+    _closed(components, component_names, "performance evidence bundle.components")
+    expected_schemas = {
+        "calibration": COMPARISON_SCHEMA,
+        "comparison": COMPARISON_SCHEMA,
+        "fixed_metrics": METRICS_SCHEMA,
+    }
+    expected_complete = evidence == "controlled"
+    for name, expected_schema in expected_schemas.items():
+        label = f"performance evidence bundle.components.{name}"
+        component = _object(components[name], label)
+        component_fields = {"schema", "revision", "build_digest", "controlled_complete"}
+        _required(component, component_fields, label)
+        _closed(component, component_fields, label)
+        if component["schema"] != expected_schema:
+            raise RuntimeError(f"{label}.schema is invalid")
+        _hex_digest(component["revision"], f"{label}.revision", (40, 64))
+        _hex_digest(component["build_digest"], f"{label}.build_digest", (64,))
+        if type(component["controlled_complete"]) is not bool or component[
+            "controlled_complete"
+        ] != expected_complete:
+            raise RuntimeError(f"{label}.controlled_complete is inconsistent")
+        if component["revision"] != document["candidate_revision"]:
+            raise RuntimeError(f"{label}.revision differs from the candidate")
+    if (
+        components["calibration"]["build_digest"]
+        != components["comparison"]["build_digest"]
+    ):
+        raise RuntimeError(
+            "performance evidence bundle A/A and A/B candidate builds differ"
+        )
+
+    check_names = {
+        "artifact_manifests", "calibration", "revisions", "source_tree",
+        "compiler", "machine", "datasets", "corpus",
+    }
+    checks = _object(document["checks"], "performance evidence bundle.checks")
+    _required(checks, check_names, "performance evidence bundle.checks")
+    _closed(checks, check_names, "performance evidence bundle.checks")
+    if any(checks[name] is not True for name in check_names):
+        raise RuntimeError("performance evidence bundle contains an incomplete cross-check")
+
+    artifact_names = {
+        "calibration_report", "calibration_manifest", "comparison_report",
+        "comparison_manifest", "fixed_metrics_report", "fixed_metrics_manifest",
+        "corpus_manifest",
+    }
+    evidence_artifacts = _object(
+        document["artifacts"], "performance evidence bundle.artifacts"
+    )
+    _required(evidence_artifacts, artifact_names, "performance evidence bundle.artifacts")
+    _closed(evidence_artifacts, artifact_names, "performance evidence bundle.artifacts")
+    for name in artifact_names:
+        _manifest_artifact(
+            evidence_artifacts[name],
+            f"performance evidence bundle.artifacts.{name}",
+            revision=False,
+        )
+    _source_bundle(document["finalizer"], "performance evidence bundle.finalizer")
+
+
 def validate_artifact_manifest(manifest: object) -> None:
     from . import ARTIFACT_MANIFEST_SCHEMA
 
@@ -1216,7 +1365,7 @@ def validate_artifact_manifest(manifest: object) -> None:
     if document["schema"] != ARTIFACT_MANIFEST_SCHEMA:
         raise RuntimeError("artifact manifest has an unsupported schema")
     kind = document["kind"]
-    if kind not in {"comparison", "fixed-metrics"}:
+    if kind not in {"comparison", "fixed-metrics", "evidence-bundle"}:
         raise RuntimeError("artifact manifest kind is invalid")
     _manifest_artifact(document["report"], "artifact manifest.report", revision=False)
     inputs = _object(document["inputs"], "artifact manifest.inputs")
@@ -1246,7 +1395,7 @@ def validate_artifact_manifest(manifest: object) -> None:
             value = digests[side]
             if value is not None:
                 _hex_digest(value, f"artifact manifest.inputs.builds.{side}", (64,))
-    else:
+    elif kind == "fixed-metrics":
         input_fields = {"artifacts", "build"}
         _required(inputs, input_fields, "artifact manifest.inputs")
         _closed(inputs, input_fields, "artifact manifest.inputs")
@@ -1318,3 +1467,18 @@ def validate_artifact_manifest(manifest: object) -> None:
                 raise RuntimeError(
                     "artifact manifest owned build requires compiler artifacts"
                 )
+    else:
+        input_fields = {
+            "calibration_report", "calibration_manifest", "comparison_report",
+            "comparison_manifest", "fixed_metrics_report", "fixed_metrics_manifest",
+            "corpus_manifest", "finalizer",
+        }
+        _required(inputs, input_fields, "artifact manifest.inputs")
+        _closed(inputs, input_fields, "artifact manifest.inputs")
+        for name in input_fields - {"finalizer"}:
+            _manifest_artifact(
+                inputs[name],
+                f"artifact manifest.inputs.{name}",
+                revision=False,
+            )
+        _source_bundle(inputs["finalizer"], "artifact manifest.inputs.finalizer")
