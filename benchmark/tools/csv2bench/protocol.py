@@ -153,9 +153,10 @@ def _artifact(value: object, label: str, *, revision: bool) -> dict[str, object]
     if revision:
         required.add("revision")
     _required(artifact, required, label)
+    _closed(artifact, required, label)
     _string(artifact["path"], f"{label}.path")
     _integer(artifact["size"], f"{label}.size")
-    _string(artifact["sha256"], f"{label}.sha256")
+    _hex_digest(artifact["sha256"], f"{label}.sha256", (64,))
     _integer(artifact["mtime_ns"], f"{label}.mtime_ns")
     if revision:
         _string(artifact["revision"], f"{label}.revision")
@@ -164,12 +165,14 @@ def _artifact(value: object, label: str, *, revision: bool) -> dict[str, object]
 
 def _source_bundle(value: object, label: str) -> dict[str, object]:
     bundle = _object(value, label)
-    _required(bundle, {"kind", "root", "revision", "sha256", "files"}, label)
+    fields = {"kind", "root", "revision", "sha256", "files"}
+    _required(bundle, fields, label)
+    _closed(bundle, fields, label)
     if bundle["kind"] != "source-bundle":
         raise RuntimeError(f"{label}.kind must be source-bundle")
     _string(bundle["root"], f"{label}.root")
     _string(bundle["revision"], f"{label}.revision")
-    _string(bundle["sha256"], f"{label}.sha256")
+    _hex_digest(bundle["sha256"], f"{label}.sha256", (64,))
     members = _array(bundle["files"], f"{label}.files")
     if not members:
         raise RuntimeError(f"{label}.files must not be empty")
@@ -177,13 +180,15 @@ def _source_bundle(value: object, label: str) -> dict[str, object]:
     for index, value in enumerate(members):
         member_label = f"{label}.files[{index}]"
         member = _object(value, member_label)
-        _required(member, {"path", "size", "sha256", "mtime_ns"}, member_label)
+        member_fields = {"path", "size", "sha256", "mtime_ns"}
+        _required(member, member_fields, member_label)
+        _closed(member, member_fields, member_label)
         path = _string(member["path"], f"{member_label}.path")
         if path in seen:
             raise RuntimeError(f"{label}.files contains duplicate paths")
         seen.add(path)
         _integer(member["size"], f"{member_label}.size")
-        _string(member["sha256"], f"{member_label}.sha256")
+        _hex_digest(member["sha256"], f"{member_label}.sha256", (64,))
         _integer(member["mtime_ns"], f"{member_label}.mtime_ns")
     return bundle
 
@@ -1218,15 +1223,80 @@ def validate_artifact_manifest(manifest: object) -> None:
             _artifact(dataset, f"artifact manifest.inputs.datasets[{index}]", revision=False)
         digests = _object(inputs["builds"], "artifact manifest.inputs.builds")
         _required(digests, {"baseline", "candidate"}, "artifact manifest.inputs.builds")
+        _closed(digests, {"baseline", "candidate"}, "artifact manifest.inputs.builds")
         for side in ("baseline", "candidate"):
             value = digests[side]
             if value is not None:
                 _hex_digest(value, f"artifact manifest.inputs.builds.{side}", (64,))
     else:
-        required = {"artifacts", "build"}
-        _required(inputs, required, "artifact manifest.inputs")
-        artifacts_document = _object(inputs["artifacts"], "artifact manifest.inputs.artifacts")
-        if not artifacts_document:
-            raise RuntimeError("artifact manifest inputs must not be empty")
-        if inputs["build"] is not None:
-            _hex_digest(inputs["build"], "artifact manifest.inputs.build", (64,))
+        input_fields = {"artifacts", "build"}
+        _required(inputs, input_fields, "artifact manifest.inputs")
+        _closed(inputs, input_fields, "artifact manifest.inputs")
+
+        artifacts_document = _object(
+            inputs["artifacts"], "artifact manifest.inputs.artifacts"
+        )
+        required_artifacts = {
+            "collector",
+            "executable",
+            "allocation_executable",
+            "dataset",
+        }
+        optional_artifacts = {"compiler_executable", "compile_commands"}
+        _required(
+            artifacts_document,
+            required_artifacts,
+            "artifact manifest.inputs.artifacts",
+        )
+        _closed(
+            artifacts_document,
+            required_artifacts | optional_artifacts,
+            "artifact manifest.inputs.artifacts",
+        )
+        _source_bundle(
+            artifacts_document["collector"],
+            "artifact manifest.inputs.artifacts.collector",
+        )
+        executable = _artifact(
+            artifacts_document["executable"],
+            "artifact manifest.inputs.artifacts.executable",
+            revision=True,
+        )
+        allocation = _artifact(
+            artifacts_document["allocation_executable"],
+            "artifact manifest.inputs.artifacts.allocation_executable",
+            revision=True,
+        )
+        _artifact(
+            artifacts_document["dataset"],
+            "artifact manifest.inputs.artifacts.dataset",
+            revision=False,
+        )
+        if executable["revision"] != allocation["revision"]:
+            raise RuntimeError("artifact manifest executable revisions are inconsistent")
+
+        has_compiler = "compiler_executable" in artifacts_document
+        has_commands = "compile_commands" in artifacts_document
+        if has_compiler != has_commands:
+            raise RuntimeError(
+                "artifact manifest compiler artifacts must be present as a pair"
+            )
+        if has_compiler:
+            _artifact(
+                artifacts_document["compiler_executable"],
+                "artifact manifest.inputs.artifacts.compiler_executable",
+                revision=False,
+            )
+            _artifact(
+                artifacts_document["compile_commands"],
+                "artifact manifest.inputs.artifacts.compile_commands",
+                revision=False,
+            )
+
+        build = inputs["build"]
+        if build is not None:
+            _hex_digest(build, "artifact manifest.inputs.build", (64,))
+            if not has_compiler:
+                raise RuntimeError(
+                    "artifact manifest owned build requires compiler artifacts"
+                )
