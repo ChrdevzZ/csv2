@@ -1,9 +1,9 @@
 """Small Draft 2020-12 subset used to test the repository's offline schemas.
 
 The benchmark tooling intentionally has no third-party Python dependency.  This
-validator implements only the keywords used by artifact-manifest-v2.schema.json
-so its positive and negative contract examples exercise the published schema,
-not a second hand-written description of it.
+validator implements only the keywords used by the repository's published
+benchmark schemas so positive and negative contract examples exercise those
+schemas, not a second hand-written description of them.
 """
 
 from __future__ import annotations
@@ -60,6 +60,16 @@ def _validate(
 
     for child in schema.get("allOf", []):
         _validate(instance, child, root, path)
+
+    if "if" in schema:
+        try:
+            _validate(instance, schema["if"], root, path)
+        except ValidationError:
+            branch = schema.get("else")
+        else:
+            branch = schema.get("then")
+        if branch is not None:
+            _validate(instance, branch, root, path)
 
     if "oneOf" in schema:
         matches = 0

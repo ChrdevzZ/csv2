@@ -8,9 +8,10 @@ reject unknown and older versions; there is no implicit migration path.
 | common driver wire | `csv2-common-v3` | one self-described C++11 comparison result |
 | current verify wire | `csv2-current-v2` | exact checksum and allocation verification |
 | build manifest | `csv2-benchmark-build-v1` | immutable source and audited build identity |
-| comparison report | `csv2-benchmark-report-v4` | paired A/A or A/B samples and decisions |
+| comparison report | `csv2-benchmark-report-v4` | paired A/A or A/B samples and component completeness |
 | fixed-machine metrics | `csv2-fixed-machine-metrics-v4` | timing, PMU, RSS, size, and provenance |
-| artifact manifest | `csv2-artifact-manifest-v2` | report, build, and tool-bundle digests |
+| complete evidence | `csv2-performance-evidence-bundle-v1` | cross-checked final decision gate |
+| artifact manifest | `csv2-artifact-manifest-v2` | component/evidence inputs and output digests |
 
 Wire output is one whitespace-separated line of unique `key=value` fields.
 Integer checksums are canonical decimal `uint64_t`; they never pass through a
@@ -49,8 +50,8 @@ separate A/A and A/B workspaces; those arguments remain visible in the build
 manifest.
 
 Owned builds are the default. `--external-artifacts` is an explicit legacy
-escape hatch restricted to `exploratory`; it can never make a report
-decision-eligible.
+escape hatch restricted to `exploratory`; it can never participate in a
+decision-eligible evidence bundle.
 
 ## Reports
 
@@ -68,17 +69,34 @@ Controlled reports require cycles, instructions, branch misses, RSS, size,
 positive warmup, at least 20 repetitions, exact affinity, and complete
 invocation records.
 
-Report lifecycle is `running` to `completed` or `failed`. Only a completed,
-owned, controlled document satisfying every semantic gate may set
-`decision_eligible=true`. Protocol validity proves the recorded artifact and
-measurement relationship; it does not independently prove that a machine is
-thermally or operationally stable.
+Component report lifecycle is `running` to `completed` or `failed`. A completed,
+owned, controlled component satisfying its semantic gates sets
+`controlled_complete=true`, but every v4 comparison or metrics report keeps
+`decision_eligible=false`. This prevents an A/A, A/B, or fixed-metrics file from
+claiming a final verdict in isolation.
 
-Every completed report is accompanied by `csv2-artifact-manifest-v2`. Writers
-reject direct, symlink, and hardlink output aliases, create a unique temporary
-file in the destination directory, flush and fsync it, atomically replace the
-destination, and then publish the bound SHA-256 manifest. A fixed-metrics
-manifest closes and validates the collector source bundle, timing and
+`finalize_evidence.py` is the only final decision gate. It consumes an A/A
+report, its A/B report, fixed-machine metrics, all three artifact manifests,
+and the generated corpus manifest. It rehashes every input and corpus member,
+then requires matching candidate revisions and source trees, compiler identity,
+machine and affinity, candidate build identity, calibration reference, and
+dataset identity. The resulting `csv2-performance-evidence-bundle-v1` may set
+`decision_eligible=true` only when all three inputs are controlled-complete;
+an exploratory bundle always sets it to false. Protocol validity proves the
+recorded artifact and measurement relationship; it does not independently
+prove that a machine is thermally or operationally stable.
+
+Every completed component and final evidence bundle is accompanied by
+`csv2-artifact-manifest-v2`. Writers reject direct, symlink, and hardlink
+output aliases and use unique, flushed and fsynced same-directory temporary
+files. Component reports publish before their bound SHA-256 manifest. The
+finalizer reverses that commit order: it stages the bundle, publishes the
+manifest prerequisite, and atomically publishes the eligible bundle last, so
+an interrupted run cannot leave an unbound decision document. Final evidence
+paths must be new; the finalizer never overwrites a prior publication. A
+fixed-metrics manifest closes and validates the collector source bundle, timing and
 allocation executables, dataset, and (for an owned build) the paired compiler
-executable and compile-command artifacts. The two benchmark executables must
-declare the same revision, and every recorded digest is canonical SHA-256.
+executable and compile-command artifacts. Evidence manifests close the seven
+component/corpus inputs plus the exact finalizer source bundle. The two
+benchmark executables must declare the same revision, and every recorded digest
+is canonical SHA-256.

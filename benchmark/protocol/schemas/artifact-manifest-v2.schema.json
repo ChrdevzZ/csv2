@@ -6,7 +6,7 @@
   "required": ["schema", "kind", "report", "inputs"],
   "properties": {
     "schema": {"const": "csv2-artifact-manifest-v2"},
-    "kind": {"enum": ["comparison", "fixed-metrics"]},
+    "kind": {"enum": ["comparison", "fixed-metrics", "evidence-bundle"]},
     "report": {"$ref": "#/$defs/artifact"},
     "inputs": {"type": "object"}
   },
@@ -22,6 +22,12 @@
       "properties": {
         "kind": {"const": "fixed-metrics"},
         "inputs": {"$ref": "#/$defs/fixed_metrics_inputs"}
+      }
+    },
+    {
+      "properties": {
+        "kind": {"const": "evidence-bundle"},
+        "inputs": {"$ref": "#/$defs/evidence_bundle_inputs"}
       }
     }
   ],
@@ -130,6 +136,25 @@
           }
         }
       ]
+    },
+    "evidence_bundle_inputs": {
+      "type": "object",
+      "required": [
+        "calibration_report", "calibration_manifest", "comparison_report",
+        "comparison_manifest", "fixed_metrics_report", "fixed_metrics_manifest",
+        "corpus_manifest", "finalizer"
+      ],
+      "properties": {
+        "calibration_report": {"$ref": "#/$defs/artifact"},
+        "calibration_manifest": {"$ref": "#/$defs/artifact"},
+        "comparison_report": {"$ref": "#/$defs/artifact"},
+        "comparison_manifest": {"$ref": "#/$defs/artifact"},
+        "fixed_metrics_report": {"$ref": "#/$defs/artifact"},
+        "fixed_metrics_manifest": {"$ref": "#/$defs/artifact"},
+        "corpus_manifest": {"$ref": "#/$defs/artifact"},
+        "finalizer": {"$ref": "#/$defs/source_bundle"}
+      },
+      "additionalProperties": false
     }
   }
 }

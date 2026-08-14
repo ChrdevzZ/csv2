@@ -19,7 +19,7 @@ on:
         default: "20"
         type: string
       files:
-        description: Corpus filenames or all
+        description: Corpus filenames or all; fixed metrics uses the first selection
         required: true
         default: all
         type: string
@@ -78,7 +78,12 @@ jobs:
         env:
           RUNS: ${{ inputs.runs }}
           CORPUS_SCALE: ${{ inputs.corpus_scale }}
+          FILES: ${{ inputs.files }}
         run: |
+          metrics_file=$(python3 -c \
+            'import sys; v=sys.argv[1]; print("short_unquoted.csv" if v=="all" else v.split(",",1)[0].strip())' \
+            "$FILES")
+          test -n "$metrics_file"
           python3 benchmark/collect_metrics.py \
             --repository . --candidate-ref "$CANDIDATE_SHA" \
             --build-root build-perf/current-owned \
@@ -86,7 +91,7 @@ jobs:
             --compiler-executable "$(command -v g++-14)" \
             --compiler-flags="-O3 -DNDEBUG" \
             --operation traversal/rows-cells \
-            --input short_unquoted.csv --source buffer --runs "$RUNS" \
+            --input "$metrics_file" --source buffer --runs "$RUNS" \
             --minimum-time 0.1s --warmup-seconds 0.1 \
             --evidence-level exploratory --skip-pmu \
             --output build-perf/reports/current-metrics.json
@@ -132,7 +137,19 @@ jobs:
             --evidence-level exploratory \
             --output build-perf/reports/ab.json
 
-      - name: Verify exploratory evidence bundle
+      - name: Finalize exploratory evidence bundle
+        run: |
+          python3 benchmark/finalize_evidence.py \
+            --calibration build-perf/reports/aa.json \
+            --calibration-manifest build-perf/reports/aa.json.sha256.json \
+            --comparison build-perf/reports/ab.json \
+            --comparison-manifest build-perf/reports/ab.json.sha256.json \
+            --fixed-metrics build-perf/reports/current-metrics.json \
+            --fixed-metrics-manifest build-perf/reports/current-metrics.json.sha256.json \
+            --corpus-manifest build-perf/current-owned/build/benchmark-corpus/manifest.json \
+            --output build-perf/reports/evidence.json
+
+      - name: Verify exploratory evidence artifacts
         run: |
           for artifact in \
             build-perf/reports/aa.json \
@@ -141,13 +158,25 @@ jobs:
             build-perf/reports/ab.json.sha256.json \
             build-perf/reports/current-metrics.json \
             build-perf/reports/current-metrics.json.sha256.json \
+            build-perf/reports/evidence.json \
+            build-perf/reports/evidence.json.sha256.json \
             build-perf/reports/benchmark-checksum.xml \
             build-perf/current-owned/build/benchmark-corpus/manifest.json; do
             test -s "$artifact"
           done
 
+      - name: Upload exploratory failure diagnostics
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: csv2-perf-exploratory-diagnostics-${{ github.run_id }}
+          path: |
+            build-perf/reports
+            build-perf/current-owned/build/benchmark-corpus/manifest.json
+          if-no-files-found: warn
+
       - name: Upload exploratory evidence
-        if: always()
+        if: success()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: csv2-perf-exploratory-${{ github.run_id }}
@@ -193,7 +222,12 @@ jobs:
         env:
           RUNS: ${{ inputs.runs }}
           CORPUS_SCALE: ${{ inputs.corpus_scale }}
+          FILES: ${{ inputs.files }}
         run: |
+          metrics_file=$(python3 -c \
+            'import sys; v=sys.argv[1]; print("short_unquoted.csv" if v=="all" else v.split(",",1)[0].strip())' \
+            "$FILES")
+          test -n "$metrics_file"
           taskset -c 0 python3 benchmark/collect_metrics.py \
             --repository . --candidate-ref "$CANDIDATE_SHA" \
             --build-root build-perf/current-owned \
@@ -201,7 +235,7 @@ jobs:
             --compiler-executable "$(command -v g++)" \
             --compiler-flags="-O3 -DNDEBUG" \
             --operation traversal/rows-cells \
-            --input short_unquoted.csv --source buffer --runs "$RUNS" \
+            --input "$metrics_file" --source buffer --runs "$RUNS" \
             --minimum-time 0.5s --warmup-seconds 0.5 \
             --evidence-level controlled --cpu-affinity 0 \
             --output build-perf/reports/current-metrics.json
@@ -249,7 +283,19 @@ jobs:
             --evidence-level controlled --cpu-affinity 0 \
             --output build-perf/reports/ab.json
 
-      - name: Verify controlled evidence bundle
+      - name: Finalize controlled evidence bundle
+        run: |
+          python3 benchmark/finalize_evidence.py \
+            --calibration build-perf/reports/aa.json \
+            --calibration-manifest build-perf/reports/aa.json.sha256.json \
+            --comparison build-perf/reports/ab.json \
+            --comparison-manifest build-perf/reports/ab.json.sha256.json \
+            --fixed-metrics build-perf/reports/current-metrics.json \
+            --fixed-metrics-manifest build-perf/reports/current-metrics.json.sha256.json \
+            --corpus-manifest build-perf/current-owned/build/benchmark-corpus/manifest.json \
+            --output build-perf/reports/evidence.json
+
+      - name: Verify controlled evidence artifacts
         run: |
           for artifact in \
             build-perf/reports/aa.json \
@@ -258,13 +304,25 @@ jobs:
             build-perf/reports/ab.json.sha256.json \
             build-perf/reports/current-metrics.json \
             build-perf/reports/current-metrics.json.sha256.json \
+            build-perf/reports/evidence.json \
+            build-perf/reports/evidence.json.sha256.json \
             build-perf/reports/benchmark-checksum.xml \
             build-perf/current-owned/build/benchmark-corpus/manifest.json; do
             test -s "$artifact"
           done
 
+      - name: Upload controlled failure diagnostics
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: csv2-perf-controlled-diagnostics-${{ github.run_id }}
+          path: |
+            build-perf/reports
+            build-perf/current-owned/build/benchmark-corpus/manifest.json
+          if-no-files-found: warn
+
       - name: Upload controlled evidence
-        if: always()
+        if: success()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: csv2-perf-controlled-${{ github.run_id }}

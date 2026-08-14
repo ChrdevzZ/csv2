@@ -153,8 +153,8 @@ header trees, followed by A/A calibration and alternating A/B runs. V4 reports
 bind source trees, compiler and normalized argv, binaries, driver/tool bundle,
 corpus, machine, raw samples, and statistics by hash. External executable mode
 is explicitly exploratory. Hosted results are marked `exploratory`; only a
-fixed Linux machine satisfying the owned `controlled` protocol is
-decision-eligible. See
+finalized evidence bundle from a fixed Linux machine satisfying the owned
+`controlled` protocol is decision-eligible. See
 [`benchmark/README.md`](benchmark/README.md) for operations, deterministic
 corpus generation, protocol versions, and reproducible commands.
 
@@ -499,7 +499,7 @@ evidence` workflows provide the exhaustive matrix and version-bound evidence:
 | --- | --- | --- |
 | quick | pull request/push | representative runtime matrix, contracts, checksum/allocation checks, install consumers, fuzz smoke |
 | full | manual | full standard/header/variant matrix, C++26 compile-only, extended fuzz, install consumers, non-blocking coverage |
-| perf | manual | generated corpus, A/A and A/B reports, current-tree metrics; hosted is always exploratory |
+| perf | manual | generated corpus, A/A and A/B reports, current-tree metrics, cross-checked final evidence bundle; hosted is always exploratory |
 
 Every platform verifies that installing with all verification components
 enabled exports no Catch2 or Google Benchmark files and builds the tracked

@@ -62,9 +62,30 @@ class WorkflowContractTests(unittest.TestCase):
         self.assertNotIn("--external-artifacts", workflow)
         self.assertNotIn("--build-command", workflow)
         self.assertNotIn("--post-build-command", workflow)
-        self.assertEqual(workflow.count("Verify controlled evidence bundle"), 1)
+        self.assertEqual(workflow.count("benchmark/finalize_evidence.py"), 2)
+        for option in (
+            "--calibration-manifest",
+            "--comparison-manifest",
+            "--fixed-metrics-manifest",
+            "--corpus-manifest",
+            "--output build-perf/reports/evidence.json",
+        ):
+            self.assertEqual(workflow.count(option), 2, option)
+        self.assertEqual(workflow.count("metrics_file=$(python3 -c"), 2)
+        self.assertEqual(workflow.count('--input "$metrics_file"'), 2)
+        self.assertNotIn("--input short_unquoted.csv", workflow)
+        self.assertEqual(workflow.count("Finalize controlled evidence bundle"), 1)
+        self.assertEqual(workflow.count("Finalize exploratory evidence bundle"), 1)
+        self.assertEqual(workflow.count("Upload controlled failure diagnostics"), 1)
+        self.assertEqual(workflow.count("Upload exploratory failure diagnostics"), 1)
+        self.assertEqual(workflow.count("if: success()"), 2)
+        self.assertEqual(workflow.count("if: failure()"), 2)
+        self.assertEqual(workflow.count("build-perf/reports/evidence.json \\"), 2)
+        self.assertEqual(
+            workflow.count("build-perf/reports/evidence.json.sha256.json \\"), 2
+        )
         self.assertLess(
-            workflow.index("Verify controlled evidence bundle"),
+            workflow.index("Finalize controlled evidence bundle"),
             workflow.index("Upload controlled evidence"),
         )
 

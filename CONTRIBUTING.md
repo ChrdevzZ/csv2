@@ -111,8 +111,12 @@ The fixture CMake layer rejects missing, extra, or hash-mismatched CSV files.
 `.gitattributes` disables checkout conversion for fixtures and fuzz seeds.
 
 For a regression inherited from the retired doctest suite, retain its mapping
-in `test/migration/legacy_case_map.tsv`. The parity checker validates both old
-titles and new stable IDs.
+in `test/migration/legacy_case_map.tsv`. The parity checker requires its old
+title to appear in the immutable `legacy_doctest_inventory.json` captured from
+base commit `635e59a`, then validates the new stable ID and domain. When the
+pinned Git objects are available it also re-reads the original source blob;
+shallow clones and source packages still verify the fixed inventory metadata
+and digests.
 
 Changes to parsing or escaping should extend the deterministic round-trip
 property and, when appropriate, both libFuzzer targets. Replay the committed
@@ -145,7 +149,8 @@ Performance statements require the versioned pipeline, retained JSON, A/A
 noise calibration, alternating A/B runs, matching checksums, and the threshold
 documented in [`benchmark/README.md`](benchmark/README.md). GitHub-hosted
 results are `exploratory` and cannot establish “no regression”. Only a
-completed fixed-machine `controlled` report is decision-eligible.
+completed `controlled` evidence bundle produced by the cross-report finalizer
+is decision-eligible.
 
 ## Verification dependencies
 
@@ -181,6 +186,11 @@ The existing Linux, Windows, macOS, and fuzz/benchmark workflow identities are
 the automatic quick checks. `full.yml` and `perf.yml` are manually dispatched.
 Keep matrices `fail-fast: false`, upload JUnit/evidence artifacts, and select
 CTest by stable names or labels rather than hard-coded totals.
+
+Performance jobs must finish with `benchmark/finalize_evidence.py`; checking
+that component files merely exist is not an evidence gate. Comparison and
+fixed-metrics reports can declare only `controlled_complete`. Do not set or
+infer final `decision_eligible` outside the cross-report evidence bundle.
 
 Update the root README for public behavior, `test/README.md` for verification
 topology, `benchmark/README.md` and `benchmark/protocol/README.md` for timing or

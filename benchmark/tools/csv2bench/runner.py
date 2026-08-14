@@ -890,6 +890,7 @@ def main() -> None:
         "artifact_mode": artifact_mode,
         "mode": args.mode,
         "evidence_level": args.evidence_level,
+        "controlled_complete": False,
         "decision_eligible": False,
         "status": "running",
         "generated_at_utc": datetime.now(timezone.utc).isoformat(),
@@ -971,7 +972,7 @@ def main() -> None:
         if calibration_metadata is not None:
             verify_artifact_unchanged(calibration_metadata, "calibration")
         report["status"] = "completed"
-        report["decision_eligible"] = wire.decision_eligible(
+        report["controlled_complete"] = wire.controlled_complete(
             args.evidence_level,
             report["status"],
             owned_build=artifact_mode == "owned",
@@ -1001,6 +1002,7 @@ def main() -> None:
         write_report(args.manifest, artifact_manifest)
     except BaseException as error:
         report["status"] = "failed"
+        report["controlled_complete"] = False
         report["decision_eligible"] = False
         report["error"] = str(error)
         write_report(args.output, report)

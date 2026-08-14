@@ -15,6 +15,7 @@ benchmark/
 ├── checks/     CTest protocol, checksum, CLI, and allocation contracts
 ├── protocol/   versioned report documentation and JSON schemas
 ├── tools/      standard-library-only Python evidence pipeline and tests
+├── finalize_evidence.py  cross-report final decision gate
 └── legacy/     historical csv-game sources, excluded from new reports
 ```
 
@@ -198,7 +199,8 @@ dataset/tool inputs, rejects output aliases, and atomically publishes a v4
 report plus its v2 artifact manifest. External executables require
 `--external-artifacts` and are restricted to exploratory evidence.
 
-Run an A/A calibration first, then A/B with the same context:
+First generate the owned current-tree corpus with the fixed-metrics command
+below. Then run A/A and A/B against that exact generated fixture directory:
 
 ```bash
 BASE="$(git merge-base master HEAD)"
@@ -211,7 +213,7 @@ python3 benchmark/run_suite.py \
   --build-root build-benchmark/owned-aa \
   --compiler-executable "$CXX" \
   --compiler-flags='-std=c++11 -O3 -DNDEBUG' \
-  --datasets benchmark/datasets/fixtures \
+  --datasets build-benchmark/current-owned/build/benchmark-corpus/fixtures \
   --operations rows_cells,legacy_writer_raw \
   --sources buffer,mmap \
   --files short_unquoted.csv,quote_heavy.csv,multiline.csv,crlf.csv \
@@ -225,7 +227,7 @@ python3 benchmark/run_suite.py \
   --build-root build-benchmark/owned-ab \
   --compiler-executable "$CXX" \
   --compiler-flags='-std=c++11 -O3 -DNDEBUG' \
-  --datasets benchmark/datasets/fixtures \
+  --datasets build-benchmark/current-owned/build/benchmark-corpus/fixtures \
   --operations rows_cells,legacy_writer_raw \
   --sources buffer,mmap \
   --files short_unquoted.csv,quote_heavy.csv,multiline.csv,crlf.csv \
@@ -283,25 +285,52 @@ helper closure as one deterministic source bundle; A/B rejects an A/A
 calibration produced by a different bundle. `--skip-pmu`, `--skip-rss`, and
 `--skip-size` are exploratory smoke-only relaxations.
 
+Finalize the three component reports only after all measurements complete:
+
+```bash
+python3 benchmark/finalize_evidence.py \
+  --calibration build-benchmark/aa.json \
+  --calibration-manifest build-benchmark/aa.json.sha256.json \
+  --comparison build-benchmark/ab.json \
+  --comparison-manifest build-benchmark/ab.json.sha256.json \
+  --fixed-metrics build-benchmark/fixed-machine.json \
+  --fixed-metrics-manifest build-benchmark/fixed-machine.json.sha256.json \
+  --corpus-manifest build-benchmark/current-owned/build/benchmark-corpus/manifest.json \
+  --output build-benchmark/evidence.json
+```
+
+The finalizer revalidates the reports, manifests, exact corpus files, source
+trees, compiler, machine/affinity, candidate build, and A/A calibration link.
+Its output and sibling manifest paths must not already exist.
+Individual comparison and fixed-metrics reports expose
+`controlled_complete`, but always keep `decision_eligible=false`. Only the
+resulting `csv2-performance-evidence-bundle-v1` can be decision-eligible.
+
 ## Evidence classes and protocols
 
 - `exploratory` is suitable for GitHub-hosted runners and local smoke tests.
   Reports are reviewable artifacts but cannot support a regression verdict.
 - `controlled` requires a stable Linux machine, fixed affinity, A/A noise
   calibration, three or more warmups, and at least 20 paired runs. Only a
-  completed controlled report is decision-eligible.
+  finalized bundle containing all controlled-complete components is
+  decision-eligible.
 
 The fixed contracts are `csv2-common-v3`, `csv2-current-v2`,
 `csv2-benchmark-build-v1`, `csv2-benchmark-report-v4`,
-`csv2-fixed-machine-metrics-v4`, and `csv2-artifact-manifest-v2`. Older or
-unknown versions are rejected rather than converted. Every completed JSON has
-a sibling v2 SHA-256 artifact manifest. See
+`csv2-fixed-machine-metrics-v4`, `csv2-performance-evidence-bundle-v1`, and
+`csv2-artifact-manifest-v2`. Older or unknown versions are rejected rather
+than converted. Every completed component and evidence JSON has a sibling v2
+SHA-256 artifact manifest. See
 [`protocol/README.md`](protocol/README.md) for the wire boundary and schemas.
 
-The manual `Performance evidence` workflow produces exploratory artifacts on
-a hosted runner or controlled artifacts only on a self-hosted runner carrying
-the `csv2-perf` label. It checks out the exact candidate, verifies `HEAD`, then
+The manual `Performance evidence` workflow produces and finalizes exploratory
+artifacts on a hosted runner or controlled artifacts only on a self-hosted
+runner carrying the `csv2-perf` label. It checks out the exact candidate,
+verifies `HEAD`, then
 uses only the owned-build APIs for common drivers and current-tree metrics; no
 workflow-local archive/compile path can stamp unrelated sources as that
-revision. This Stage B infrastructure change makes no library performance
-claim.
+revision. For an explicit `files` subset, fixed metrics uses its first dataset
+so that the cross-report evidence overlaps. The workflow fails before evidence
+upload unless the final bundle and its artifact manifest are both produced;
+failed runs upload a separate diagnostics artifact, never an evidence artifact.
+This Stage B infrastructure change makes no library performance claim.

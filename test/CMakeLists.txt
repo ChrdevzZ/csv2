@@ -35,9 +35,20 @@ if(CSV2_PYTHON_AUDITS_AVAILABLE)
 
   add_test(NAME csv2.test.legacy_parity
     COMMAND ${CSV2_PYTHON_EXECUTABLE}
+      -B
       ${CMAKE_CURRENT_SOURCE_DIR}/migration/check_legacy_case_map.py)
   set_tests_properties(csv2.test.legacy_parity PROPERTIES
-    LABELS "test-manifest;verification")
+    LABELS "test-manifest;verification"
+    TIMEOUT 30)
+
+  add_test(NAME csv2.test.legacy_parity.unit
+    COMMAND ${CSV2_PYTHON_EXECUTABLE} -B -m unittest discover
+      -s ${CMAKE_CURRENT_SOURCE_DIR}/migration
+      -p test_check_legacy_case_map.py
+      -v)
+  set_tests_properties(csv2.test.legacy_parity.unit PROPERTIES
+    LABELS "test-manifest;verification"
+    TIMEOUT 30)
 endif()
 
 add_subdirectory(fixtures)
