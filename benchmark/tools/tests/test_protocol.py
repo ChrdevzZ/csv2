@@ -490,7 +490,13 @@ class ProtocolTests(unittest.TestCase):
     def test_completed_reports_pass_semantic_validation(self) -> None:
         protocol.validate_comparison_report(comparison_report())
         protocol.validate_fixed_metrics_report(fixed_metrics_report())
-        protocol.validate_comparison_report(controlled_comparison_report())
+        controlled_comparison = controlled_comparison_report()
+        for side in ("baseline", "candidate"):
+            build = controlled_comparison[side]["build"]
+            build["compiler"]["artifact"]["revision"] = "compiler"
+            build.pop("digest")
+            build["digest"] = builds.document_digest(build)
+        protocol.validate_comparison_report(controlled_comparison)
         protocol.validate_fixed_metrics_report(controlled_metrics_report())
 
     def test_empty_eligible_reports_and_unknown_top_level_fields_are_rejected(self) -> None:
