@@ -29,6 +29,16 @@ def result(revision: str, elapsed: int = 100) -> dict[str, str]:
 
 
 class RunnerTests(unittest.TestCase):
+    def test_manifest_artifact_metadata_does_not_require_a_revision(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            artifact = Path(directory) / "report.json"
+            artifact.write_text("{}", encoding="utf-8")
+
+            metadata = runner.artifact_metadata(artifact)
+
+        self.assertEqual(metadata["path"], str(artifact.resolve()))
+        self.assertNotIn("revision", metadata)
+
     def test_parser_rejects_old_common_protocol(self) -> None:
         line = " ".join(f"{key}={value}" for key, value in result("x").items())
         self.assertEqual(runner.parse_output(line)["revision"], "x")

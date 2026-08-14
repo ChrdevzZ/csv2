@@ -215,7 +215,9 @@ def describe(executable: Executable) -> dict[str, str]:
     return result
 
 
-def artifact_metadata(path: Path, revision: str) -> dict[str, object]:
+def artifact_metadata(
+    path: Path, revision: str | None = None
+) -> dict[str, object]:
     return artifacts.metadata(path, revision)
 
 
