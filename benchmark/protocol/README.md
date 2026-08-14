@@ -35,7 +35,9 @@ are allowed only in objects explicitly marked extensible.
 - `current-tree` exports the complete candidate tree, creates an isolated
   CMake/Ninja Release build, and audits the File API codemodel,
   `compile_commands.json`, target compile groups, include roots, revision
-  definition, link commands, executables, and generated corpus manifest.
+  definition, caller-supplied compiler flags, link commands, executables, and
+  generated corpus manifest. Every exported blob, tool, build record, target,
+  and corpus manifest is rehashed after measurement before completion.
 
 The tools re-read Git objects and all build inputs before completion. A build
 identity digest omits incidental workspace paths but includes every semantic

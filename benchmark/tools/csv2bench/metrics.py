@@ -478,13 +478,18 @@ def main() -> None:
     artifact_mode = "external" if args.external_artifacts else "owned"
     if not args.external_artifacts:
         try:
+            compiler_flags = shlex.split(args.compiler_flags, posix=os.name != "nt")
+            if not compiler_flags:
+                raise RuntimeError("owned metrics require non-empty --compiler-flags")
             owned_build = builds.build_current_tree(
                 repository=args.repository,
                 reference=args.candidate_ref,
                 compiler=args.compiler_executable,
+                compiler_flags=compiler_flags,
                 workspace=artifacts.canonical_output(args.build_root),
                 corpus_scale=args.corpus_scale,
             )
+            args.compiler_flags = " ".join(compiler_flags)
             args.revision = str(owned_build["revision"])
             args.executable = Path(str(owned_build["targets"]["csv2_benchmark"]["path"]))
             args.allocation_executable = Path(
@@ -711,6 +716,8 @@ def main() -> None:
 
         for label, identity in identities.items():
             artifacts.verify_unchanged(identity, label)
+        if owned_build is not None:
+            builds.verify_current_build_manifest(owned_build)
         report["status"] = "completed"
         report["decision_eligible"] = protocol.decision_eligible(
             args.evidence_level,

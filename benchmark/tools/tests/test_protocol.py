@@ -216,6 +216,7 @@ def controlled_comparison_report() -> dict[str, object]:
     report["artifact_mode"] = "owned"
     report["evidence_level"] = "controlled"
     report["decision_eligible"] = True
+    report["compiler_flags"] = "-std=c++11 -O3 -DNDEBUG"
     report["runs"] = 20
     report["warmups"] = 3
     report["host"]["process_affinity"] = [0]
@@ -327,6 +328,7 @@ def controlled_metrics_report() -> dict[str, object]:
     report["decision_eligible"] = True
     report["artifact_mode"] = "owned"
     report["runs"] = 20
+    report["compiler_flags"] = "-O3 -DNDEBUG"
     report["machine"]["process_affinity"] = [0]
     report["timing"]["runs"] = 20
     report["timing"]["samples"] = report["timing"]["samples"] * 20
@@ -418,14 +420,17 @@ def controlled_metrics_report() -> dict[str, object]:
         "revision": "d" * 40,
         "source_export": source,
         "compiler": tool,
+        "compiler_flags": ["-O3", "-DNDEBUG"],
         "cmake": json.loads(json.dumps(tool)),
         "ninja": json.loads(json.dumps(tool)),
         "configure_argv": [
             "cmake", "-S", "/source", "-B", "/build", "/compiler", "d" * 40,
+            "-DCMAKE_CXX_FLAGS_RELEASE=-O3 -DNDEBUG",
         ],
         "normalized_configure_argv": [
             "cmake", "-S", "{source_root}", "-B", "{build_root}",
             "{compiler}", "{revision}",
+            "-DCMAKE_CXX_FLAGS_RELEASE=-O3 -DNDEBUG",
         ],
         "build_argv": ["cmake", "--build", "/build"],
         "configure_log": {"returncode": 0, "seconds": 1.0, "stdout": "", "stderr": ""},
@@ -525,6 +530,10 @@ class ProtocolTests(unittest.TestCase):
                 ),
             ),
             (
+                "compiler flags",
+                lambda report: report["build"]["compiler_flags"].append("-fno-inline"),
+            ),
+            (
                 "compiler",
                 lambda report: report["build"]["compiler"]["artifact"].update(
                     sha256="0" * 64
@@ -543,6 +552,16 @@ class ProtocolTests(unittest.TestCase):
                 mutate(report)
                 with self.assertRaises(RuntimeError):
                     protocol.validate_fixed_metrics_report(report)
+
+        report = controlled_metrics_report()
+        report["compiler_flags"] = "-O0"
+        with self.assertRaisesRegex(RuntimeError, "compiler_flags differ"):
+            protocol.validate_fixed_metrics_report(report)
+
+        comparison = controlled_comparison_report()
+        comparison["compiler_flags"] = "-O0"
+        with self.assertRaisesRegex(RuntimeError, "compiler_flags differ"):
+            protocol.validate_comparison_report(comparison)
 
     def test_v3_reports_are_explicitly_rejected(self) -> None:
         comparison = comparison_report()
@@ -600,11 +619,17 @@ class ProtocolTests(unittest.TestCase):
         )
         self.assertFalse(comparison["additionalProperties"])
         self.assertFalse(metrics["additionalProperties"])
-        self.assertFalse(build["additionalProperties"])
+        self.assertEqual(len(build["oneOf"]), 2)
+        self.assertFalse(build["$defs"]["common_driver"]["additionalProperties"])
+        self.assertFalse(build["$defs"]["current_tree"]["additionalProperties"])
         self.assertFalse(artifact_manifest["additionalProperties"])
         self.assertEqual(comparison["properties"]["schema"]["const"], "csv2-benchmark-report-v4")
         self.assertEqual(metrics["properties"]["schema"]["const"], "csv2-fixed-machine-metrics-v4")
-        self.assertEqual(build["properties"]["schema"]["const"], "csv2-benchmark-build-v1")
+        self.assertEqual(
+            build["$defs"]["current_tree"]["properties"]["schema"]["const"],
+            "csv2-benchmark-build-v1",
+        )
+        self.assertIn("compiler_flags", build["$defs"]["current_tree"]["required"])
         self.assertIn("runner", comparison["required"])
         self.assertIn("clean_build", metrics["required"])
         self.assertIn("post_build", metrics["required"])

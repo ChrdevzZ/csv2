@@ -6,6 +6,7 @@ import hashlib
 import json
 import os
 import re
+import shlex
 import shutil
 import stat
 import subprocess
@@ -379,6 +380,8 @@ def compile_common_driver(
     run_fn: Run = subprocess.run,
 ) -> dict[str, object]:
     """Compile one common driver and return its complete audited build manifest."""
+    if not compiler_flags or any(not flag for flag in compiler_flags):
+        raise RuntimeError("owned common-driver builds require non-empty compiler flags")
     verify_git_export(header_export)
     verify_git_export(adapter_export)
     revision = str(header_export.get("commit", ""))
@@ -594,7 +597,7 @@ def validate_build_manifest(manifest: dict[str, object]) -> None:
     compiler_flags = manifest["compiler_flags"]
     if not all(isinstance(value, list) for value in (argv, normalized_argv, compiler_flags)):
         raise RuntimeError("build command fields are malformed")
-    if not argv or len(argv) != len(normalized_argv):
+    if not argv or not compiler_flags or len(argv) != len(normalized_argv):
         raise RuntimeError("build command normalization is inconsistent")
     compiler_path = artifacts.canonical_existing(
         Path(str(compiler_artifact.get("path", ""))), "build compiler"
@@ -746,6 +749,7 @@ def current_build_identity_digest(manifest: dict[str, object]) -> str:
             "compiler_sha256": compiler["artifact"]["sha256"],
             "cmake_sha256": cmake["artifact"]["sha256"],
             "ninja_sha256": ninja["artifact"]["sha256"],
+            "compiler_flags": manifest["compiler_flags"],
             "normalized_configure_argv": manifest["normalized_configure_argv"],
             "file_api": manifest["file_api"],
             "compile_commands_sha256": compile_commands["sha256"],
@@ -804,6 +808,7 @@ def audit_current_codemodel(
     build_root: Path,
     compiler: Path,
     revision: str,
+    compiler_flags: Sequence[str],
     *,
     run_fn: Run = subprocess.run,
 ) -> dict[str, object]:
@@ -866,6 +871,15 @@ def audit_current_codemodel(
             for group in compile_groups
             for fragment in group.get("compileCommandFragments", [])
         )
+        fragment_tokens = shlex.split(fragments, posix=os.name != "nt")
+        missing_compiler_flags = [
+            flag for flag in compiler_flags if flag not in fragment_tokens
+        ]
+        if missing_compiler_flags:
+            raise RuntimeError(
+                f"{target_name} lacks requested compiler flags: "
+                + ", ".join(missing_compiler_flags)
+            )
         defines = {
             define["define"] for group in compile_groups for define in group.get("defines", [])
         }
@@ -946,6 +960,7 @@ def build_current_tree(
     repository: Path,
     reference: str,
     compiler: Path,
+    compiler_flags: Sequence[str],
     workspace: Path,
     corpus_scale: int = 1,
     run_fn: Run = subprocess.run,
@@ -954,6 +969,9 @@ def build_current_tree(
         raise RuntimeError("corpus scale must be positive")
     repository = artifacts.canonical_existing(repository, "Git repository")
     compiler = _compiler_path(compiler)
+    compiler_flags = list(compiler_flags)
+    if not compiler_flags or any(not flag for flag in compiler_flags):
+        raise RuntimeError("owned current-tree builds require non-empty compiler flags")
     cmake_path = shutil.which("cmake")
     ninja_path = shutil.which("ninja")
     if cmake_path is None or ninja_path is None:
@@ -979,6 +997,7 @@ def build_current_tree(
         "-DCMAKE_BUILD_TYPE=Release",
         "-DCMAKE_EXPORT_COMPILE_COMMANDS=ON",
         f"-DCMAKE_CXX_COMPILER={compiler}",
+        f"-DCMAKE_CXX_FLAGS_RELEASE={' '.join(compiler_flags)}",
         "-DCSV2_BUILD_BENCHMARKS=ON",
         "-DCSV2_BUILD_BENCHMARK_CHECKS=ON",
         "-DCSV2_VERIFICATION_PROFILE=perf",
@@ -1003,7 +1022,7 @@ def build_current_tree(
     built = _run_text(build_command, run_fn=run_fn)
     build_seconds = __import__("time").perf_counter() - built_started
     audit = audit_current_codemodel(
-        source_root, build_root, compiler, revision, run_fn=run_fn
+        source_root, build_root, compiler, revision, compiler_flags, run_fn=run_fn
     )
     compiler_identity = _tool_identity(
         compiler,
@@ -1034,6 +1053,7 @@ def build_current_tree(
         "revision": revision,
         "source_export": source,
         "compiler": compiler_identity,
+        "compiler_flags": compiler_flags,
         "cmake": cmake_identity,
         "ninja": ninja_identity,
         "configure_argv": configure,
@@ -1060,4 +1080,50 @@ def build_current_tree(
     }
     manifest["identity_digest"] = current_build_identity_digest(manifest)
     manifest["digest"] = document_digest(manifest)
+    verify_current_build_manifest(manifest)
     return manifest
+
+
+def verify_current_build_manifest(manifest: dict[str, object]) -> None:
+    """Revalidate every material input and output of an owned current-tree build."""
+    if manifest.get("schema") != BUILD_SCHEMA or manifest.get("kind") != "current-tree":
+        raise RuntimeError("current-tree build manifest has the wrong schema or kind")
+    expected_digest = str(manifest.get("digest", ""))
+    unsigned = dict(manifest)
+    unsigned.pop("digest", None)
+    if not SHA256.fullmatch(expected_digest) or document_digest(unsigned) != expected_digest:
+        raise RuntimeError("current-tree build manifest digest is inconsistent")
+    if (
+        not SHA256.fullmatch(str(manifest.get("identity_digest", "")))
+        or current_build_identity_digest(manifest) != manifest["identity_digest"]
+    ):
+        raise RuntimeError("current-tree build identity digest is inconsistent")
+
+    source = manifest.get("source_export")
+    if not isinstance(source, dict):
+        raise RuntimeError("current-tree source export is malformed")
+    verify_git_export(source)
+    revision = str(manifest.get("revision", ""))
+    if source.get("commit") != revision:
+        raise RuntimeError("current-tree revision differs from its source export")
+
+    for name in ("compiler", "cmake", "ninja"):
+        tool = manifest.get(name)
+        if not isinstance(tool, dict) or not isinstance(tool.get("artifact"), dict):
+            raise RuntimeError(f"current-tree {name} identity is malformed")
+        artifacts.verify_unchanged(tool["artifact"], f"current-tree {name}")
+    for name in ("compile_commands", "corpus_manifest"):
+        identity = manifest.get(name)
+        if not isinstance(identity, dict):
+            raise RuntimeError(f"current-tree {name} identity is malformed")
+        artifacts.verify_unchanged(identity, f"current-tree {name}")
+    targets = manifest.get("targets")
+    if not isinstance(targets, dict) or set(targets) != {
+        "csv2_benchmark",
+        "csv2_benchmark_allocations",
+    }:
+        raise RuntimeError("current-tree target identities are malformed")
+    for name, identity in targets.items():
+        if not isinstance(identity, dict):
+            raise RuntimeError(f"current-tree target identity is malformed: {name}")
+        artifacts.verify_unchanged(identity, f"current-tree target {name}")

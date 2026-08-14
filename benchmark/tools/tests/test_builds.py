@@ -10,13 +10,87 @@ import unittest
 from pathlib import Path
 
 import _support
-from csv2bench import BUILD_SCHEMA, builds
+from csv2bench import BUILD_SCHEMA, artifacts, builds
 
 
 REPOSITORY = _support.BENCHMARK_DIR.parent
 
 
 class BuildTests(unittest.TestCase):
+    def test_current_build_verification_rejects_source_drift(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = builds.export_git_tree(
+                REPOSITORY, "HEAD", root / "source", ("CMakeLists.txt",)
+            )
+
+            def create_artifact(name: str, contents: bytes) -> dict[str, object]:
+                path = root / name
+                path.write_bytes(contents)
+                return artifacts.metadata(path)
+
+            compiler = create_artifact("compiler", b"compiler")
+            cmake = create_artifact("cmake", b"cmake")
+            ninja = create_artifact("ninja", b"ninja")
+            compile_commands = create_artifact("compile_commands.json", b"[]")
+            corpus_manifest = create_artifact("corpus.json", b"{}")
+            benchmark = create_artifact("benchmark", b"benchmark")
+            allocations = create_artifact("benchmark-allocations", b"allocations")
+            for target in (benchmark, allocations):
+                target["revision"] = source["commit"]
+            tool = lambda identity: {
+                "artifact": identity,
+                "version": {
+                    "command": [identity["path"], "--version"],
+                    "returncode": 0,
+                    "stdout": "version",
+                    "stderr": "",
+                },
+            }
+            manifest: dict[str, object] = {
+                "schema": BUILD_SCHEMA,
+                "kind": "current-tree",
+                "generated_at_utc": "now",
+                "revision": source["commit"],
+                "source_export": source,
+                "compiler": tool(compiler),
+                "compiler_flags": ["-O3", "-DNDEBUG"],
+                "cmake": tool(cmake),
+                "ninja": tool(ninja),
+                "configure_argv": ["cmake", "configure"],
+                "normalized_configure_argv": ["cmake", "configure"],
+                "build_argv": ["cmake", "--build"],
+                "configure_log": {
+                    "returncode": 0,
+                    "seconds": 1.0,
+                    "stdout": "",
+                    "stderr": "",
+                },
+                "build_log": {
+                    "returncode": 0,
+                    "seconds": 1.0,
+                    "stdout": "",
+                    "stderr": "",
+                },
+                "file_api": {},
+                "compile_commands": compile_commands,
+                "targets": {
+                    "csv2_benchmark": benchmark,
+                    "csv2_benchmark_allocations": allocations,
+                },
+                "corpus_manifest": corpus_manifest,
+                "source_root": source["root"],
+                "build_root": str(root),
+            }
+            manifest["identity_digest"] = builds.current_build_identity_digest(manifest)
+            manifest["digest"] = builds.document_digest(manifest)
+            builds.verify_current_build_manifest(manifest)
+
+            exported = Path(source["root"]) / "CMakeLists.txt"
+            exported.write_bytes(exported.read_bytes() + b"\n")
+            with self.assertRaisesRegex(RuntimeError, "changed after extraction"):
+                builds.verify_current_build_manifest(manifest)
+
     def test_msvc_owned_build_normalizes_source_paths_reproducibly(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -184,6 +258,17 @@ class BuildTests(unittest.TestCase):
             self.assertIn("{output}", " ".join(manifest["normalized_argv"]))
             self.assertEqual(manifest["build_log"]["returncode"], 0)
             self.assertRegex(manifest["digest"], r"^[0-9a-f]{64}$")
+
+            missing_flags = copy.deepcopy(manifest)
+            missing_flags["compiler_flags"] = []
+            missing_flags["identity_digest"] = builds.common_build_identity_digest(
+                missing_flags
+            )
+            unsigned_missing_flags = dict(missing_flags)
+            unsigned_missing_flags.pop("digest")
+            missing_flags["digest"] = builds.document_digest(unsigned_missing_flags)
+            with self.assertRaisesRegex(RuntimeError, "normalization"):
+                builds.validate_build_manifest(missing_flags)
 
             compatible = copy.deepcopy(manifest)
             builds.assert_compatible_builds(manifest, compatible)

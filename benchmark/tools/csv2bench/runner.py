@@ -729,6 +729,7 @@ def main() -> None:
                 compiler_flags=compiler_flags,
                 workspace=canonical_output(args.build_root),
             )
+            args.compiler_flags = " ".join(compiler_flags)
             args.baseline = Path(str(owned_builds["baseline"]["output"]["path"]))
             args.candidate = Path(str(owned_builds["candidate"]["output"]["path"]))
             args.baseline_revision = str(owned_builds["baseline"]["revision"])

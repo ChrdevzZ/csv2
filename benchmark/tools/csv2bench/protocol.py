@@ -433,7 +433,7 @@ def _common_build(value: object, label: str) -> dict[str, object]:
         raise RuntimeError(f"{label}.compiler.version did not succeed")
     for field in ("compiler_flags", "argv", "normalized_argv"):
         values = _array(build[field], f"{label}.{field}")
-        if (field != "compiler_flags" and not values) or not all(
+        if not values or not all(
             isinstance(item, str) and item for item in values
         ):
             raise RuntimeError(f"{label}.{field} is malformed")
@@ -494,7 +494,8 @@ def _current_build(value: object, label: str) -> dict[str, object]:
     build = _object(value, label)
     fields = {
         "schema", "kind", "generated_at_utc", "revision", "source_export",
-        "compiler", "cmake", "ninja", "configure_argv", "normalized_configure_argv",
+        "compiler", "compiler_flags", "cmake", "ninja", "configure_argv",
+        "normalized_configure_argv",
         "build_argv", "configure_log", "build_log", "file_api", "compile_commands",
         "targets", "corpus_manifest", "source_root", "build_root", "identity_digest",
         "digest",
@@ -510,6 +511,11 @@ def _current_build(value: object, label: str) -> dict[str, object]:
         raise RuntimeError(f"{label} is not bound to a full candidate tree")
     for tool_name in ("compiler", "cmake", "ninja"):
         _tool_identity(build[tool_name], f"{label}.{tool_name}")
+    compiler_flags = _array(build["compiler_flags"], f"{label}.compiler_flags")
+    if not compiler_flags or not all(
+        isinstance(flag, str) and flag for flag in compiler_flags
+    ):
+        raise RuntimeError(f"{label}.compiler_flags is malformed")
     for field in ("configure_argv", "normalized_configure_argv", "build_argv"):
         values = _array(build[field], f"{label}.{field}")
         if not values or not all(isinstance(item, str) and item for item in values):
@@ -520,6 +526,9 @@ def _current_build(value: object, label: str) -> dict[str, object]:
     for placeholder in ("{source_root}", "{build_root}", "{compiler}", "{revision}"):
         if placeholder not in normalized:
             raise RuntimeError(f"{label} configure command lacks {placeholder}")
+    expected_flag_argument = "-DCMAKE_CXX_FLAGS_RELEASE=" + " ".join(compiler_flags)
+    if expected_flag_argument not in build["configure_argv"]:
+        raise RuntimeError(f"{label} configure command differs from compiler_flags")
     for log_name in ("configure_log", "build_log"):
         log = _object(build[log_name], f"{label}.{log_name}")
         _required(log, {"returncode", "seconds", "stdout", "stderr"}, f"{label}.{log_name}")
@@ -695,6 +704,9 @@ def validate_comparison_report(report: object) -> None:
             or baseline_build["normalized_argv"] != candidate_build["normalized_argv"]
         ):
             raise RuntimeError("comparison owned builds are not compatible")
+        expected_flags = " ".join(candidate_build["compiler_flags"])
+        if document["compiler_flags"] != expected_flags:
+            raise RuntimeError("comparison compiler_flags differ from the owned build")
 
     datasets = _array(document["datasets"], "comparison report.datasets")
     cases = _array(document["cases"], "comparison report.cases")
@@ -1006,6 +1018,9 @@ def validate_fixed_metrics_report(report: object) -> None:
     if executable["revision"] != allocation["revision"]:
         raise RuntimeError("fixed-machine executable revisions are inconsistent")
     if current_build is not None:
+        expected_flags = " ".join(current_build["compiler_flags"])
+        if document["compiler_flags"] != expected_flags:
+            raise RuntimeError("fixed-machine compiler_flags differ from the owned build")
         for name, artifact in (
             ("csv2_benchmark", executable),
             ("csv2_benchmark_allocations", allocation),
