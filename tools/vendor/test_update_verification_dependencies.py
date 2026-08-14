@@ -21,12 +21,17 @@ class VendorIntegrityTests(unittest.TestCase):
         list_path = root / "third_party" / "verification" / "sample.files"
         list_path.write_text("\n".join(files) + "\n", encoding="utf-8")
         snapshot_digest = vendor.snapshot_hash(snapshot, files)
+        hash_path = root / "third_party" / "verification" / "sample.sha256"
+        hash_path.write_text(
+            "\n".join(vendor.hash_lines(snapshot, files)) + "\n", encoding="utf-8"
+        )
         manifest = {
             "schema": vendor.SCHEMA,
             "dependencies": {
                 "sample": {
                     "root": "third_party/verification/sample",
                     "file_list": "third_party/verification/sample.files",
+                    "hash_list": "third_party/verification/sample.sha256",
                     "license_file": "LICENSE",
                     "snapshot_sha256": snapshot_digest,
                     "archive_sha256": hashlib.sha256(b"archive").hexdigest(),
@@ -58,6 +63,14 @@ class VendorIntegrityTests(unittest.TestCase):
         self.addCleanup(temporary.cleanup)
         (root / entry["root"] / "source.cpp").write_bytes(b"changed")
         with self.assertRaisesRegex(vendor.VendorError, "SHA-256 mismatch"):
+            vendor.check_dependency(root, "sample", entry)
+
+    def test_rejects_stale_per_file_hash_allowlist(self):
+        temporary, root, entry = self.make_repository()
+        self.addCleanup(temporary.cleanup)
+        hash_path = root / entry["hash_list"]
+        hash_path.write_text("0" * 64 + "  LICENSE\n", encoding="utf-8")
+        with self.assertRaisesRegex(vendor.VendorError, "allowlist is stale"):
             vendor.check_dependency(root, "sample", entry)
 
     def test_rejects_unsafe_whitelist_path(self):

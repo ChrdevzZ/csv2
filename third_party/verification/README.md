@@ -11,10 +11,11 @@ never installed, exported, linked by `csv2::csv2`, or exposed to consumers.
 | Catch2 | signed tag object `95d8a61b089317bec800c7cc4c64064cbcb3802d`, peeled commit `8b08d4d79514f45f7e4ce2a607ac9c94e920d1bb` (`v3.15.3`) | `b0299ae552918220a7a6e21e7de5b714777f4e8c883fb70c4bb23fe01df8c6e3` | `30a95651c113d1d7e7fee94504319312f9854f0c895e88da98d2233481d08925` | BSL-1.0 | C++14–23 normal runtime tests |
 | Google Benchmark | commit/tag `192ef10025eb2c4cdd392bc502f0c852196baa48` (`v1.9.5`) | `f82705a2726d8f6cdcda274b841f6314dbfc6f731cdda06c946f310ec1cc3ad9` | `e5ed0f09089472e1ea729869600ae03a8aef75fc521952dcfd30c4904481d789` | Apache-2.0 | current-tree benchmark only |
 
-`manifest.json` is the machine-readable authority. `catch2.files` and
-`google_benchmark.files` are sorted, duplicate-free per-file allowlists. The
-snapshot hash covers each relative path, byte count, and file content, so an
-added, removed, renamed, or changed file fails integrity validation.
+`manifest.json` is the machine-readable authority. `*.files` are sorted,
+duplicate-free path allowlists and `*.sha256` bind every allowed path to its
+content. The aggregate snapshot hash additionally covers each relative path,
+byte count, and file content, so an added, removed, renamed, or changed file
+fails integrity validation.
 
 The curated snapshots retain licenses, the upstream build modules needed to
 configure the isolated projects, public headers, and split library sources.
@@ -43,6 +44,9 @@ quick/full builds and is enabled for perf builds only when its headers and
 library are available. CSV2 warning-as-error, sanitizer, coverage, and format
 rules apply only to first-party targets; the dependency loaders explicitly set
 `COMPILE_WARNING_AS_ERROR=OFF` even when the parent build enables it globally.
+Each loader rejects pre-existing target names, snapshots the complete parent
+CMake Cache before entering the vendored project, and restores its values and
+metadata while deleting entries introduced by the dependency.
 
 CI installs CSV2 after configuring all verification components and fails if an
 installed path contains Catch2 or Google Benchmark names. This supplements the
@@ -59,9 +63,11 @@ python3 tools/vendor/test_update_verification_dependencies.py -v
 ```
 
 `check` performs no network access. It validates schema, allowlists, licenses,
-directory contents, and both snapshot hashes. Ordinary CMake configuration and
-all CI jobs are also offline with respect to these dependencies: there is no
-`FetchContent`, submodule update, package-manager fallback, or automatic fetch.
+directory contents, per-file hashes, and both snapshot hashes. CMake performs
+the same path, directory, symlink, and per-file SHA-256 checks without Python
+before loading either dependency. Ordinary configuration and all CI jobs are
+offline: there is no `FetchContent`, submodule update, package-manager fallback,
+or automatic fetch.
 
 ## Maintainer update procedure
 
@@ -86,11 +92,12 @@ snapshot hash.
 After reviewing the staged diff:
 
 1. update the allowlist to the minimal required files;
-2. update tag object, peeled commit, version, archive and snapshot hashes,
+2. regenerate the per-file hashes with `write-hashes <dependency>`;
+3. update tag object, peeled commit, version, archive and snapshot hashes,
    license metadata, and license path;
-3. replace the snapshot without modifying its bytes;
-4. run integrity/tooling tests and all dependent builds;
-5. configure every verification component, install CSV2, and audit the install
+4. replace the snapshot without modifying its bytes;
+5. run integrity/tooling tests and all dependent builds;
+6. configure every verification component, install CSV2, and audit the install
    manifest for dependency leakage.
 
 The current `patches` arrays are empty. If a local patch becomes unavoidable,
