@@ -14,7 +14,7 @@ import tarfile
 import tempfile
 import urllib.request
 from pathlib import Path, PurePosixPath
-from typing import Dict, Iterable, List, Mapping, Sequence
+from typing import Iterable, List, Mapping, Sequence
 
 
 SCHEMA = "csv2-verification-vendor-v1"

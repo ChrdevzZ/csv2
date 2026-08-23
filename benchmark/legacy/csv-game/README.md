@@ -1,11 +1,13 @@
-[`csv-game` Benchmark](https://bitbucket.org/ewanhiggs/csv-game/src/master/)
+[`csv-game` Benchmark](https://gitlab.com/ehiggs/csv-game)
 
 > **Repository status:** This directory preserves the upstream `csv-game`
 > comparison programs and their historical results. It is not wired into this
-> repository's CMake or CI targets. The maintained csv2 traversal benchmark is
-> `benchmark/main.cpp`, built with `CSV2_BUILD_BENCHMARKS=ON`; CI checks that it
-> compiles but does not run performance measurements. The generator referenced
-> below is part of the upstream benchmark procedure and is not vendored here.
+> repository's CMake or CI targets. The maintained benchmark implementation is
+> under [`benchmark/current/`](../../current/) and is built with
+> `CSV2_BUILD_BENCHMARKS=ON`. Hosted CI runs deterministic protocol, checksum,
+> allocation, observer, and dry-run checks, but does not use timing as a
+> performance gate. The generator referenced below is part of the upstream
+> benchmark procedure and is not vendored here.
 
 ## Procedure
 1. Generate the test file using the script in the test directory.

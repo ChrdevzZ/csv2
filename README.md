@@ -14,8 +14,8 @@ Fast, header-only C++11 CSV reader and writer with zero-copy iteration and
 single-header distribution.
 
 The modular headers under `include/csv2/` are the maintained source of truth.
-`single_include/csv2/csv2.hpp` is generated from them and is verified for exact
-synchronization in Linux CI.
+`single_include/csv2/csv2.hpp` is generated from them; CI builds and tests both
+header forms.
 
 ## Project Lineage
 
