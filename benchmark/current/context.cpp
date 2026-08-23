@@ -65,8 +65,7 @@ std::ostream &operator<<(std::ostream &stream, const StreamableField &field) {
 
 Context::Context()
     : input_size_(0), mmap_ready_(false), mapping_pretouch_sink_(0), decoded_row_count_(0),
-      decoded_cell_count_(0),
-      output_stream_(&output_buffer_), force_output_stream_failure_(false),
+      decoded_cell_count_(0), output_stream_(&output_buffer_), force_output_stream_failure_(false),
       force_input_read_failure_(false), prepared_mask_(prepare_none),
       prepared_sources_(source_none) {}
 

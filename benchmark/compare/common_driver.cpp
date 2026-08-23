@@ -28,7 +28,7 @@
 #error "CSV2_BENCHMARK_TIMER_SCOPE_AUDIT must be 0 or 1"
 #endif
 
-#if CSV2_BENCHMARK_ENABLE_MODERN_WRITER_OPERATIONS != 0 &&                                 \
+#if CSV2_BENCHMARK_ENABLE_MODERN_WRITER_OPERATIONS != 0 &&                                         \
     CSV2_BENCHMARK_ENABLE_MODERN_WRITER_OPERATIONS != 1
 #error "CSV2_BENCHMARK_ENABLE_MODERN_WRITER_OPERATIONS must be 0 or 1"
 #endif
