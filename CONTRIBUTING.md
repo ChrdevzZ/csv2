@@ -137,7 +137,18 @@ by operation, source, and dataset. Every kernel must define:
 - whether the timed path must allocate zero times;
 - supported sources, preparation requirements, and explicit failure status.
 
-Add a deterministic verify and short dry-run CTest for each operation group.
+Add one stable entry to `benchmark/checks/case_manifest.json` for every new
+operation. The manifest gate lists the compiled registry, verifies the exact
+semantic wire, and starts a short dry run for each available operation; feature-
+conditional entries may remain absent from builds that lack the capability.
+Actual timing must select exactly one operation and one concrete compatible
+source per process.
+
+Operation names must describe their cache and preparation boundary. Do not call
+repeated filesystem reads cold I/O or prepared page touches first-fault work.
+Separate index construction from prepared lookup, and bind validation scenario
+names to preflight-checked corpus diagnostics.
+
 Timing never replaces correctness tests. Do not compare historical benchmark
 executables or hand-built artifacts across revisions. Use the owned pipeline,
 which exports immutable Git objects and compiles the same C++11
@@ -150,7 +161,10 @@ noise calibration, alternating A/B runs, matching checksums, and the threshold
 documented in [`benchmark/README.md`](benchmark/README.md). GitHub-hosted
 results are `exploratory` and cannot establish “no regression”. Only a
 completed `controlled` evidence bundle produced by the cross-report finalizer
-is decision-eligible.
+is decision-eligible. Controlled work also requires a reviewed machine profile
+whose digest and runtime observation match A/A, A/B, and fixed metrics. Do not
+edit derived statistics or verdicts: validators rebuild them from launch wires,
+samples, and the recorded schedule.
 
 ## Verification dependencies
 
@@ -191,6 +205,8 @@ Performance jobs must finish with `benchmark/finalize_evidence.py`; checking
 that component files merely exist is not an evidence gate. Comparison and
 fixed-metrics reports can declare only `controlled_complete`. Do not set or
 infer final `decision_eligible` outside the cross-report evidence bundle.
+Fixed metrics must bind exactly one A/B case by dataset, semantic case ID,
+scope, source, and byte basis.
 
 Update the root README for public behavior, `test/README.md` for verification
 topology, `benchmark/README.md` and `benchmark/protocol/README.md` for timing or

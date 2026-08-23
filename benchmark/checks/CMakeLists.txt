@@ -392,6 +392,13 @@ foreach(csv2_contract IN ITEMS
 endforeach()
 
 if(CSV2_PYTHON_AUDITS_AVAILABLE)
+  csv2_add_benchmark_check(csv2.benchmark.current.case_manifest
+    COMMAND ${CSV2_PYTHON_EXECUTABLE}
+      ${CMAKE_CURRENT_SOURCE_DIR}/verify_case_manifest.py
+      --executable $<TARGET_FILE:csv2_benchmark>
+      --source-root ${csv2_SOURCE_DIR}
+      --manifest ${CMAKE_CURRENT_SOURCE_DIR}/case_manifest.json
+    TIMEOUT 120)
   csv2_add_benchmark_check(csv2.benchmark.current.checksum.manifest
     COMMAND ${CSV2_PYTHON_EXECUTABLE}
       ${CMAKE_CURRENT_SOURCE_DIR}/verify_expected_checksums.py

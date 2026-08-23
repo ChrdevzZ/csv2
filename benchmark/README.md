@@ -53,22 +53,35 @@ configuration.
 
 | Group | Operations |
 | --- | --- |
-| source | `file-read`, `mmap-open`, `mmap-touch`, `parse-borrowed`, `parse-owned`, conditional `parse-span` |
+| source | `file-read-cached`, `mmap-open`, `mmap-touch-resident`, `parse-borrowed`, `parse-owned`, conditional `parse-span` |
 | traversal | `rows`, `rows-cells` |
 | extraction | row raw; cell raw/decoded/content with fresh or reused string; decoded fresh/reused vector |
-| validation | `strict`, `invalid-early`, `invalid-middle`, `invalid-late` |
+| validation | `valid`, `invalid-early`, `invalid-middle`, `invalid-late` |
 | conversion | `integer-bool-error`, conditional `integer-expected` |
 | ranges | `pipeline`, conditional `to-container` |
-| index | `build`, `sequential`, deterministic `random` |
+| index | `build`, `sequential-lookup`, deterministic `random-lookup` |
 | writer | raw/escaped × direct/streamable, plus `always-direct` |
 
-`file-read` measures opening and reading the file. `mmap-open` measures a fresh
-mapping; `mmap-touch` touches one byte per page and the final byte of an
-already prepared mapping. Each operation declares source compatibility and a
-preparation bitmask. `Context` materializes only that state: source/traversal
-kernels do not decode Writer rows or allocate Writer buffers, and `mmap-open`
-does not pre-map its input. Reused extraction buffers and Writer output capacity
-are reserved before timing only for operations that need them.
+`file-read-cached` opens and reads a file repeatedly; it describes a cached
+filesystem path, not cold storage. `mmap-open` creates a fresh mapping without
+pre-mapping the input. `mmap-touch-resident` touches one byte per page and the
+final byte of a mapping prepared before timing; it describes resident-page
+access, not first page faults. Each operation declares source compatibility and
+a preparation bitmask. `Context` materializes only that state: source/traversal
+kernels do not decode Writer rows or allocate Writer buffers. Reused extraction
+buffers and Writer output capacity are reserved before timing only for
+operations that need them.
+
+Index construction and lookup are separate measurements. `index/build` owns
+the construction and allocation cost. The two lookup operations consume a
+prepared `RowIndex` and precomputed deterministic positions; their timed paths
+perform only lookup, row-boundary access, and result observation and must not
+allocate.
+
+Validation names are input contracts rather than labels for the same kernel.
+`validation/valid` requires successful strict validation. Each invalid case
+requires the manifest's exact diagnostic and an offset in its declared early,
+middle, or late region before timing begins.
 
 Writer direct kernels pass contiguous strings; streamable kernels use a
 non-owning wrapper with an explicit inserter. Both escaped paths consume the
@@ -107,8 +120,9 @@ wire, never by floating-point benchmark counters:
   --csv2-verify
 ```
 
-The line begins with `protocol=csv2-current-v2` and includes decimal `uint64_t`
-checksum, bytes, rows, cells, allocations, and allocated bytes. The
+The line begins with `protocol=csv2-current-v3` and includes a stable semantic
+case ID, scope, source, byte basis, decimal `uint64_t` checksum, bytes, rows,
+cells, allocations, and allocated bytes. The
 instrumented `csv2_benchmark_allocations` executable replaces ordinary and
 C++17 aligned `new`/`new[]`. Verification fails when an operation marked
 zero-allocation allocates. CI currently gates zero allocation for traversal,
@@ -119,7 +133,10 @@ decimal checksum; prefix matches are rejected.
 
 ### Timing
 
-After a successful verify call, pass ordinary Google Benchmark options:
+After a successful verify call, pass ordinary Google Benchmark options. A
+timing process accepts exactly one operation and one concrete compatible
+source; `all` is available only to list, verify, and audit modes. The suite
+runner starts one process for each requested operation/source/dataset case.
 
 ```bash
 ./build-benchmark/benchmark/current/csv2_benchmark \
@@ -134,9 +151,11 @@ After a successful verify call, pass ordinary Google Benchmark options:
   --benchmark_out_format=json
 ```
 
-The executable uses real time. `--csv2-source all` registers every supported
-source; mmap operations disappear completely from an explicit
-`-DCSV2_HAS_MMAP=0` build.
+The executable uses real time. Mmap operations disappear completely from an
+explicit `-DCSV2_HAS_MMAP=0` build. `checks/case_manifest.json` assigns every
+registered operation at least one stable verify and dry-run case; CI rejects
+missing registrations, unsupported sources, and unknown non-conditional
+entries.
 
 ## Deterministic corpus
 
@@ -182,8 +201,9 @@ each exact header tree directly from immutable Git blobs, then compiles both
 with one audited compiler and normalized command. It rejects links, unsafe
 paths, dirty-worktree substitution, mismatched flags, and output drift.
 
-The driver emits `csv2-common-v3`. Its `--describe` wire assigns every
-operation an explicit scope and supported source set. `rows_cells` is
+The driver emits `csv2-common-v4`. Its `--describe` wire assigns every
+operation an explicit semantic case ID, scope, byte basis, and supported source
+set. `rows_cells` is
 `traversal_only`; Writer operations are `writer_only` and consume pointer/length
 row views prepared before timing; `legacy_mmap_rows_cells` is explicitly
 `mmap_and_traversal`. Direct and streamable Writer variants must agree on
@@ -195,8 +215,8 @@ checksum; a mismatch prevents a performance decision.
 `run_suite.py` is a compatibility wrapper around `tools/csv2bench/runner.py`.
 Owned mode is the default: the tool resolves commits, exports and builds both
 drivers, embeds `csv2-benchmark-build-v1` manifests, revalidates all Git/build/
-dataset/tool inputs, rejects output aliases, and atomically publishes a v4
-report plus its v2 artifact manifest. External executables require
+dataset/tool inputs, rejects output aliases, and atomically publishes a v5
+report plus its v3 artifact manifest. External executables require
 `--external-artifacts` and are restricted to exploratory evidence.
 
 First generate the owned current-tree corpus with the fixed-metrics command
@@ -219,6 +239,7 @@ python3 benchmark/run_suite.py \
   --files short_unquoted.csv,quote_heavy.csv,multiline.csv,crlf.csv \
   --runs 20 --warmups 3 --iterations 10 --mode aa \
   --evidence-level controlled --cpu-affinity 0 \
+  --machine-profile /etc/csv2/perf-machine.json \
   --output build-benchmark/aa.json
 
 python3 benchmark/run_suite.py \
@@ -234,6 +255,7 @@ python3 benchmark/run_suite.py \
   --runs 20 --warmups 3 --iterations 10 --mode compare \
   --calibration build-benchmark/aa.json \
   --evidence-level controlled --cpu-affinity 0 \
+  --machine-profile /etc/csv2/perf-machine.json \
   --output build-benchmark/ab.json
 ```
 
@@ -243,10 +265,15 @@ Numeric CLI fields accept unsigned ASCII decimal only. Signs, whitespace,
 zero iterations, and overflow are rejected before measurement.
 
 The report retains launch order, raw output, every sample, provenance, median,
-MAD, and deterministic paired-bootstrap 95% interval. A regression is reported
-only when candidate median throughput drops beyond
+MAD, and deterministic paired-bootstrap 95% interval. Validation reparses every
+saved launch wire, reconstructs the `(phase, round, order)` schedule, and
+recomputes throughput, medians, MADs, confidence intervals, noise, thresholds,
+and verdicts. A/B requires distinct commits; A/A requires identical revisions,
+owned build identities, and executable hashes. A regression is reported only
+when candidate median throughput drops beyond
 `max(5%, comparison noise, A/A noise)` and the complete interval lies below
-parity.
+parity. Comparison noise is the larger of the baseline and candidate relative
+MAD bounds, not a baseline-only estimate.
 
 ## Fixed-machine metrics
 
@@ -271,12 +298,14 @@ taskset -c 0 python3 benchmark/collect_metrics.py \
   --source buffer --runs 20 \
   --minimum-time 0.5s --warmup-seconds 0.5 \
   --evidence-level controlled --cpu-affinity 0 \
+  --machine-profile /etc/csv2/perf-machine.json \
   --output build-benchmark/fixed-machine.json
 ```
 
-Controlled metrics currently require Linux, at least 20 repetitions, matching
-CPU affinity, positive warmup, a libpfm-enabled Google Benchmark build, and
-complete cycles/instructions/branch-misses plus RSS/size and clean-build timing
+Controlled metrics currently require Linux, a verified
+`csv2-machine-profile-v1`, at least 20 repetitions, matching CPU affinity,
+positive warmup, a libpfm-enabled Google Benchmark build, and complete
+cycles/instructions/branch-misses plus RSS/size and clean-build timing
 collection. Corpus generation is untimed and its checked manifest remains part
 of the owned build identity. The current wire revision, source Git commit,
 codemodel, compile/link commands, compiler executable, and output hashes must
@@ -300,34 +329,40 @@ python3 benchmark/finalize_evidence.py \
 ```
 
 The finalizer revalidates the reports, manifests, exact corpus files, source
-trees, compiler, machine/affinity, candidate build, and A/A calibration link.
+trees, compiler, machine profile/affinity, candidate build, and A/A calibration
+link. It also requires exactly one A/B case whose dataset, semantic case ID,
+scope, source, and byte basis match the fixed-metrics `comparison_binding`.
 Its output and sibling manifest paths must not already exist.
 Individual comparison and fixed-metrics reports expose
 `controlled_complete`, but always keep `decision_eligible=false`. Only the
-resulting `csv2-performance-evidence-bundle-v1` can be decision-eligible.
+resulting `csv2-performance-evidence-bundle-v2` can be decision-eligible.
 
 ## Evidence classes and protocols
 
 - `exploratory` is suitable for GitHub-hosted runners and local smoke tests.
   Reports are reviewable artifacts but cannot support a regression verdict.
-- `controlled` requires a stable Linux machine, fixed affinity, A/A noise
-  calibration, three or more warmups, and at least 20 paired runs. Only a
+- `controlled` requires a stable Linux machine, fixed affinity, a reviewed
+  `csv2-machine-profile-v1`, A/A noise calibration, three or more warmups, and
+  at least 20 paired runs. Runtime CPU model, architecture, logical CPU count,
+  affinity, kernel, governor, and turbo/boost observations must match the
+  profile, whose digest is shared by A/A, A/B, and fixed metrics. Only a
   finalized bundle containing all controlled-complete components is
   decision-eligible.
 
-The fixed contracts are `csv2-common-v3`, `csv2-current-v2`,
-`csv2-benchmark-build-v1`, `csv2-benchmark-report-v4`,
-`csv2-fixed-machine-metrics-v4`, `csv2-performance-evidence-bundle-v1`, and
-`csv2-artifact-manifest-v2`. Older or unknown versions are rejected rather
-than converted. Every completed component and evidence JSON has a sibling v2
-SHA-256 artifact manifest. See
+The fixed contracts are `csv2-common-v4`, `csv2-current-v3`,
+`csv2-benchmark-build-v1`, `csv2-benchmark-report-v5`,
+`csv2-fixed-machine-metrics-v5`, `csv2-performance-evidence-bundle-v2`,
+`csv2-artifact-manifest-v3`, and `csv2-machine-profile-v1`. Older or unknown
+versions are rejected rather than converted. Every completed component and
+evidence JSON has a sibling v3 SHA-256 artifact manifest. See
 [`protocol/README.md`](protocol/README.md) for the wire boundary and schemas.
 
 The manual `Performance evidence` workflow produces and finalizes exploratory
 artifacts on a hosted runner or controlled artifacts only on a self-hosted
 runner carrying the `csv2-perf` label. It checks out the exact candidate,
-verifies `HEAD`, then
-uses only the owned-build APIs for common drivers and current-tree metrics; no
+verifies `HEAD`, loads the preconfigured `CSV2_PERF_MACHINE_PROFILE` on a
+controlled runner, then uses only the owned-build APIs for common drivers and
+current-tree metrics; no
 workflow-local archive/compile path can stamp unrelated sources as that
 revision. For an explicit `files` subset, fixed metrics uses its first dataset
 so that the cross-report evidence overlaps. The workflow fails before evidence
