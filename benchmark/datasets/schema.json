@@ -18,8 +18,27 @@
         "type": "object",
         "required": [
           "name", "path", "parameters", "size", "sha256", "rows", "cells",
-          "raw_checksum", "content_checksum", "strict_valid"
-        ]
+          "raw_checksum", "content_checksum", "strict_valid", "strict_error"
+        ],
+        "properties": {
+          "strict_error": {
+            "type": "object",
+            "required": ["code", "byte_offset", "row", "column"],
+            "properties": {
+              "code": {
+                "enum": [
+                  "none", "unexpected_quote", "unclosed_quote",
+                  "invalid_doubled_quote", "characters_after_closing_quote",
+                  "bare_carriage_return"
+                ]
+              },
+              "byte_offset": {"type": "integer", "minimum": 0},
+              "row": {"type": "integer", "minimum": 0},
+              "column": {"type": "integer", "minimum": 0}
+            },
+            "additionalProperties": false
+          }
+        }
       }
     }
   },

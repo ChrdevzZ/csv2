@@ -5,13 +5,14 @@
 namespace csv2_benchmark {
 
 void Registry::add(const char *id, unsigned sources, unsigned preparations, OperationScope scope,
-                   Kernel timed_kernel, Kernel verification_kernel, bool expect_zero_allocations) {
+                   Kernel timed_kernel, Kernel verification_kernel, bool expect_zero_allocations,
+                   Preflight preflight) {
   if (!id || !*id || !timed_kernel || !verification_kernel || sources == source_none)
     throw std::invalid_argument("invalid benchmark operation registration");
   if (find(id))
     throw std::logic_error(std::string("duplicate benchmark operation: ") + id);
   operations_.push_back(Operation{id, sources, preparations, scope, expect_zero_allocations,
-                                  timed_kernel, verification_kernel});
+                                  timed_kernel, verification_kernel, preflight});
 }
 
 const char *operation_scope_name(OperationScope scope) noexcept {

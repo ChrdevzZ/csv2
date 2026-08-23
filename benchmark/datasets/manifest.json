@@ -24,6 +24,12 @@
       "rows": 10,
       "sha256": "d6eddf85d84224e58e636665ea60f3fb41143e4cbc9bc7575ed0d9e78451980a",
       "size": 8969,
+      "strict_error": {
+        "byte_offset": 0,
+        "code": "none",
+        "column": 0,
+        "row": 0
+      },
       "strict_valid": true
     },
     {
@@ -38,6 +44,12 @@
       "rows": 1,
       "sha256": "cad3f8d3b3ece71a76510fe59690a9a6a3aee3c6c76683c80d0d17407b6e3657",
       "size": 18,
+      "strict_error": {
+        "byte_offset": 0,
+        "code": "none",
+        "column": 0,
+        "row": 0
+      },
       "strict_valid": true
     },
     {
@@ -52,6 +64,12 @@
       "rows": 1,
       "sha256": "01e7ff74f221d47fd266e012cddd51673f0a2b25de41613f7d5332dff4a72da5",
       "size": 21,
+      "strict_error": {
+        "byte_offset": 0,
+        "code": "none",
+        "column": 0,
+        "row": 0
+      },
       "strict_valid": true
     },
     {
@@ -66,6 +84,12 @@
       "rows": 3,
       "sha256": "e522b207005de74d1bc9064c1b6a9b41099a692f92a6079ba49eee5374143fdb",
       "size": 11,
+      "strict_error": {
+        "byte_offset": 0,
+        "code": "none",
+        "column": 0,
+        "row": 0
+      },
       "strict_valid": true
     },
     {
@@ -80,6 +104,12 @@
       "rows": 5,
       "sha256": "8a3ceaf5b083025bae2e42f933c59524c7570d0f2a562434d998e0da27ed2700",
       "size": 28,
+      "strict_error": {
+        "byte_offset": 0,
+        "code": "none",
+        "column": 0,
+        "row": 0
+      },
       "strict_valid": true
     },
     {
@@ -94,6 +124,12 @@
       "rows": null,
       "sha256": "02eb80fa377cd41a66379be604e8698baa40e82200ea2a0c7f72db0d0858dcae",
       "size": 6,
+      "strict_error": {
+        "byte_offset": 1,
+        "code": "unexpected_quote",
+        "column": 1,
+        "row": 1
+      },
       "strict_valid": false
     },
     {
@@ -108,6 +144,12 @@
       "rows": null,
       "sha256": "92cc86bdd92bac641bcda8a62811ee709944db55ae05046d7f3d075646fa0714",
       "size": 27,
+      "strict_error": {
+        "byte_offset": 20,
+        "code": "characters_after_closing_quote",
+        "column": 1,
+        "row": 4
+      },
       "strict_valid": false
     },
     {
@@ -122,6 +164,12 @@
       "rows": null,
       "sha256": "95bb168e6f3ba9622a608afa3660a2579d4bfd5edd9ef7bc05424ffcdb246a04",
       "size": 28,
+      "strict_error": {
+        "byte_offset": 8,
+        "code": "unclosed_quote",
+        "column": 1,
+        "row": 3
+      },
       "strict_valid": false
     },
     {
@@ -137,6 +185,12 @@
       "rows": 1,
       "sha256": "fbf8afda934cea55d4f729f9b3010f7de29f724207dfee5b342c846dea8cf861",
       "size": 518,
+      "strict_error": {
+        "byte_offset": 0,
+        "code": "none",
+        "column": 0,
+        "row": 0
+      },
       "strict_valid": true
     },
     {
@@ -151,6 +205,12 @@
       "rows": 1,
       "sha256": "86b4ea971ac832258f8c5e719eed7d5f07b4408d73e52a6abbbd864bfa5ad696",
       "size": 31,
+      "strict_error": {
+        "byte_offset": 0,
+        "code": "none",
+        "column": 0,
+        "row": 0
+      },
       "strict_valid": true
     },
     {
@@ -166,6 +226,12 @@
       "rows": 256,
       "sha256": "adc8ee12948630928599061be8e1061eda715fcf97c841e12c92b9ca8307866d",
       "size": 3297,
+      "strict_error": {
+        "byte_offset": 0,
+        "code": "none",
+        "column": 0,
+        "row": 0
+      },
       "strict_valid": true
     },
     {
@@ -180,6 +246,12 @@
       "rows": 1,
       "sha256": "3141a2a14c930541f039517f33656719f90da138401ea1e4cb2b9052b805c6a7",
       "size": 19,
+      "strict_error": {
+        "byte_offset": 0,
+        "code": "none",
+        "column": 0,
+        "row": 0
+      },
       "strict_valid": true
     },
     {
@@ -196,6 +268,12 @@
       "rows": 128,
       "sha256": "4d07e7f54aebcc42d66ac4360468136fb8d6cedd249c6c886d51bf8b9ab172db",
       "size": 15504,
+      "strict_error": {
+        "byte_offset": 0,
+        "code": "none",
+        "column": 0,
+        "row": 0
+      },
       "strict_valid": true
     },
     {
@@ -210,6 +288,12 @@
       "rows": 1,
       "sha256": "facf7c7ae315fc177ccc74b3d837762f7257b6ded1e1f906b7d034f25590263d",
       "size": 6,
+      "strict_error": {
+        "byte_offset": 0,
+        "code": "none",
+        "column": 0,
+        "row": 0
+      },
       "strict_valid": true
     },
     {
@@ -225,6 +309,12 @@
       "rows": 256,
       "sha256": "d3c77dbed849033a182518694535a4c1e72c5785f3ce386e73e83bb9355f21fc",
       "size": 1938,
+      "strict_error": {
+        "byte_offset": 0,
+        "code": "none",
+        "column": 0,
+        "row": 0
+      },
       "strict_valid": true
     },
     {
@@ -239,6 +329,12 @@
       "rows": 2,
       "sha256": "29c61234aa995f4c7b6ea4425ddc6823e087c5f61e4b3c4e6ccac8745dc30e7c",
       "size": 8,
+      "strict_error": {
+        "byte_offset": 0,
+        "code": "none",
+        "column": 0,
+        "row": 0
+      },
       "strict_valid": true
     },
     {
@@ -253,6 +349,12 @@
       "rows": 2,
       "sha256": "810f0fe25beb4825515e3f252e8b93d4ae62a956b1545d1bbc824ba68a85786f",
       "size": 51,
+      "strict_error": {
+        "byte_offset": 0,
+        "code": "none",
+        "column": 0,
+        "row": 0
+      },
       "strict_valid": true
     },
     {
@@ -269,6 +371,12 @@
       "rows": 4,
       "sha256": "09f1f3827d1ceb5e80fbcf345a8d8f6472654af20bdef914ae06b4e34852f7c8",
       "size": 16384,
+      "strict_error": {
+        "byte_offset": 0,
+        "code": "none",
+        "column": 0,
+        "row": 0
+      },
       "strict_valid": true
     }
   ],

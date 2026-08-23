@@ -29,6 +29,17 @@ csv2_add_exact_current_check(csv2.benchmark.current.checksum.writer_escaped
 csv2_add_exact_current_check(csv2.benchmark.current.checksum.integer_conversion
   ${csv2_SOURCE_DIR}/benchmark/datasets/fixtures/numeric.csv
   conversion/integer-bool-error 8166090483508935075)
+csv2_add_exact_current_check(csv2.benchmark.current.checksum.validation_valid
+  ${csv2_check_fixture} validation/valid 8448068682874244928)
+csv2_add_exact_current_check(csv2.benchmark.current.checksum.validation_invalid_early
+  ${csv2_SOURCE_DIR}/benchmark/datasets/fixtures/invalid_early.csv
+  validation/invalid-early 8448068682924013388)
+csv2_add_exact_current_check(csv2.benchmark.current.checksum.validation_invalid_middle
+  ${csv2_SOURCE_DIR}/benchmark/datasets/fixtures/invalid_middle.csv
+  validation/invalid-middle 8448068682913353024)
+csv2_add_exact_current_check(csv2.benchmark.current.checksum.validation_invalid_late
+  ${csv2_SOURCE_DIR}/benchmark/datasets/fixtures/invalid_late.csv
+  validation/invalid-late 8448068682914525194)
 
 add_test(NAME csv2.benchmark.reject.checksum-prefix
   COMMAND ${CMAKE_COMMAND}
@@ -140,7 +151,7 @@ endforeach()
 
 csv2_add_benchmark_check(csv2.benchmark.current.observer_audit.validation
   COMMAND csv2_benchmark_observer_audit --csv2-input ${csv2_check_fixture}
-    --csv2-source buffer --csv2-operation validation/strict
+    --csv2-source buffer --csv2-operation validation/valid
     --csv2-observer-audit
   PASS_REGEX "value_observations=[1-9][0-9]*")
 
@@ -192,7 +203,7 @@ set(csv2_group_checks
   "source/parse-borrowed|buffer|${csv2_check_fixture}"
   "traversal/rows-cells|buffer|${csv2_check_fixture}"
   "extraction/cell-content/reused-string|buffer|${csv2_quote_fixture}"
-  "validation/strict|buffer|${csv2_check_fixture}"
+  "validation/valid|buffer|${csv2_check_fixture}"
   "conversion/integer-bool-error|buffer|${csv2_SOURCE_DIR}/benchmark/datasets/fixtures/numeric.csv"
   "ranges/pipeline|buffer|${csv2_check_fixture}"
   "index/random-lookup|buffer|${csv2_check_fixture}"
@@ -212,6 +223,50 @@ foreach(csv2_group_check IN LISTS csv2_group_checks)
       --csv2-source ${csv2_group_source}
       --csv2-operation ${csv2_group_operation}
       --benchmark_min_time=0.001s --benchmark_repetitions=1)
+endforeach()
+
+set(csv2_validation_cases
+  "valid|${csv2_check_fixture}"
+  "invalid-early|${csv2_SOURCE_DIR}/benchmark/datasets/fixtures/invalid_early.csv"
+  "invalid-middle|${csv2_SOURCE_DIR}/benchmark/datasets/fixtures/invalid_middle.csv"
+  "invalid-late|${csv2_SOURCE_DIR}/benchmark/datasets/fixtures/invalid_late.csv")
+foreach(csv2_validation_case IN LISTS csv2_validation_cases)
+  string(REPLACE "|" ";" csv2_validation_values "${csv2_validation_case}")
+  list(GET csv2_validation_values 0 csv2_validation_scenario)
+  list(GET csv2_validation_values 1 csv2_validation_fixture)
+  foreach(csv2_validation_mode IN ITEMS verify dry_run)
+    if(csv2_validation_mode STREQUAL "verify")
+      set(csv2_validation_arguments --csv2-verify)
+    else()
+      set(csv2_validation_arguments
+        --benchmark_min_time=0.001s --benchmark_repetitions=1)
+    endif()
+    csv2_add_benchmark_check(
+      csv2.benchmark.validation.${csv2_validation_scenario}.${csv2_validation_mode}
+      COMMAND csv2_benchmark --csv2-input ${csv2_validation_fixture}
+        --csv2-source buffer
+        --csv2-operation validation/${csv2_validation_scenario}
+        ${csv2_validation_arguments})
+  endforeach()
+endforeach()
+
+foreach(csv2_validation_mismatch IN ITEMS valid_as_invalid invalid_as_valid)
+  if(csv2_validation_mismatch STREQUAL "valid_as_invalid")
+    set(csv2_validation_fixture ${csv2_check_fixture})
+    set(csv2_validation_operation validation/invalid-early)
+  else()
+    set(csv2_validation_fixture
+      ${csv2_SOURCE_DIR}/benchmark/datasets/fixtures/invalid_early.csv)
+    set(csv2_validation_operation validation/valid)
+  endif()
+  csv2_add_benchmark_check(
+    csv2.benchmark.reject.validation.${csv2_validation_mismatch}
+    COMMAND csv2_benchmark --csv2-input ${csv2_validation_fixture}
+      --csv2-source buffer --csv2-operation ${csv2_validation_operation}
+      --csv2-verify)
+  set_tests_properties(
+    csv2.benchmark.reject.validation.${csv2_validation_mismatch}
+    PROPERTIES WILL_FAIL TRUE)
 endforeach()
 
 foreach(csv2_index_operation IN ITEMS sequential-lookup random-lookup)
@@ -263,7 +318,7 @@ set(csv2_zero_allocation_checks
   "source/parse-borrowed|buffer|${csv2_check_fixture}"
   "traversal/rows|buffer|${csv2_check_fixture}"
   "traversal/rows-cells|buffer|${csv2_check_fixture}"
-  "validation/strict|buffer|${csv2_check_fixture}"
+  "validation/valid|buffer|${csv2_check_fixture}"
   "conversion/integer-bool-error|buffer|${csv2_SOURCE_DIR}/benchmark/datasets/fixtures/numeric.csv"
   "ranges/pipeline|buffer|${csv2_check_fixture}")
 if(csv2_benchmark_has_mmap)

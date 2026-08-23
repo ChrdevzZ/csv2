@@ -95,6 +95,24 @@ bool load_selected_context(const Registry &registry, Context &context, const Opt
   return context.load(options.input, requirements, sources, error);
 }
 
+bool preflight_selected_operations(const Registry &registry, const Context &context,
+                                   const Options &options, std::string &error) {
+  for (const Operation &operation : registry.operations()) {
+    if ((!options.operation.empty() && options.operation != operation.id) || !operation.preflight)
+      continue;
+    bool passed = true;
+    for_each_selected_source(operation, options, [&](Source source) {
+      if (passed && !operation.preflight(context, source, error))
+        passed = false;
+    });
+    if (!passed) {
+      error = operation.id + ": " + error;
+      return false;
+    }
+  }
+  return true;
+}
+
 int audit_preparation(const Context &context) {
   std::cout << "prepared=" << context.preparation_description()
             << " decoded_rows=" << context.decoded_rows().size()
@@ -266,6 +284,10 @@ int main(int argc, char **argv) {
 
     Context context;
     if (!load_selected_context(registry, context, options, error)) {
+      std::cerr << error << '\n';
+      return 2;
+    }
+    if (!preflight_selected_operations(registry, context, options, error)) {
       std::cerr << error << '\n';
       return 2;
     }
