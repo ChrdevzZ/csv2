@@ -74,6 +74,10 @@ bool Context::load(const std::string &path, unsigned requirements, unsigned sour
   dataset_name_ = filename_from_path(path);
   input_size_ = 0;
   data_.clear();
+  buffer_index_ = BenchmarkReader::RowIndex();
+  mmap_index_ = BenchmarkReader::RowIndex();
+  buffer_random_positions_.clear();
+  mmap_random_positions_.clear();
   mmap_ready_ = false;
   decoded_rows_.clear();
   streamable_rows_.clear();
@@ -150,6 +154,49 @@ bool Context::load(const std::string &path, unsigned requirements, unsigned sour
     return false;
   }
 #endif
+
+  if ((requirements & prepare_index) != 0) {
+    if ((sources & source_buffer) != 0) {
+      if (!buffer_reader_requested) {
+        error = "buffer index requires a prepared buffer reader";
+        return false;
+      }
+      buffer_index_ = buffer_reader_.index();
+    }
+#if CSV2_HAS_MMAP
+    if ((sources & source_mmap) != 0) {
+      if (!mmap_reader_requested) {
+        error = "mmap index requires a prepared mmap reader";
+        return false;
+      }
+      mmap_index_ = mmap_reader_.index();
+    }
+#endif
+    prepared_mask_ |= prepare_index;
+  }
+
+  if ((requirements & prepare_random_positions) != 0) {
+    if ((prepared_mask_ & prepare_index) == 0) {
+      error = "random positions require a prepared row index";
+      return false;
+    }
+    const auto prepare_positions = [](const BenchmarkReader::RowIndex &index,
+                                      std::vector<std::size_t> &positions) {
+      positions.reserve(index.size());
+      std::uint32_t state = 0x43535632u;
+      for (std::size_t count = 0; count < index.size(); ++count) {
+        state = state * 1664525u + 1013904223u;
+        positions.push_back(static_cast<std::size_t>(state) % index.size());
+      }
+    };
+    if ((sources & source_buffer) != 0)
+      prepare_positions(buffer_index_, buffer_random_positions_);
+#if CSV2_HAS_MMAP
+    if ((sources & source_mmap) != 0)
+      prepare_positions(mmap_index_, mmap_random_positions_);
+#endif
+    prepared_mask_ |= prepare_random_positions;
+  }
 
   std::size_t decoded_bytes = 0;
   if ((requirements & prepare_decoded_rows) != 0) {
@@ -246,11 +293,25 @@ std::string Context::preparation_description() const {
     append("vector-scratch");
   if ((prepared_mask_ & prepare_output) != 0)
     append("output");
+  if ((prepared_mask_ & prepare_index) != 0 && (prepared_sources_ & source_buffer) != 0)
+    append("buffer-index");
+  if ((prepared_mask_ & prepare_index) != 0 && (prepared_sources_ & source_mmap) != 0)
+    append("mmap-index");
+  if ((prepared_mask_ & prepare_random_positions) != 0)
+    append("random-positions");
   return result;
 }
 
 const BenchmarkReader &Context::reader(Source source) const {
   return source == Source::mmap ? mmap_reader_ : buffer_reader_;
+}
+
+const BenchmarkReader::RowIndex &Context::row_index(Source source) const {
+  return source == Source::mmap ? mmap_index_ : buffer_index_;
+}
+
+const std::vector<std::size_t> &Context::random_positions(Source source) const {
+  return source == Source::mmap ? mmap_random_positions_ : buffer_random_positions_;
 }
 
 std::ostream &Context::reset_output() noexcept {

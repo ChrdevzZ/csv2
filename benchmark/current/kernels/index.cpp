@@ -20,17 +20,24 @@ template <bool Verify> Result build(Context &context, Source source, TimedObserv
 }
 
 template <bool Verify> Result sequential(Context &context, Source source, TimedObserver &observer) {
-  BenchmarkReader::RowIndex index = context.reader(source).index();
+  const BenchmarkReader::RowIndex &index = context.row_index(source);
   Result result;
   result.rows = static_cast<std::uint64_t>(index.size());
+  std::size_t observed_size = 0;
+  const char *observed_data = nullptr;
   for (std::size_t position = 0; position < index.size(); ++position) {
     const BenchmarkReader::Row row = index[position];
-    result.bytes += static_cast<std::uint64_t>(row.raw_size());
-    if (Verify)
+    observed_size = row.raw_size();
+    observed_data = row.raw_data();
+    result.bytes += static_cast<std::uint64_t>(observed_size);
+    if (Verify) {
       mix(result, static_cast<std::uint64_t>(row.raw_size()));
+      mix_bytes(result, row.raw_data(), row.raw_size());
+    }
   }
   if constexpr (!Verify) {
-    observer.value(index);
+    observer.value(observed_size);
+    observer.value(observed_data);
     observe_result(observer, result);
   }
   return result;
@@ -38,25 +45,26 @@ template <bool Verify> Result sequential(Context &context, Source source, TimedO
 
 template <bool Verify>
 Result random_lookup(Context &context, Source source, TimedObserver &observer) {
-  BenchmarkReader::RowIndex index = context.reader(source).index();
+  const BenchmarkReader::RowIndex &index = context.row_index(source);
+  const std::vector<std::size_t> &positions = context.random_positions(source);
   Result result;
-  result.rows = static_cast<std::uint64_t>(index.size());
-  std::uint32_t state = 0x43535632u;
-  for (std::size_t count = 0; count < index.size(); ++count) {
-    state = state * 1664525u + 1013904223u;
-    const std::size_t position = index.empty() ? 0 : state % index.size();
-    if (index.empty())
-      break;
+  result.rows = static_cast<std::uint64_t>(positions.size());
+  std::size_t observed_size = 0;
+  const char *observed_data = nullptr;
+  for (const std::size_t position : positions) {
     const BenchmarkReader::Row row = index[position];
-    result.bytes += static_cast<std::uint64_t>(row.raw_size());
+    observed_size = row.raw_size();
+    observed_data = row.raw_data();
+    result.bytes += static_cast<std::uint64_t>(observed_size);
     if (Verify) {
       mix(result, static_cast<std::uint64_t>(position));
-      mix(result, static_cast<std::uint64_t>(row.raw_size()));
+      mix(result, static_cast<std::uint64_t>(observed_size));
+      mix_bytes(result, row.raw_data(), row.raw_size());
     }
   }
   if constexpr (!Verify) {
-    observer.value(index);
-    observer.value(state);
+    observer.value(observed_size);
+    observer.value(observed_data);
     observe_result(observer, result);
   }
   return result;
@@ -71,10 +79,11 @@ void register_index_operations(Registry &registry) {
 #endif
   registry.add("index/build", sources, prepare_reader, OperationScope::index, build<false>,
                build<true>);
-  registry.add("index/sequential", sources, prepare_reader, OperationScope::index,
-               sequential<false>, sequential<true>);
-  registry.add("index/random", sources, prepare_reader, OperationScope::index, random_lookup<false>,
-               random_lookup<true>);
+  registry.add("index/sequential-lookup", sources, prepare_reader | prepare_index,
+               OperationScope::index, sequential<false>, sequential<true>, true);
+  registry.add("index/random-lookup", sources,
+               prepare_reader | prepare_index | prepare_random_positions,
+               OperationScope::index, random_lookup<false>, random_lookup<true>, true);
 }
 
 } // namespace csv2_benchmark
