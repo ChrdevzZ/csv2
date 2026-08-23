@@ -296,8 +296,12 @@ if(csv2_benchmark_has_mmap)
     PASS_REGEX "protocol=csv2-current-v2.*source=mmap")
 endif()
 
-foreach(csv2_contract IN ITEMS current-legacy-option common-zero-iterations)
-  if(csv2_contract STREQUAL "current-legacy-option")
+foreach(csv2_contract IN ITEMS
+    current-legacy-option
+    current-timing-no-operation
+    current-timing-all-sources
+    common-zero-iterations)
+  if(csv2_contract MATCHES "^current-")
     set(csv2_contract_target csv2_benchmark)
   else()
     set(csv2_contract_target csv2_common_benchmark)
