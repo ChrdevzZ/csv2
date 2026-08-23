@@ -34,7 +34,9 @@ enum PreparationMask : unsigned {
   prepare_streamable_rows = 1u << 4,
   prepare_string_scratch = 1u << 5,
   prepare_vector_scratch = 1u << 6,
-  prepare_output = 1u << 7
+  prepare_output = 1u << 7,
+  prepare_index = 1u << 8,
+  prepare_random_positions = 1u << 9
 };
 
 const char *source_name(Source source) noexcept;
@@ -72,6 +74,10 @@ class Context {
   std::string data_;
   BenchmarkReader buffer_reader_;
   BenchmarkReader mmap_reader_;
+  BenchmarkReader::RowIndex buffer_index_;
+  BenchmarkReader::RowIndex mmap_index_;
+  std::vector<std::size_t> buffer_random_positions_;
+  std::vector<std::size_t> mmap_random_positions_;
 #if CSV2_HAS_MMAP
   mio::mmap_source mapping_;
 #endif
@@ -94,6 +100,8 @@ public:
 
   bool load(const std::string &path, unsigned requirements, unsigned sources, std::string &error);
   const BenchmarkReader &reader(Source source) const;
+  const BenchmarkReader::RowIndex &row_index(Source source) const;
+  const std::vector<std::size_t> &random_positions(Source source) const;
 
   const std::string &input_path() const noexcept { return input_path_; }
   const std::string &dataset_name() const noexcept { return dataset_name_; }

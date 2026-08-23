@@ -195,7 +195,7 @@ set(csv2_group_checks
   "validation/strict|buffer|${csv2_check_fixture}"
   "conversion/integer-bool-error|buffer|${csv2_SOURCE_DIR}/benchmark/datasets/fixtures/numeric.csv"
   "ranges/pipeline|buffer|${csv2_check_fixture}"
-  "index/random|buffer|${csv2_check_fixture}"
+  "index/random-lookup|buffer|${csv2_check_fixture}"
   "writer/escaped-direct|buffer|${csv2_quote_fixture}")
 foreach(csv2_group_check IN LISTS csv2_group_checks)
   string(REPLACE "|" ";" csv2_group_values "${csv2_group_check}")
@@ -213,6 +213,27 @@ foreach(csv2_group_check IN LISTS csv2_group_checks)
       --csv2-operation ${csv2_group_operation}
       --benchmark_min_time=0.001s --benchmark_repetitions=1)
 endforeach()
+
+foreach(csv2_index_operation IN ITEMS sequential-lookup random-lookup)
+  csv2_add_benchmark_check(
+    csv2.benchmark.current.allocations.index.${csv2_index_operation}
+    COMMAND csv2_benchmark_allocations --csv2-input ${csv2_check_fixture}
+      --csv2-source buffer --csv2-operation index/${csv2_index_operation}
+      --csv2-verify
+    PASS_REGEX "allocations=0")
+endforeach()
+
+csv2_add_benchmark_check(csv2.benchmark.current.preparation.index.sequential
+  COMMAND csv2_benchmark --csv2-input ${csv2_check_fixture}
+    --csv2-source buffer --csv2-operation index/sequential-lookup
+    --csv2-preparation-audit
+  PASS_REGEX "prepared=data,buffer-reader,buffer-index")
+
+csv2_add_benchmark_check(csv2.benchmark.current.preparation.index.random
+  COMMAND csv2_benchmark --csv2-input ${csv2_check_fixture}
+    --csv2-source buffer --csv2-operation index/random-lookup
+    --csv2-preparation-audit
+  PASS_REGEX "prepared=data,buffer-reader,buffer-index,random-positions")
 
 foreach(csv2_writer_operation IN ITEMS raw-direct escaped-direct always-direct)
   csv2_add_benchmark_check(csv2.benchmark.current.allocations.${csv2_writer_operation}
