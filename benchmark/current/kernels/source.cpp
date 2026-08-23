@@ -164,8 +164,7 @@ void register_source_operations(Registry &registry) {
   registry.add("source/mmap-open", source_mmap, prepare_none, OperationScope::source_only,
                mmap_open<false>, mmap_open<true>);
   registry.add("source/mmap-touch-resident", source_mmap, prepare_mapping,
-               OperationScope::source_only,
-               mmap_touch<false>, mmap_touch<true>);
+               OperationScope::source_only, mmap_touch<false>, mmap_touch<true>);
 #endif
   registry.add("source/parse-borrowed", source_buffer, prepare_data, OperationScope::source_only,
                parse_borrowed<false>, parse_borrowed<true>, true);

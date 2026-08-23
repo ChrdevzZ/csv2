@@ -82,8 +82,8 @@ void register_index_operations(Registry &registry) {
   registry.add("index/sequential-lookup", sources, prepare_reader | prepare_index,
                OperationScope::index, sequential<false>, sequential<true>, true);
   registry.add("index/random-lookup", sources,
-               prepare_reader | prepare_index | prepare_random_positions,
-               OperationScope::index, random_lookup<false>, random_lookup<true>, true);
+               prepare_reader | prepare_index | prepare_random_positions, OperationScope::index,
+               random_lookup<false>, random_lookup<true>, true);
 }
 
 } // namespace csv2_benchmark
