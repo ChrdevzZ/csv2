@@ -11,6 +11,7 @@
 namespace csv2_benchmark {
 
 using Kernel = Result (*)(Context &, Source, TimedObserver &);
+using Preflight = bool (*)(const Context &, Source, std::string &);
 
 inline void observe_result(TimedObserver &observer, Result &result) noexcept {
   observer.value(result.bytes);
@@ -39,6 +40,7 @@ struct Operation {
   bool expect_zero_allocations;
   Kernel timed_kernel;
   Kernel verification_kernel;
+  Preflight preflight;
 };
 
 class Registry {
@@ -46,7 +48,8 @@ class Registry {
 
 public:
   void add(const char *id, unsigned sources, unsigned preparations, OperationScope scope,
-           Kernel timed_kernel, Kernel verification_kernel, bool expect_zero_allocations = false);
+           Kernel timed_kernel, Kernel verification_kernel, bool expect_zero_allocations = false,
+           Preflight preflight = nullptr);
   const std::vector<Operation> &operations() const noexcept { return operations_; }
   const Operation *find(const std::string &id) const noexcept;
 };

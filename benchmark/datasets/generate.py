@@ -164,12 +164,35 @@ def generated_datasets(scale: int = 1) -> dict[str, tuple[bytes, dict[str, objec
 
 
 def build_manifest(fixtures: Path, scale: int) -> dict[str, object]:
-    invalid = {"invalid_early.csv", "invalid_middle.csv", "invalid_late.csv"}
+    invalid_errors = {
+        "invalid_early.csv": {
+            "code": "unexpected_quote",
+            "byte_offset": 1,
+            "row": 1,
+            "column": 1,
+        },
+        "invalid_middle.csv": {
+            "code": "unclosed_quote",
+            "byte_offset": 4 + 4 * scale,
+            "row": 2 + scale,
+            "column": 1,
+        },
+        "invalid_late.csv": {
+            "code": "characters_after_closing_quote",
+            "byte_offset": 12 + 8 * scale,
+            "row": 2 + 2 * scale,
+            "column": 1,
+        },
+    }
     generated = generated_datasets(scale)
     records: list[dict[str, object]] = []
     for path in sorted(fixtures.glob("*.csv")):
         data = path.read_bytes()
-        valid = path.name not in invalid
+        strict_error = invalid_errors.get(
+            path.name,
+            {"code": "none", "byte_offset": 0, "row": 0, "column": 0},
+        )
+        valid = strict_error["code"] == "none"
         rows = parse_rows(data) if valid else []
         parameters = generated.get(path.name, (b"", {"kind": "legacy-smoke"}))[1]
         records.append(
@@ -184,6 +207,7 @@ def build_manifest(fixtures: Path, scale: int) -> dict[str, object]:
                 "raw_checksum": str(fnv1a([data])),
                 "content_checksum": str(content_checksum(rows)) if valid else None,
                 "strict_valid": valid,
+                "strict_error": strict_error,
             }
         )
     return {
