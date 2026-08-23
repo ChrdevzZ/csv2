@@ -1,16 +1,16 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "evidence-bundle-v1.schema.json",
-  "title": "CSV2 complete performance evidence bundle v1",
+  "$id": "evidence-bundle-v2.schema.json",
+  "title": "CSV2 complete performance evidence bundle v2",
   "type": "object",
   "required": [
     "schema", "status", "evidence_level", "decision_eligible",
     "generated_at_utc", "completed_at_utc", "baseline_revision",
     "candidate_revision", "source_tree", "compiler_sha256", "machine",
-    "datasets", "components", "checks", "artifacts", "finalizer"
+    "datasets", "comparison_binding", "components", "checks", "artifacts", "finalizer"
   ],
   "properties": {
-    "schema": {"const": "csv2-performance-evidence-bundle-v1"},
+    "schema": {"const": "csv2-performance-evidence-bundle-v2"},
     "status": {"const": "completed"},
     "evidence_level": {"enum": ["exploratory", "controlled"]},
     "decision_eligible": {"type": "boolean"},
@@ -26,6 +26,7 @@
       "minItems": 1,
       "items": {"$ref": "#/$defs/dataset"}
     },
+    "comparison_binding": {"$ref": "#/$defs/comparison_binding"},
     "components": {
       "type": "object",
       "required": ["calibration", "comparison", "fixed_metrics"],
@@ -40,7 +41,7 @@
       "type": "object",
       "required": [
         "artifact_manifests", "calibration", "revisions", "source_tree",
-        "compiler", "machine", "datasets", "corpus"
+        "compiler", "machine", "datasets", "corpus", "semantic_binding"
       ],
       "properties": {
         "artifact_manifests": {"const": true},
@@ -50,7 +51,8 @@
         "compiler": {"const": true},
         "machine": {"const": true},
         "datasets": {"const": true},
-        "corpus": {"const": true}
+        "corpus": {"const": true},
+        "semantic_binding": {"const": true}
       },
       "additionalProperties": false
     },
@@ -183,13 +185,25 @@
       "required": ["schema", "revision", "build_digest", "controlled_complete"],
       "properties": {
         "schema": {
-          "enum": ["csv2-benchmark-report-v4", "csv2-fixed-machine-metrics-v4"]
+          "enum": ["csv2-benchmark-report-v5", "csv2-fixed-machine-metrics-v5"]
         },
         "revision": {"$ref": "#/$defs/object_id"},
         "build_digest": {"$ref": "#/$defs/sha256"},
         "controlled_complete": {"type": "boolean"}
       },
       "additionalProperties": false
+    },
+    "comparison_binding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["dataset", "semantic_case_id", "scope", "source", "byte_basis"],
+      "properties": {
+        "dataset": {"type": "string", "minLength": 1},
+        "semantic_case_id": {"type": "string", "pattern": "^csv2\\..+\\.v1$"},
+        "scope": {"type": "string", "minLength": 1},
+        "source": {"enum": ["buffer", "mmap", "file"]},
+        "byte_basis": {"const": "input_corpus"}
+      }
     }
   }
 }

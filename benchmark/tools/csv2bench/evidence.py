@@ -190,7 +190,7 @@ def _corpus_index(
     result: dict[str, Document] = {}
     required_dataset = {
         "name", "path", "parameters", "size", "sha256", "rows", "cells",
-        "raw_checksum", "content_checksum", "strict_valid",
+        "raw_checksum", "content_checksum", "strict_valid", "strict_error",
     }
     for value in datasets:
         if not isinstance(value, dict) or set(value) != required_dataset:
@@ -388,6 +388,20 @@ def assemble_evidence(
         raise RuntimeError("fixed-metrics dataset path is not bound to the corpus")
     if metrics_name not in comparison_datasets:
         raise RuntimeError("fixed-metrics dataset is not present in the comparison")
+    comparison_binding = fixed_metrics["comparison_binding"]
+    matching_cases = [
+        case
+        for case in comparison["cases"]
+        if case["dataset"] == comparison_binding["dataset"]
+        and case["semantic_case_id"] == comparison_binding["semantic_case_id"]
+        and case["scope"] == comparison_binding["scope"]
+        and case["source"] == comparison_binding["source"]
+        and case["byte_basis"] == comparison_binding["byte_basis"]
+    ]
+    if len(matching_cases) != 1:
+        raise RuntimeError(
+            "fixed metrics must bind exactly one A/B semantic comparison case"
+        )
     if current_build["corpus_manifest"] != identities["corpus_manifest"]:
         raise RuntimeError("current-tree build does not bind the supplied corpus manifest")
 
@@ -428,6 +442,7 @@ def assemble_evidence(
             {"name": name, "size": value["size"], "sha256": value["sha256"]}
             for name, value in sorted(comparison_datasets.items())
         ],
+        "comparison_binding": comparison_binding,
         "components": component_data,
         "checks": {
             "artifact_manifests": True,
@@ -438,6 +453,7 @@ def assemble_evidence(
             "machine": True,
             "datasets": True,
             "corpus": True,
+            "semantic_binding": True,
         },
         "artifacts": identities,
         "finalizer": finalizer,

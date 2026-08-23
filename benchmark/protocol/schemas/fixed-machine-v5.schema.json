@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "title": "CSV2 fixed-machine metrics v4",
+  "title": "CSV2 fixed-machine metrics v5",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -11,7 +11,7 @@
     "post_build"
   ],
   "properties": {
-    "schema": {"const": "csv2-fixed-machine-metrics-v4"},
+    "schema": {"const": "csv2-fixed-machine-metrics-v5"},
     "artifact_mode": {"enum": ["owned", "external"]},
     "build": {
       "oneOf": [
@@ -74,6 +74,7 @@
     "clean_build": {"oneOf": [{"$ref": "#/$defs/build"}, {"type": "null"}]},
     "post_build": {"oneOf": [{"$ref": "#/$defs/invocation"}, {"type": "null"}]},
     "verification": {"$ref": "#/$defs/verification"},
+    "comparison_binding": {"$ref": "#/$defs/comparison_binding"},
     "allocations": {"$ref": "#/$defs/allocations"},
     "timing": {"$ref": "#/$defs/timing"},
     "timing_invocation": {"$ref": "#/$defs/invocation"},
@@ -177,15 +178,19 @@
         "result": {
           "type": "object",
           "required": [
-            "protocol", "revision", "operation", "source", "dataset", "checksum",
+            "protocol", "revision", "operation", "source", "dataset",
+            "semantic_case_id", "scope", "byte_basis", "checksum",
             "bytes", "rows", "cells", "allocations", "allocated_bytes"
           ],
           "properties": {
-            "protocol": {"const": "csv2-current-v2"},
+            "protocol": {"const": "csv2-current-v3"},
             "revision": {"type": "string", "minLength": 1},
             "operation": {"type": "string", "minLength": 1},
             "source": {"enum": ["buffer", "mmap", "file"]},
             "dataset": {"type": "string", "minLength": 1},
+            "semantic_case_id": {"type": "string", "pattern": "^csv2\\..+\\.v1$"},
+            "scope": {"type": "string", "minLength": 1},
+            "byte_basis": {"const": "input_corpus"},
             "checksum": {"type": "string", "pattern": "^(0|[1-9][0-9]*)$"},
             "bytes": {"type": "string", "pattern": "^(0|[1-9][0-9]*)$"},
             "rows": {"type": "string", "pattern": "^(0|[1-9][0-9]*)$"},
@@ -208,6 +213,18 @@
         "invocation": {"$ref": "#/$defs/invocation"}
       },
       "additionalProperties": false
+    },
+    "comparison_binding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["dataset", "semantic_case_id", "scope", "source", "byte_basis"],
+      "properties": {
+        "dataset": {"type": "string", "minLength": 1},
+        "semantic_case_id": {"type": "string", "pattern": "^csv2\\..+\\.v1$"},
+        "scope": {"type": "string", "minLength": 1},
+        "source": {"enum": ["buffer", "mmap", "file"]},
+        "byte_basis": {"const": "input_corpus"}
+      }
     },
     "build": {
       "type": "object",
@@ -258,7 +275,7 @@
     {
       "if": {"properties": {"status": {"const": "completed"}}, "required": ["status"]},
       "then": {
-        "required": ["completed_at_utc", "verification", "allocations", "timing", "timing_invocation"]
+        "required": ["completed_at_utc", "verification", "comparison_binding", "allocations", "timing", "timing_invocation"]
       }
     },
     {

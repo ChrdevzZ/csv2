@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "title": "CSV2 paired benchmark report v4",
+  "title": "CSV2 paired benchmark report v5",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -11,7 +11,7 @@
     "candidate", "datasets", "calibration", "cases"
   ],
   "properties": {
-    "schema": {"const": "csv2-benchmark-report-v4"},
+    "schema": {"const": "csv2-benchmark-report-v5"},
     "artifact_mode": {"enum": ["owned", "external"]},
     "mode": {"enum": ["aa", "compare"]},
     "status": {"enum": ["running", "completed", "failed"]},
@@ -115,7 +115,7 @@
           "type": "object",
           "required": ["protocol", "revision", "operations", "sources", "operation_contracts"],
           "properties": {
-            "protocol": {"const": "csv2-common-v3"},
+            "protocol": {"const": "csv2-common-v4"},
             "revision": {"type": "string", "minLength": 1},
             "operations": {"type": "string", "minLength": 1},
             "sources": {"type": "string", "minLength": 1},
@@ -141,7 +141,8 @@
     "case": {
       "type": "object",
       "required": [
-        "dataset", "operation", "source", "semantic_signature", "baseline",
+        "dataset", "operation", "source", "semantic_case_id", "scope",
+        "byte_basis", "semantic_signature", "baseline",
         "candidate", "candidate_over_baseline_95pct", "measured_noise",
         "calibration_noise", "observed_noise", "regression_threshold",
         "regression", "improvement", "launches"
@@ -150,6 +151,9 @@
         "dataset": {"type": "string", "minLength": 1},
         "operation": {"type": "string", "minLength": 1},
         "source": {"enum": ["buffer", "mmap"]},
+        "semantic_case_id": {"type": "string", "pattern": "^csv2\\..+\\.v1$"},
+        "scope": {"type": "string", "minLength": 1},
+        "byte_basis": {"const": "input_corpus"},
         "semantic_signature": {
           "type": "array", "minItems": 6, "maxItems": 6,
           "items": {"type": "string", "pattern": "^(0|[1-9][0-9]*)$"}
@@ -201,16 +205,19 @@
         "result": {
           "type": "object",
           "required": [
-            "protocol", "revision", "operation", "scope", "source", "bytes",
+            "protocol", "revision", "operation", "scope", "source",
+            "semantic_case_id", "byte_basis", "bytes",
             "iterations", "elapsed_ns", "rows", "cells", "row_bytes", "checksum",
             "timed_reader_steps"
           ],
           "properties": {
-            "protocol": {"const": "csv2-common-v3"},
+            "protocol": {"const": "csv2-common-v4"},
             "revision": {"type": "string", "minLength": 1},
             "operation": {"type": "string", "minLength": 1},
             "scope": {"type": "string", "minLength": 1},
             "source": {"enum": ["buffer", "mmap"]},
+            "semantic_case_id": {"type": "string", "pattern": "^csv2\\..+\\.v1$"},
+            "byte_basis": {"const": "input_corpus"},
             "bytes": {"type": "string", "pattern": "^(0|[1-9][0-9]*)$"},
             "iterations": {"type": "string", "pattern": "^(0|[1-9][0-9]*)$"},
             "elapsed_ns": {"type": "string", "pattern": "^[1-9][0-9]*$"},

@@ -1,12 +1,12 @@
 """CSV2 benchmark provenance, comparison, and fixed-machine tooling."""
 
-COMMON_PROTOCOL = "csv2-common-v3"
-CURRENT_PROTOCOL = "csv2-current-v2"
-COMPARISON_SCHEMA = "csv2-benchmark-report-v4"
-METRICS_SCHEMA = "csv2-fixed-machine-metrics-v4"
+COMMON_PROTOCOL = "csv2-common-v4"
+CURRENT_PROTOCOL = "csv2-current-v3"
+COMPARISON_SCHEMA = "csv2-benchmark-report-v5"
+METRICS_SCHEMA = "csv2-fixed-machine-metrics-v5"
 BUILD_SCHEMA = "csv2-benchmark-build-v1"
-ARTIFACT_MANIFEST_SCHEMA = "csv2-artifact-manifest-v2"
-EVIDENCE_SCHEMA = "csv2-performance-evidence-bundle-v1"
+ARTIFACT_MANIFEST_SCHEMA = "csv2-artifact-manifest-v3"
+EVIDENCE_SCHEMA = "csv2-performance-evidence-bundle-v2"
 
 __all__ = [
     "COMMON_PROTOCOL",

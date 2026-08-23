@@ -38,6 +38,8 @@ RESULT_FIELDS = {
     "operation",
     "scope",
     "source",
+    "semantic_case_id",
+    "byte_basis",
     "bytes",
     "iterations",
     "elapsed_ns",
@@ -326,6 +328,8 @@ def validate_result(
     iterations: int,
     *,
     expected_scope: str,
+    expected_semantic_case_id: str,
+    expected_byte_basis: str,
     expected_bytes: int,
     expected_revision: str | None = None,
 ) -> float:
@@ -334,6 +338,8 @@ def validate_result(
         "operation": operation,
         "scope": expected_scope,
         "source": source,
+        "semantic_case_id": expected_semantic_case_id,
+        "byte_basis": expected_byte_basis,
         "iterations": str(iterations),
     }
     for key, value in expected.items():
@@ -402,6 +408,8 @@ def measure_case(
     iterations: int,
     warmups: int,
     expected_scope: str,
+    expected_semantic_case_id: str,
+    expected_byte_basis: str,
     invoke_fn: Invoke = invoke,
     calibration_noise: float = 0.0,
     baseline_revision: str | None = None,
@@ -431,6 +439,8 @@ def measure_case(
             source,
             iterations,
             expected_scope=expected_scope,
+            expected_semantic_case_id=expected_semantic_case_id,
+            expected_byte_basis=expected_byte_basis,
             expected_bytes=expected_bytes,
             expected_revision=expected_revision,
         )
@@ -472,6 +482,9 @@ def measure_case(
         "dataset": dataset.name,
         "operation": operation,
         "source": source,
+        "semantic_case_id": expected_semantic_case_id,
+        "scope": expected_scope,
+        "byte_basis": expected_byte_basis,
         "calibration_noise": calibration_noise,
         "launches": launches,
     }
@@ -939,7 +952,12 @@ def main() -> None:
             validate_calibration_context(calibration_report, report)
         for dataset_name in datasets:
             for operation in operations:
-                expected_scope, supported_sources = baseline_contracts[operation]
+                (
+                    expected_scope,
+                    supported_sources,
+                    expected_semantic_case_id,
+                    expected_byte_basis,
+                ) = baseline_contracts[operation]
                 case_sources = [source for source in sources if source in supported_sources]
                 if not case_sources:
                     raise RuntimeError(
@@ -961,6 +979,8 @@ def main() -> None:
                         args.iterations,
                         args.warmups,
                         expected_scope,
+                        expected_semantic_case_id,
+                        expected_byte_basis,
                         calibration_noise=calibration_noise.get(key, 0.0),
                         baseline_revision=args.baseline_revision,
                         candidate_revision=args.candidate_revision,

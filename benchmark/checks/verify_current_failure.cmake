@@ -33,7 +33,7 @@ execute_process(
 if(csv2_result EQUAL 0)
   message(FATAL_ERROR "failing kernel returned success: ${csv2_stdout}")
 endif()
-if(csv2_stdout MATCHES "protocol=csv2-current-v2")
+if(csv2_stdout MATCHES "protocol=csv2-current-v3")
   message(FATAL_ERROR "failing kernel emitted a success wire: ${csv2_stdout}")
 endif()
 if(NOT csv2_stderr MATCHES "kernel_status=${CSV2_EXPECTED_STATUS}([ \r\n]|$)")

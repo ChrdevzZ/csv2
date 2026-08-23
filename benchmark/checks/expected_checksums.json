@@ -1,5 +1,5 @@
 {
-  "protocol": "csv2-current-v2",
+  "protocol": "csv2-current-v3",
   "checks": [
     {
       "dataset": "test/fixtures/upstream/test_01.csv",

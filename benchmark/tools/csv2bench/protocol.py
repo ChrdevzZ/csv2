@@ -44,26 +44,37 @@ def parse_common(output: str, required: Iterable[str]) -> dict[str, str]:
     return result
 
 
-def parse_operation_contracts(encoded: str) -> dict[str, tuple[str, frozenset[str]]]:
-    contracts: dict[str, tuple[str, frozenset[str]]] = {}
+def parse_operation_contracts(
+    encoded: str,
+) -> dict[str, tuple[str, frozenset[str], str, str]]:
+    contracts: dict[str, tuple[str, frozenset[str], str, str]] = {}
     if not encoded:
         raise RuntimeError("operation contracts must not be empty")
     for entry in encoded.split(";"):
         parts = entry.split(":")
-        if len(parts) != 3 or not all(parts):
+        if len(parts) != 5 or not all(parts):
             raise RuntimeError(f"malformed operation contract: {entry!r}")
-        operation, scope, encoded_sources = parts
+        operation, scope, encoded_sources, semantic_case_id, byte_basis = parts
         if operation in contracts:
             raise RuntimeError(f"duplicate operation contract: {operation}")
         if scope not in {"traversal_only", "mmap_and_traversal", "writer_only"}:
             raise RuntimeError(f"unsupported operation scope: {scope}")
+        if not semantic_case_id.startswith("csv2.") or not semantic_case_id.endswith(".v1"):
+            raise RuntimeError(f"unsupported semantic case ID: {semantic_case_id}")
+        if byte_basis != "input_corpus":
+            raise RuntimeError(f"unsupported byte basis: {byte_basis}")
         source_entries = encoded_sources.split("+")
         if (
             any(source not in {"buffer", "mmap"} for source in source_entries)
             or len(source_entries) != len(set(source_entries))
         ):
             raise RuntimeError(f"invalid operation sources: {encoded_sources}")
-        contracts[operation] = (scope, frozenset(source_entries))
+        contracts[operation] = (
+            scope,
+            frozenset(source_entries),
+            semantic_case_id,
+            byte_basis,
+        )
     return contracts
 
 
@@ -74,6 +85,9 @@ def parse_current(output: str) -> dict[str, str]:
         "operation",
         "source",
         "dataset",
+        "semantic_case_id",
+        "scope",
+        "byte_basis",
         "checksum",
         "bytes",
         "rows",
@@ -83,6 +97,12 @@ def parse_current(output: str) -> dict[str, str]:
     }
     result = parse_key_value_line(output, required)
     require_protocol(result, CURRENT_PROTOCOL)
+    if not result["semantic_case_id"].startswith("csv2."):
+        raise RuntimeError("benchmark semantic case ID is invalid")
+    if not result["scope"].endswith("_only"):
+        raise RuntimeError("benchmark scope is invalid")
+    if result["byte_basis"] != "input_corpus":
+        raise RuntimeError("benchmark byte basis is invalid")
     for field in ("checksum", "bytes", "rows", "cells", "allocations", "allocated_bytes"):
         try:
             value = int(result[field])
@@ -658,7 +678,9 @@ def validate_comparison_report(report: object) -> None:
     )
 
     revisions: list[str] = []
-    capabilities: list[dict[str, tuple[str, frozenset[str]]]] = []
+    capabilities: list[
+        dict[str, tuple[str, frozenset[str], str, str]]
+    ] = []
     build_documents: list[dict[str, object]] = []
     for side in ("baseline", "candidate"):
         side_document = _object(document[side], f"comparison report.{side}")
@@ -709,7 +731,7 @@ def validate_comparison_report(report: object) -> None:
             )
         contract_sources = {
             source
-            for _, supported_sources in contracts.values()
+            for _, supported_sources, _, _ in contracts.values()
             for source in supported_sources
         }
         if sources != contract_sources:
@@ -763,7 +785,8 @@ def validate_comparison_report(report: object) -> None:
         _required(
             case,
             {
-                "dataset", "operation", "source", "semantic_signature",
+                "dataset", "operation", "source", "semantic_case_id", "scope",
+                "byte_basis", "semantic_signature",
                 "baseline", "candidate", "candidate_over_baseline_95pct",
                 "measured_noise", "calibration_noise", "observed_noise",
                 "regression_threshold", "regression", "improvement", "launches",
@@ -791,6 +814,26 @@ def validate_comparison_report(report: object) -> None:
         if len(expected_scopes) != 1:
             raise RuntimeError(f"{label} scope differs between artifacts")
         expected_scope = next(iter(expected_scopes))
+        expected_semantic_ids = {
+            contract[2] for contract in operation_capabilities if contract
+        }
+        if len(expected_semantic_ids) != 1:
+            raise RuntimeError(f"{label} semantic case ID differs between artifacts")
+        expected_semantic_case_id = next(iter(expected_semantic_ids))
+        expected_byte_bases = {
+            contract[3] for contract in operation_capabilities if contract
+        }
+        if len(expected_byte_bases) != 1:
+            raise RuntimeError(f"{label} byte basis differs between artifacts")
+        expected_byte_basis = next(iter(expected_byte_bases))
+        if case["scope"] != expected_scope:
+            raise RuntimeError(f"{label}.scope differs from its operation contract")
+        if case["semantic_case_id"] != expected_semantic_case_id:
+            raise RuntimeError(
+                f"{label}.semantic_case_id differs from its operation contract"
+            )
+        if case["byte_basis"] != expected_byte_basis:
+            raise RuntimeError(f"{label}.byte_basis differs from its operation contract")
         signature_values = _array(
             case["semantic_signature"], f"{label}.semantic_signature"
         )
@@ -879,7 +922,8 @@ def validate_comparison_report(report: object) -> None:
             )
             result = _object(launch["result"], f"{launch_label}.result")
             result_fields = {
-                "protocol", "revision", "operation", "scope", "source", "bytes",
+                "protocol", "revision", "operation", "scope", "source",
+                "semantic_case_id", "byte_basis", "bytes",
                 "iterations", "elapsed_ns", "rows", "cells", "row_bytes", "checksum",
                 "timed_reader_steps",
             }
@@ -893,6 +937,12 @@ def validate_comparison_report(report: object) -> None:
                 raise RuntimeError(f"{launch_label}.result context is inconsistent")
             if result["scope"] != expected_scope:
                 raise RuntimeError(f"{launch_label}.result scope is inconsistent")
+            if result["semantic_case_id"] != expected_semantic_case_id:
+                raise RuntimeError(
+                    f"{launch_label}.result semantic case ID is inconsistent"
+                )
+            if result["byte_basis"] != expected_byte_basis:
+                raise RuntimeError(f"{launch_label}.result byte basis is inconsistent")
             for field in (
                 "bytes", "iterations", "rows", "cells", "row_bytes", "checksum",
                 "timed_reader_steps",
@@ -989,6 +1039,7 @@ def validate_fixed_metrics_report(report: object) -> None:
         "compiler_identity", "compiler_flags", "operation", "source", "runs",
         "artifacts", "clean_build", "post_build", "verification", "allocations", "timing",
         "timing_invocation", "pmu", "pmu_invocation", "peak_rss", "code_size",
+        "comparison_binding",
     }
     required = {
         "schema", "artifact_mode", "build", "status", "evidence_level",
@@ -1082,7 +1133,10 @@ def validate_fixed_metrics_report(report: object) -> None:
     if status == "completed":
         _required(
             document,
-            {"completed_at_utc", "verification", "allocations", "timing", "timing_invocation"},
+            {
+                "completed_at_utc", "verification", "allocations", "timing",
+                "timing_invocation", "comparison_binding",
+            },
             "completed fixed-machine report",
         )
         _string(document["completed_at_utc"], "fixed-machine report.completed_at_utc")
@@ -1090,11 +1144,12 @@ def validate_fixed_metrics_report(report: object) -> None:
         _required(verification, {"result", "invocation"}, "fixed-machine report.verification")
         result = _object(verification["result"], "fixed-machine report.verification.result")
         current_fields = {
-            "protocol", "revision", "operation", "source", "dataset", "checksum",
-            "bytes", "rows", "cells", "allocations", "allocated_bytes",
+            "protocol", "revision", "operation", "source", "dataset",
+            "semantic_case_id", "scope", "byte_basis", "checksum", "bytes",
+            "rows", "cells", "allocations", "allocated_bytes",
         }
         _required(result, current_fields, "fixed-machine report.verification.result")
-        if result["protocol"] != "csv2-current-v2":
+        if result["protocol"] != CURRENT_PROTOCOL:
             raise RuntimeError("fixed-machine verification protocol is invalid")
         if result["revision"] != executable["revision"]:
             raise RuntimeError("fixed-machine verification revision is inconsistent")
@@ -1105,6 +1160,27 @@ def validate_fixed_metrics_report(report: object) -> None:
         ):
             _uint64_string(result[field], f"fixed-machine report.verification.result.{field}")
         _string(result["dataset"], "fixed-machine report.verification.result.dataset")
+        _string(
+            result["semantic_case_id"],
+            "fixed-machine report.verification.result.semantic_case_id",
+        )
+        _string(result["scope"], "fixed-machine report.verification.result.scope")
+        if result["byte_basis"] != "input_corpus":
+            raise RuntimeError("fixed-machine verification byte basis is invalid")
+        binding = _object(
+            document["comparison_binding"],
+            "fixed-machine report.comparison_binding",
+        )
+        binding_fields = {
+            "dataset", "semantic_case_id", "scope", "source", "byte_basis"
+        }
+        _required(binding, binding_fields, "fixed-machine report.comparison_binding")
+        _closed(binding, binding_fields, "fixed-machine report.comparison_binding")
+        for field in binding_fields:
+            if binding[field] != result[field]:
+                raise RuntimeError(
+                    f"fixed-machine comparison binding differs for {field}"
+                )
         _invocation(verification["invocation"], "fixed-machine report.verification.invocation")
         allocations = _object(document["allocations"], "fixed-machine report.allocations")
         _required(
@@ -1244,7 +1320,8 @@ def validate_evidence_bundle(bundle: object) -> None:
         "schema", "status", "evidence_level", "decision_eligible",
         "generated_at_utc", "completed_at_utc", "baseline_revision",
         "candidate_revision", "source_tree", "compiler_sha256", "machine",
-        "datasets", "components", "checks", "artifacts", "finalizer",
+        "datasets", "comparison_binding", "components", "checks", "artifacts",
+        "finalizer",
     }
     _required(document, fields, "performance evidence bundle")
     _closed(document, fields, "performance evidence bundle")
@@ -1307,6 +1384,20 @@ def validate_evidence_bundle(bundle: object) -> None:
         _integer(dataset["size"], f"{label}.size", 1)
         _hex_digest(dataset["sha256"], f"{label}.sha256", (64,))
 
+    binding = _object(
+        document["comparison_binding"],
+        "performance evidence bundle.comparison_binding",
+    )
+    binding_fields = {
+        "dataset", "semantic_case_id", "scope", "source", "byte_basis"
+    }
+    _required(binding, binding_fields, "performance evidence bundle.comparison_binding")
+    _closed(binding, binding_fields, "performance evidence bundle.comparison_binding")
+    for field in binding_fields:
+        _string(binding[field], f"performance evidence bundle.comparison_binding.{field}")
+    if binding["byte_basis"] != "input_corpus":
+        raise RuntimeError("performance evidence bundle byte basis is invalid")
+
     components = _object(
         document["components"], "performance evidence bundle.components"
     )
@@ -1345,7 +1436,7 @@ def validate_evidence_bundle(bundle: object) -> None:
 
     check_names = {
         "artifact_manifests", "calibration", "revisions", "source_tree",
-        "compiler", "machine", "datasets", "corpus",
+        "compiler", "machine", "datasets", "corpus", "semantic_binding",
     }
     checks = _object(document["checks"], "performance evidence bundle.checks")
     _required(checks, check_names, "performance evidence bundle.checks")

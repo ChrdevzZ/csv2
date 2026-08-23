@@ -1,11 +1,11 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "artifact-manifest-v2.schema.json",
-  "title": "CSV2 benchmark artifact manifest v2",
+  "$id": "artifact-manifest-v3.schema.json",
+  "title": "CSV2 benchmark artifact manifest v3",
   "type": "object",
   "required": ["schema", "kind", "report", "inputs"],
   "properties": {
-    "schema": {"const": "csv2-artifact-manifest-v2"},
+    "schema": {"const": "csv2-artifact-manifest-v3"},
     "kind": {"enum": ["comparison", "fixed-metrics", "evidence-bundle"]},
     "report": {"$ref": "#/$defs/artifact"},
     "inputs": {"type": "object"}

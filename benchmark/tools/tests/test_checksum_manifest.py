@@ -18,7 +18,7 @@ SPEC.loader.exec_module(checks)
 class ChecksumManifestTests(unittest.TestCase):
     def test_wire_comparison_is_exact(self) -> None:
         fields = checks.parse_wire(
-            "protocol=csv2-current-v2 checksum=1239 operation=x source=buffer"
+            "protocol=csv2-current-v3 checksum=1239 operation=x source=buffer"
         )
         self.assertNotEqual(fields["checksum"], "123")
 

@@ -24,7 +24,7 @@ if(NOT csv2_result EQUAL 0)
 endif()
 
 set(csv2_expected_fields
-  "protocol=csv2-common-v3"
+  "protocol=csv2-common-v4"
   "operation=${CSV2_BENCHMARK_OPERATION}"
   "scope=writer_only"
   "source=buffer"
