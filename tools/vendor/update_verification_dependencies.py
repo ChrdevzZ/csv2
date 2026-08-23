@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 import re
 import shutil
 import sys
@@ -183,19 +184,28 @@ def download(root: Path, name: str, output: Path, allow_network: bool) -> None:
     if not allow_network:
         raise VendorError("fetch requires the explicit --allow-network flag")
     entry = dependency(load_manifest(root), name)
-    if output.exists():
+    if output.exists() or output.is_symlink():
         raise VendorError(f"refusing to overwrite existing archive: {output}")
     output.parent.mkdir(parents=True, exist_ok=True)
-    with urllib.request.urlopen(str(entry["archive_url"])) as response:
-        with output.open("xb") as stream:
-            shutil.copyfileobj(response, stream)
-    actual_hash = sha256_file(output)
-    expected_hash = str(entry["archive_sha256"]).lower()
-    if actual_hash != expected_hash:
-        output.unlink()
-        raise VendorError(
-            f"downloaded {name} archive SHA-256 mismatch: {actual_hash}"
-        )
+    descriptor, temporary_name = tempfile.mkstemp(
+        prefix=f".{output.name}.", dir=output.parent
+    )
+    temporary = Path(temporary_name)
+    try:
+        with os.fdopen(descriptor, "wb") as stream:
+            with urllib.request.urlopen(str(entry["archive_url"]), timeout=60) as response:
+                shutil.copyfileobj(response, stream)
+            stream.flush()
+            os.fsync(stream.fileno())
+        actual_hash = sha256_file(temporary)
+        expected_hash = str(entry["archive_sha256"]).lower()
+        if actual_hash != expected_hash:
+            raise VendorError(
+                f"downloaded {name} archive SHA-256 mismatch: {actual_hash}"
+            )
+        os.replace(temporary, output)
+    finally:
+        temporary.unlink(missing_ok=True)
     print(f"{output}: {actual_hash}")
 
 
@@ -232,31 +242,39 @@ def stage(root: Path, name: str, archive_path: Path, output: Path) -> None:
             f"{name} archive SHA-256 mismatch: expected {expected_archive_hash}, "
             f"got {actual_archive_hash}"
         )
-    if output.exists() and any(output.iterdir()):
-        raise VendorError(f"staging directory is not empty: {output}")
-    output.mkdir(parents=True, exist_ok=True)
+    if output.exists() or output.is_symlink():
+        raise VendorError(f"refusing to overwrite staging path: {output}")
+    output.parent.mkdir(parents=True, exist_ok=True)
+    staging = Path(
+        tempfile.mkdtemp(prefix=f".{output.name}.", dir=output.parent)
+    )
     whitelist = read_file_list(root, entry)
-    with tempfile.TemporaryDirectory(prefix="csv2-vendor-") as temporary:
-        extracted = Path(temporary)
-        with tarfile.open(archive_path, "r:*") as archive:
-            extract_regular_files(archive, extracted)
-        roots = [path for path in extracted.iterdir() if path.is_dir()]
-        if len(roots) != 1:
-            raise VendorError("vendor archive must contain exactly one root directory")
-        archive_root = roots[0]
-        for value in whitelist:
-            source = contained_target(archive_root, value)
-            if not source.is_file() or source.is_symlink():
-                raise VendorError(f"whitelisted archive file is missing: {value}")
-            destination = contained_target(output, value)
-            destination.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copyfile(source, destination)
-    actual_snapshot_hash = snapshot_hash(output, whitelist)
-    expected_snapshot_hash = str(entry["snapshot_sha256"]).lower()
-    if actual_snapshot_hash != expected_snapshot_hash:
-        raise VendorError(
-            f"staged {name} snapshot SHA-256 mismatch: {actual_snapshot_hash}"
-        )
+    try:
+        with tempfile.TemporaryDirectory(prefix="csv2-vendor-") as temporary:
+            extracted = Path(temporary)
+            with tarfile.open(archive_path, "r:*") as archive:
+                extract_regular_files(archive, extracted)
+            roots = [path for path in extracted.iterdir() if path.is_dir()]
+            if len(roots) != 1:
+                raise VendorError("vendor archive must contain exactly one root directory")
+            archive_root = roots[0]
+            for value in whitelist:
+                source = contained_target(archive_root, value)
+                if not source.is_file() or source.is_symlink():
+                    raise VendorError(f"whitelisted archive file is missing: {value}")
+                destination = contained_target(staging, value)
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copyfile(source, destination)
+        actual_snapshot_hash = snapshot_hash(staging, whitelist)
+        expected_snapshot_hash = str(entry["snapshot_sha256"]).lower()
+        if actual_snapshot_hash != expected_snapshot_hash:
+            raise VendorError(
+                f"staged {name} snapshot SHA-256 mismatch: {actual_snapshot_hash}"
+            )
+        os.replace(staging, output)
+    finally:
+        if staging.exists():
+            shutil.rmtree(staging)
     print(f"{output}: {actual_snapshot_hash}")
 
 

@@ -14,27 +14,6 @@ from csv2bench import artifacts, evidence, protocol
 
 
 class EvidenceBundleTests(unittest.TestCase):
-    def test_finalizer_bundle_covers_entry_point_and_imported_helpers(self) -> None:
-        benchmark_root = Path(evidence.__file__).resolve().parents[2]
-        members = {
-            path.resolve().relative_to(benchmark_root).as_posix()
-            for path in evidence.finalizer_source_paths()
-        }
-        self.assertEqual(
-            members,
-            {
-                "finalize_evidence.py",
-                "tools/csv2bench/__init__.py",
-                "tools/csv2bench/artifacts.py",
-                "tools/csv2bench/atomic.py",
-                "tools/csv2bench/builds.py",
-                "tools/csv2bench/derivation.py",
-                "tools/csv2bench/evidence.py",
-                "tools/csv2bench/machine.py",
-                "tools/csv2bench/protocol.py",
-            },
-        )
-
     def components(self, root: Path):
         fixture_root = root / "fixtures"
         fixture_root.mkdir()

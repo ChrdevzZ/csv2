@@ -36,3 +36,27 @@ add_test(NAME csv2.minitest.registry_capacity
   COMMAND csv2_minitest_registry_capacity)
 set_tests_properties(csv2.minitest.registry_capacity PROPERTIES
   LABELS "minitest;sanitizer-runtime;verification" TIMEOUT 10)
+
+set(csv2_minitest_duplicate_source
+  "${CMAKE_CURRENT_BINARY_DIR}/minitest_registry_duplicate.cpp")
+file(WRITE "${csv2_minitest_duplicate_source}"
+  "#include <csv2_test/case_registry.hpp>\n\n"
+  "namespace {\n"
+  "void first() {}\n"
+  "void second() {}\n"
+  "csv2_test::registrar first_registration(\"registry.duplicate\", \"registry\", &first);\n"
+  "csv2_test::registrar second_registration(\"registry.duplicate\", \"registry\", &second);\n"
+  "} // namespace\n\n"
+  "int main() {\n"
+  "  return csv2_test::run_registered_tests(\"registry\") == 2 ? 0 : 1;\n"
+  "}\n")
+
+add_executable(csv2_minitest_registry_duplicate
+  "${csv2_minitest_duplicate_source}")
+target_link_libraries(csv2_minitest_registry_duplicate PRIVATE csv2_minitest)
+csv2_set_test_standard(csv2_minitest_registry_duplicate 11)
+csv2_enable_test_options(csv2_minitest_registry_duplicate)
+add_test(NAME csv2.minitest.registry_duplicate
+  COMMAND csv2_minitest_registry_duplicate)
+set_tests_properties(csv2.minitest.registry_duplicate PROPERTIES
+  LABELS "minitest;sanitizer-runtime;verification" TIMEOUT 10)

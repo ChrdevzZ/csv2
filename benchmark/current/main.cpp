@@ -213,8 +213,8 @@ int audit_observers(Registry &registry, Context &context, const Options &options
 #endif
 }
 
-std::size_t register_timing_benchmarks(Registry &registry, Context &context,
-                                       const Options &options) {
+std::size_t register_timing_benchmarks(Registry &registry, Context &context, const Options &options,
+                                       bool &kernel_failure) {
   std::size_t selected = 0;
   const std::string dataset = safe_component(context.dataset_name());
   for (const Operation &operation : registry.operations()) {
@@ -223,7 +223,7 @@ std::size_t register_timing_benchmarks(Registry &registry, Context &context,
     const Operation *const selected_operation = &operation;
     selected += for_each_selected_source(operation, options, [&](Source source) {
       const std::string name = "csv2/" + operation.id + "/" + source_name(source) + "/" + dataset;
-      benchmark::RegisterBenchmark(name, [&context, selected_operation,
+      benchmark::RegisterBenchmark(name, [&context, &kernel_failure, selected_operation,
                                           source](benchmark::State &state) {
         Result result;
         TimedObserver observer;
@@ -231,6 +231,7 @@ std::size_t register_timing_benchmarks(Registry &registry, Context &context,
           (void)ignored;
           result = selected_operation->timed_kernel(context, source, observer);
           if (!result.ok()) {
+            kernel_failure = true;
             state.SkipWithError(kernel_status_name(result.status));
             break;
           }
@@ -310,7 +311,8 @@ int main(int argc, char **argv) {
     benchmark::Initialize(&argc, argv);
     if (benchmark::ReportUnrecognizedArguments(argc, argv))
       return 2;
-    if (register_timing_benchmarks(registry, context, options) == 0) {
+    bool kernel_failure = false;
+    if (register_timing_benchmarks(registry, context, options, kernel_failure) == 0) {
       std::cerr << "no operation/source combination matched the request\n";
       return 2;
     }
@@ -320,7 +322,7 @@ int main(int argc, char **argv) {
 #endif
     benchmark::RunSpecifiedBenchmarks();
     benchmark::Shutdown();
-    return 0;
+    return kernel_failure ? 4 : 0;
   } catch (const std::exception &exception) {
     std::cerr << exception.what() << '\n';
     return 2;

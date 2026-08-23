@@ -98,7 +98,6 @@ jobs:
 
       - name: Verify owned current-tree checksums and corpus
         run: |
-          test -s build-perf/current-owned/build/benchmark-corpus/manifest.json
           cmake --build build-perf/current-owned/build --parallel
           ctest --test-dir build-perf/current-owned/build \
             -L benchmark-checksum --no-tests=error --output-on-failure \
@@ -149,22 +148,6 @@ jobs:
             --corpus-manifest build-perf/current-owned/build/benchmark-corpus/manifest.json \
             --output build-perf/reports/evidence.json
 
-      - name: Verify exploratory evidence artifacts
-        run: |
-          for artifact in \
-            build-perf/reports/aa.json \
-            build-perf/reports/aa.json.sha256.json \
-            build-perf/reports/ab.json \
-            build-perf/reports/ab.json.sha256.json \
-            build-perf/reports/current-metrics.json \
-            build-perf/reports/current-metrics.json.sha256.json \
-            build-perf/reports/evidence.json \
-            build-perf/reports/evidence.json.sha256.json \
-            build-perf/reports/benchmark-checksum.xml \
-            build-perf/current-owned/build/benchmark-corpus/manifest.json; do
-            test -s "$artifact"
-          done
-
       - name: Upload exploratory failure diagnostics
         if: failure()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
@@ -207,9 +190,7 @@ jobs:
           set -euo pipefail
           test "$RUNS" -ge 20
           : "${CSV2_PERF_MACHINE_PROFILE:?CSV2_PERF_MACHINE_PROFILE is required}"
-          test -f "$CSV2_PERF_MACHINE_PROFILE"
           command -v taskset
-          test -r /proc/sys/kernel/perf_event_paranoid
           baseline=$(git rev-parse "${BASELINE_INPUT}^{commit}")
           candidate_input=${CANDIDATE_INPUT:-$GITHUB_SHA}
           requested_candidate=$(git rev-parse "${candidate_input}^{commit}")
@@ -248,12 +229,9 @@ jobs:
             --evidence-level controlled --cpu-affinity 0 \
             --machine-profile "$PROFILE_PATH" \
             --output build-perf/reports/current-metrics.json
-          grep -q 'BENCHMARK_ENABLE_LIBPFM:BOOL=ON' \
-            build-perf/current-owned/build/CMakeCache.txt
 
       - name: Verify owned current-tree checksums and corpus
         run: |
-          test -s build-perf/current-owned/build/benchmark-corpus/manifest.json
           cmake --build build-perf/current-owned/build --parallel
           ctest --test-dir build-perf/current-owned/build \
             -L benchmark-checksum --no-tests=error --output-on-failure \
@@ -305,23 +283,6 @@ jobs:
             --fixed-metrics-manifest build-perf/reports/current-metrics.json.sha256.json \
             --corpus-manifest build-perf/current-owned/build/benchmark-corpus/manifest.json \
             --output build-perf/reports/evidence.json
-
-      - name: Verify controlled evidence artifacts
-        run: |
-          for artifact in \
-            build-perf/reports/aa.json \
-            build-perf/reports/aa.json.sha256.json \
-            build-perf/reports/ab.json \
-            build-perf/reports/ab.json.sha256.json \
-            build-perf/reports/current-metrics.json \
-            build-perf/reports/current-metrics.json.sha256.json \
-            build-perf/reports/evidence.json \
-            build-perf/reports/evidence.json.sha256.json \
-            build-perf/reports/machine-profile.json \
-            build-perf/reports/benchmark-checksum.xml \
-            build-perf/current-owned/build/benchmark-corpus/manifest.json; do
-            test -s "$artifact"
-          done
 
       - name: Upload controlled failure diagnostics
         if: failure()

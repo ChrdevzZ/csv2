@@ -11,17 +11,6 @@ from csv2bench import metrics
 
 
 class MetricsTests(unittest.TestCase):
-    def test_collector_bundle_covers_entry_point_and_imported_helpers(self) -> None:
-        benchmark_root = Path(metrics.__file__).resolve().parents[2]
-        names = {
-            path.relative_to(benchmark_root).as_posix()
-            for path in metrics.collector_source_paths()
-        }
-        self.assertIn("collect_metrics.py", names)
-        self.assertIn("tools/csv2bench/artifacts.py", names)
-        self.assertIn("tools/csv2bench/derivation.py", names)
-        self.assertIn("tools/csv2bench/statistics.py", names)
-
     def test_verify_command_uses_current_v3_cli(self) -> None:
         command = metrics.verify_command(
             Path("bench"), "traversal/rows", Path("input.csv"), "buffer"

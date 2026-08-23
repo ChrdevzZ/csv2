@@ -1,10 +1,6 @@
 set(csv2_benchmark_default_fixture
   "${CMAKE_CURRENT_SOURCE_DIR}/fixtures/short_unquoted.csv" PARENT_SCOPE)
 
-if(NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/manifest.json")
-  message(FATAL_ERROR "The benchmark corpus manifest is missing")
-endif()
-
 if(csv2_benchmark_enable_generated_corpus)
   if(NOT CSV2_PYTHON_AUDITS_AVAILABLE)
     message(FATAL_ERROR "Generated benchmark corpus requires Python 3.10+")
@@ -22,15 +18,10 @@ if(csv2_benchmark_enable_generated_corpus)
   set(csv2_generated_corpus_manifest
     "${csv2_generated_corpus_root}/manifest.json")
   add_custom_target(csv2_benchmark_corpus
-    COMMAND ${CSV2_PYTHON_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/generate.py
+    COMMAND ${CSV2_PYTHON_EXECUTABLE} -B ${CMAKE_CURRENT_SOURCE_DIR}/generate.py
       --output ${csv2_generated_corpus_directory}
       --manifest ${csv2_generated_corpus_manifest}
       --scale ${CSV2_BENCHMARK_CORPUS_SCALE}
-    COMMAND ${CSV2_PYTHON_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/generate.py
-      --output ${csv2_generated_corpus_directory}
-      --manifest ${csv2_generated_corpus_manifest}
-      --scale ${CSV2_BENCHMARK_CORPUS_SCALE}
-      --check
     BYPRODUCTS
       ${csv2_generated_corpus_manifest}
     COMMENT

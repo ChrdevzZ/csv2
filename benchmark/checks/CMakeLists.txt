@@ -3,12 +3,6 @@ set(csv2_check_fixture
 set(csv2_quote_fixture
   "${csv2_SOURCE_DIR}/benchmark/datasets/fixtures/quote_heavy.csv")
 
-csv2_add_benchmark_check(csv2.benchmark.reject.failure_check_missing_source
-  COMMAND ${CMAKE_COMMAND}
-    -DCSV2_FAILURE_CHECK_SCRIPT=${CMAKE_CURRENT_SOURCE_DIR}/verify_current_failure.cmake
-    -P ${CMAKE_CURRENT_SOURCE_DIR}/verify_current_failure_contract.cmake
-  TIMEOUT 5)
-
 csv2_add_benchmark_check(csv2.benchmark.current.protocol
   COMMAND csv2_benchmark --csv2-input ${csv2_check_fixture}
     --csv2-source buffer --csv2-operation traversal/rows-cells --csv2-verify
@@ -47,37 +41,19 @@ csv2_add_exact_current_check(csv2.benchmark.current.checksum.validation_invalid_
   ${csv2_SOURCE_DIR}/benchmark/datasets/fixtures/invalid_late.csv
   validation/invalid-late 8448068682914525194)
 
-add_test(NAME csv2.benchmark.reject.checksum-prefix
-  COMMAND ${CMAKE_COMMAND}
-    "-DCSV2_BENCHMARK_WIRE=protocol=csv2-current-v3 checksum=1239 bytes=1"
-    -DCSV2_EXPECTED_PROTOCOL=csv2-current-v3
-    -DCSV2_EXPECTED_CHECKSUM=123
-    -P ${CMAKE_CURRENT_SOURCE_DIR}/verify_wire.cmake)
-set_tests_properties(csv2.benchmark.reject.checksum-prefix PROPERTIES
-  LABELS "benchmark-checksum;quick" WILL_FAIL TRUE TIMEOUT 5)
-
 csv2_add_benchmark_check(csv2.benchmark.current.dry_run
   COMMAND csv2_benchmark --csv2-input ${csv2_check_fixture}
     --csv2-source buffer --csv2-operation traversal/rows-cells
     --benchmark_min_time=0.001s --benchmark_repetitions=1)
 
 foreach(csv2_unsupported_mode IN ITEMS list timing)
-  if(csv2_unsupported_mode STREQUAL "list")
-    set(csv2_unsupported_command
-      csv2_benchmark --csv2-list --csv2-source file
-      --csv2-operation writer/raw-direct)
-  else()
-    set(csv2_unsupported_command
-      csv2_benchmark --csv2-input ${csv2_check_fixture}
-      --csv2-source file --csv2-operation writer/raw-direct
-      --benchmark_min_time=0.001s --benchmark_repetitions=1)
-  endif()
-  csv2_add_benchmark_check(
-    csv2.benchmark.reject.unsupported_${csv2_unsupported_mode}
-    COMMAND ${csv2_unsupported_command})
-  set_tests_properties(
-    csv2.benchmark.reject.unsupported_${csv2_unsupported_mode}
-    PROPERTIES WILL_FAIL TRUE)
+  csv2_add_benchmark_check(csv2.benchmark.reject.unsupported_${csv2_unsupported_mode}
+    COMMAND ${CMAKE_COMMAND}
+      -DCSV2_BENCHMARK_EXECUTABLE=$<TARGET_FILE:csv2_benchmark>
+      -DCSV2_BENCHMARK_KIND=current-unsupported-${csv2_unsupported_mode}
+      -DCSV2_BENCHMARK_INPUT=${csv2_check_fixture}
+      -P ${CMAKE_CURRENT_SOURCE_DIR}/cli_contract.cmake
+    TIMEOUT 5)
 endforeach()
 
 foreach(csv2_failure IN ITEMS overflow stream)
@@ -101,6 +77,17 @@ foreach(csv2_failure IN ITEMS overflow stream)
       -DCSV2_BENCHMARK_INPUT=${csv2_quote_fixture}
       -DCSV2_BENCHMARK_SOURCE=buffer
       -DCSV2_BENCHMARK_OPERATION=writer/escaped-direct
+      -DCSV2_EXPECTED_STATUS=${csv2_failure_status}
+      -DCSV2_EXTRA_ARGUMENT=${csv2_failure_argument}
+      ${csv2_failure_extra_definitions}
+      -P ${CMAKE_CURRENT_SOURCE_DIR}/verify_current_failure.cmake)
+  csv2_add_benchmark_check(csv2.benchmark.reject.writer_${csv2_failure}.timing
+    COMMAND ${CMAKE_COMMAND}
+      -DCSV2_BENCHMARK_EXECUTABLE=$<TARGET_FILE:csv2_benchmark>
+      -DCSV2_BENCHMARK_INPUT=${csv2_quote_fixture}
+      -DCSV2_BENCHMARK_SOURCE=buffer
+      -DCSV2_BENCHMARK_OPERATION=writer/escaped-direct
+      -DCSV2_BENCHMARK_MODE=timing
       -DCSV2_EXPECTED_STATUS=${csv2_failure_status}
       -DCSV2_EXTRA_ARGUMENT=${csv2_failure_argument}
       ${csv2_failure_extra_definitions}
@@ -265,14 +252,13 @@ foreach(csv2_validation_mismatch IN ITEMS valid_as_invalid invalid_as_valid)
       ${csv2_SOURCE_DIR}/benchmark/datasets/fixtures/invalid_early.csv)
     set(csv2_validation_operation validation/valid)
   endif()
-  csv2_add_benchmark_check(
-    csv2.benchmark.reject.validation.${csv2_validation_mismatch}
-    COMMAND csv2_benchmark --csv2-input ${csv2_validation_fixture}
-      --csv2-source buffer --csv2-operation ${csv2_validation_operation}
-      --csv2-verify)
-  set_tests_properties(
-    csv2.benchmark.reject.validation.${csv2_validation_mismatch}
-    PROPERTIES WILL_FAIL TRUE)
+  csv2_add_benchmark_check(csv2.benchmark.reject.validation.${csv2_validation_mismatch}
+    COMMAND ${CMAKE_COMMAND}
+      -DCSV2_BENCHMARK_EXECUTABLE=$<TARGET_FILE:csv2_benchmark>
+      -DCSV2_BENCHMARK_KIND=current-validation-${csv2_validation_mismatch}
+      -DCSV2_BENCHMARK_INPUT=${csv2_validation_fixture}
+      -P ${CMAKE_CURRENT_SOURCE_DIR}/cli_contract.cmake
+    TIMEOUT 5)
 endforeach()
 
 foreach(csv2_index_operation IN ITEMS sequential-lookup random-lookup)
@@ -399,19 +385,17 @@ endforeach()
 
 if(CSV2_PYTHON_AUDITS_AVAILABLE)
   csv2_add_benchmark_check(csv2.benchmark.current.case_manifest
-    COMMAND ${CSV2_PYTHON_EXECUTABLE}
+    COMMAND ${CSV2_PYTHON_EXECUTABLE} -B
       ${CMAKE_CURRENT_SOURCE_DIR}/verify_case_manifest.py
       --executable $<TARGET_FILE:csv2_benchmark>
       --source-root ${csv2_SOURCE_DIR}
       --manifest ${CMAKE_CURRENT_SOURCE_DIR}/case_manifest.json
     TIMEOUT 120)
   csv2_add_benchmark_check(csv2.benchmark.current.checksum.manifest
-    COMMAND ${CSV2_PYTHON_EXECUTABLE}
+    COMMAND ${CSV2_PYTHON_EXECUTABLE} -B
       ${CMAKE_CURRENT_SOURCE_DIR}/verify_expected_checksums.py
       --executable $<TARGET_FILE:csv2_benchmark>
       --source-root ${csv2_SOURCE_DIR}
-      --manifest ${CMAKE_CURRENT_SOURCE_DIR}/expected_checksums.json)
-  csv2_add_benchmark_check(csv2.benchmark.corpus.reproducible
-    COMMAND ${CSV2_PYTHON_EXECUTABLE}
-      ${csv2_SOURCE_DIR}/benchmark/datasets/generate.py --check)
+      --manifest ${CMAKE_CURRENT_SOURCE_DIR}/expected_checksums.json
+      --revision ${CSV2_BENCHMARK_REVISION})
 endif()

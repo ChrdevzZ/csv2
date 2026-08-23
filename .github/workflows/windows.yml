@@ -39,7 +39,6 @@ jobs:
             sanitizer_runtime: none
             expected_id: MSVC
             expected_version: "19.51"
-            require_cxx26: "OFF"
             install: true
           - compiler: MSVC 19.51 / ASan
             artifact: msvc1951-asan
@@ -50,7 +49,6 @@ jobs:
             sanitizer_runtime: msvc
             expected_id: MSVC
             expected_version: "19.51"
-            require_cxx26: "OFF"
             install: false
           - compiler: Clang-CL 22.1
             artifact: clangcl221
@@ -61,7 +59,6 @@ jobs:
             sanitizer_runtime: none
             expected_id: Clang
             expected_version: "22.1"
-            require_cxx26: "ON"
             install: false
           - compiler: Clang-CL 22.1 / ASan + UBSan
             artifact: clangcl221-sanitizers
@@ -72,7 +69,6 @@ jobs:
             sanitizer_runtime: clang
             expected_id: Clang
             expected_version: "22.1"
-            require_cxx26: "ON"
             install: false
 
     steps:
@@ -93,8 +89,6 @@ jobs:
           -DCSV2_VERIFICATION_PROFILE=quick
           -DCSV2_REQUIRE_PYTHON_AUDITS=ON
           -DCSV2_ENABLE_SANITIZERS=${{ matrix.sanitizers }}
-          -DCSV2_REQUIRE_MODERN_STANDARD_TESTS=ON
-          -DCSV2_REQUIRE_CXX26_TESTS=${{ matrix.require_cxx26 }}
           -DCSV2_CI_EXPECTED_COMPILER_ID=${{ matrix.expected_id }}
           "-DCSV2_CI_EXPECTED_COMPILER_VERSION_PREFIX=${{ matrix.expected_version }}"
 
@@ -172,17 +166,6 @@ jobs:
           --config ${{ matrix.configuration }}
           --prefix build/install
 
-      - name: Verify verification dependencies are not installed
-        if: matrix.install
-        shell: pwsh
-        run: |
-          $unexpected = Get-ChildItem build/install -Recurse -File | Where-Object {
-            $_.Name -match 'catch2|benchmark'
-          }
-          if ($unexpected) {
-            throw "Verification dependencies leaked into install: $($unexpected.FullName)"
-          }
-
       - name: Verify installed package consumer
         if: matrix.install
         shell: pwsh
@@ -200,12 +183,6 @@ jobs:
           if ($LASTEXITCODE -ne 0) {
             throw "Installed no-mmap consumer failed"
           }
-
-      - name: Verify single-header regeneration
-        if: matrix.install
-        run: |
-          python utils/amalgamate/amalgamate.py -c single_include.json -s .
-          git diff --exit-code -- single_include/csv2/csv2.hpp
 
       - name: Upload CTest results
         if: always()

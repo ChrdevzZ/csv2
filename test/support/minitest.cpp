@@ -32,6 +32,15 @@ void record_failure(const char *expression, const char *file, int line) {
 }
 
 int run_registered_tests(const char *domain_filter) {
+  for (test_case *entry = registry_head(); entry != 0; entry = entry->next) {
+    for (test_case *other = entry->next; other != 0; other = other->next) {
+      if (std::strcmp(entry->id, other->id) == 0) {
+        std::cerr << "duplicate csv2 test case ID: " << entry->id << '\n';
+        return 2;
+      }
+    }
+  }
+
   int selected = 0;
   int failed_cases = 0;
   for (test_case *entry = registry_head(); entry != 0; entry = entry->next) {

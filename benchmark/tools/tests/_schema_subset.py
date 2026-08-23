@@ -67,6 +67,25 @@ def validate(instance: object, schema: dict[str, Any]) -> None:
     _validate(instance, schema, schema, "$")
 
 
+def _json_equal(left: object, right: object) -> bool:
+    if isinstance(left, bool) or isinstance(right, bool):
+        return isinstance(left, bool) and isinstance(right, bool) and left == right
+    if isinstance(left, (int, float)) and isinstance(right, (int, float)):
+        return left == right
+    if type(left) is not type(right):
+        return False
+    if isinstance(left, list):
+        return len(left) == len(right) and all(
+            _json_equal(left_item, right_item)
+            for left_item, right_item in zip(left, right)
+        )
+    if isinstance(left, dict):
+        return left.keys() == right.keys() and all(
+            _json_equal(left[key], right[key]) for key in left
+        )
+    return left == right
+
+
 def _validate(
     instance: object, schema: dict[str, Any], root: dict[str, Any], path: str
 ) -> None:
@@ -137,6 +156,13 @@ def _validate(
         minimum_items = schema.get("minItems")
         if minimum_items is not None and len(instance) < minimum_items:
             raise ValidationError(f"{path} has too few items")
+        maximum_items = schema.get("maxItems")
+        if maximum_items is not None and len(instance) > maximum_items:
+            raise ValidationError(f"{path} has too many items")
+        if schema.get("uniqueItems") is True:
+            for index, item in enumerate(instance):
+                if any(_json_equal(item, previous) for previous in instance[:index]):
+                    raise ValidationError(f"{path} contains duplicate items")
         if "items" in schema:
             for index, item in enumerate(instance):
                 _validate(item, schema["items"], root, f"{path}[{index}]")
@@ -153,3 +179,6 @@ def _validate(
         minimum = schema.get("minimum")
         if minimum is not None and instance < minimum:
             raise ValidationError(f"{path} is below its minimum")
+        exclusive_minimum = schema.get("exclusiveMinimum")
+        if exclusive_minimum is not None and instance <= exclusive_minimum:
+            raise ValidationError(f"{path} is not above its exclusive minimum")

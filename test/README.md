@@ -14,9 +14,8 @@ test/
 ├── runtime/     behavioral cases grouped into 13 stable domains
 ├── contracts/   compile-only header, feature, standard, and mmap contracts
 ├── platform/    isolated platform emulation and WinAPI injection checks
-├── fixtures/    byte-stable input data plus SHA-256 manifest
+├── fixtures/    byte-stable input data
 ├── fuzz/        Reader and Writer round-trip fuzz targets and seed corpora
-└── migration/   permanent legacy-doctest to stable-case audit map
 ```
 
 `test/support/include/csv2_test/test_support.hpp` is a compatibility umbrella.
@@ -28,7 +27,7 @@ propagate into `csv2::csv2`.
 
 ## Runtime domains and stable IDs
 
-The runtime manifest contains exactly these domains:
+The runtime suite is organized into these domains:
 
 | Domain | Contract |
 | --- | --- |
@@ -46,10 +45,9 @@ The runtime manifest contains exactly these domains:
 | `mio.mapping` | mapping errors, offsets, handles, and writable mappings |
 | `property.roundtrip` | deterministic Reader/Writer properties |
 
-Every test case has a globally stable ID such as
-`reader.scan.trailing-empty`. Configuration rejects missing, malformed,
-duplicate, mis-domain, or wrong-prefix stable IDs before targets are generated;
-dedicated negative configure contracts exercise each rejection path.
+Every test case has a stable ID such as `reader.scan.trailing-empty`. IDs are
+the runtime filtering and reporting interface; executable registration and
+execution, rather than source-text parsing, validate the cases.
 CTest executes one aggregated binary per
 `standard × header form × variant`, but registers a separate invocation for
 each domain:
@@ -110,14 +108,9 @@ ctest --test-dir build --output-on-failure
 
 Use `-DCSV2_VERIFICATION_PROFILE=full` for the complete local matrix. CMake and
 the compiler must advertise a standard before that standard is added.
-`CSV2_REQUIRE_MODERN_STANDARD_TESTS=ON` and
-`CSV2_REQUIRE_CXX26_TESTS=ON` turn missing CI capabilities into configuration
-errors; they do not add language support.
-
-Full/perf profiles require Python 3.10 for vendor tooling and legacy parity.
-Quick local configuration may continue without Python but names those skipped
-audits in a warning. Use `-DCSV2_REQUIRE_PYTHON_AUDITS=ON` for the complete
-quick gate; CI always does so.
+Python 3.10 runs the vendor-tool safety tests, benchmark checks, and performance
+pipeline. Quick C++ runtime and compile targets can still build without it;
+full/perf profiles and CI require it through `CSV2_REQUIRE_PYTHON_AUDITS`.
 
 Tests and fuzzers are independent:
 
@@ -138,28 +131,19 @@ cmake --build build-fuzz --target csv2_fuzz csv2_fuzz_writer
 2. Give each case a stable `<domain>.<behavior>` ID and the matching domain
    tag.
 3. If a new source or capability is needed, update the declaration in
-   `runtime/CMakeLists.txt`. The manifest rejects duplicate IDs, unknown
-   profiles/requirements, missing sources/fixtures, and an incomplete domain
-   set during configuration.
+   `runtime/CMakeLists.txt`. The manifest validates profiles and capability
+   requirements; the build validates source inputs.
 4. Add standard-specific compile contracts under `contracts/`, not to a
    runtime domain.
 5. Add a minimal regression fixture only when inline bytes would obscure the
-   test. Update `fixtures/SHA256SUMS` and preserve exact bytes.
-6. If the behavior came from the retired doctest suite, update
-   `migration/legacy_case_map.tsv`; its checker compares every old title with
-   the immutable `migration/legacy_doctest_inventory.json` from base commit
-   `635e59a`, then requires every mapped stable ID to exist exactly once where
-   required. Full-history checkouts also revalidate the pinned source blob;
-   shallow clones and source packages use the fixed inventory metadata and
-   digests.
-7. Run the focused domain for modular and single-header forms, then the quick
+   test, and preserve its exact bytes.
+6. Run the focused domain for modular and single-header forms, then the quick
    profile.
 
 ## Fixtures
 
-`fixtures/CMakeLists.txt` hashes every committed CSV and rejects missing,
-extra, or changed files. The files formerly under `test/inputs` retain their
-original Git blobs under `fixtures/upstream`. `.gitattributes` disables text
+The files formerly under `test/inputs` remain under `fixtures/upstream`.
+`.gitattributes` disables text
 conversion and whitespace normalization for CSV fixtures and fuzz seeds, so
 CRLF and quoted-LF inputs remain byte-for-byte stable.
 
@@ -201,7 +185,7 @@ small reproducer that is useful in both the stable suite and seed corpus.
 
 ## Verification dependencies
 
-Catch2 is an offline, per-file hash-checked test-only snapshot. Its targets are
+Catch2 is an offline test-only snapshot. Its targets are
 loaded with `EXCLUDE_FROM_ALL`, receive neither CSV2
 Werror/sanitizer/coverage flags nor install/export rules, and are absent when
 only C++11/no-exceptions tests or fuzzers are configured. The loader rejects

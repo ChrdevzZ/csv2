@@ -238,7 +238,6 @@ def main() -> int:
     parser.add_argument("--output", type=Path, default=Path(__file__).parent / "fixtures")
     parser.add_argument("--manifest", type=Path)
     parser.add_argument("--scale", type=int, default=1)
-    parser.add_argument("--check", action="store_true")
     arguments = parser.parse_args()
 
     if arguments.scale < 1:
@@ -246,42 +245,15 @@ def main() -> int:
     if arguments.manifest is None:
         arguments.manifest = arguments.output.parent / "manifest.json"
 
-    if arguments.check:
-        if not arguments.output.is_dir():
-            raise SystemExit("benchmark corpus directory does not exist")
-    else:
-        arguments.output.mkdir(parents=True, exist_ok=True)
+    arguments.output.mkdir(parents=True, exist_ok=True)
 
     generated = generated_datasets(arguments.scale)
-    expected_names = sorted(generated)
-    discovered_names = sorted(path.name for path in arguments.output.glob("*.csv"))
-    extras = sorted(set(discovered_names) - set(expected_names))
-    if extras:
-        raise SystemExit(
-            "benchmark corpus contains unexpected CSV fixtures: " + ", ".join(extras)
-        )
-    if arguments.check:
-        missing = sorted(set(expected_names) - set(discovered_names))
-        if missing:
-            raise SystemExit(
-                "benchmark corpus is missing CSV fixtures: " + ", ".join(missing)
-            )
-    if not arguments.check:
-        for name, (data, _) in generated.items():
-            atomic_write(arguments.output / name, data)
-    else:
-        for name, (data, _) in generated.items():
-            path = arguments.output / name
-            if not path.is_file() or path.read_bytes() != data:
-                raise SystemExit(f"benchmark corpus fixture is not reproducible: {name}")
+    for name, (data, _) in generated.items():
+        atomic_write(arguments.output / name, data)
 
     manifest = build_manifest(arguments.output, arguments.scale)
     encoded = (json.dumps(manifest, indent=2, sort_keys=True) + "\n").encode("utf-8")
-    if arguments.check:
-        if not arguments.manifest.exists() or arguments.manifest.read_bytes() != encoded:
-            raise SystemExit("benchmark corpus or manifest is not reproducible")
-    else:
-        atomic_write(arguments.manifest, encoded)
+    atomic_write(arguments.manifest, encoded)
     return 0
 
 

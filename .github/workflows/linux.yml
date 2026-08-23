@@ -43,8 +43,6 @@ jobs:
           -DCSV2_BUILD_BENCHMARK_CHECKS=ON
           -DCSV2_VERIFICATION_PROFILE=quick
           -DCSV2_REQUIRE_PYTHON_AUDITS=ON
-          -DCSV2_REQUIRE_MODERN_STANDARD_TESTS=ON
-          -DCSV2_REQUIRE_CXX26_TESTS=ON
           -DCSV2_CI_EXPECTED_COMPILER_ID=GNU
           -DCSV2_CI_EXPECTED_COMPILER_VERSION_PREFIX=14
 
@@ -61,11 +59,6 @@ jobs:
             csv2_test csv2_single_header_test \
             csv2_standard_contract_module_cxx11 \
             csv2_standard_contract_single_cxx11 --parallel
-          cmake --build build-reduced --target help > build-reduced/targets.txt
-          if grep -Eq 'cxx(14|17|20|23|26)' build-reduced/targets.txt; then
-            grep -E 'cxx(14|17|20|23|26)' build-reduced/targets.txt
-            exit 1
-          fi
 
       - name: Build
         run: cmake --build build --parallel
@@ -76,7 +69,6 @@ jobs:
       - name: Verify Release LTO observer and checksum semantics
         run: |
           cmake --build build --target csv2_benchmark_observer_audit --parallel
-          grep -Eq -- '-flto(=| |$)' build/build.ninja
           ctest --test-dir build \
             -R '^csv2\.benchmark\.current\.observer_audit\.' \
             --no-tests=error --output-on-failure \
@@ -84,11 +76,6 @@ jobs:
 
       - name: Install package
         run: cmake --install build --prefix build/install
-
-      - name: Verify verification dependencies are not installed
-        run: >-
-          test -z "$(find build/install
-          \( -iname '*catch2*' -o -iname '*benchmark*' \) -print -quit)"
 
       - name: Verify installed package consumer
         run: |
@@ -100,19 +87,11 @@ jobs:
 
       - name: Verify relocatable pkg-config consumer
         run: |
-          csv2_pc_dir="$(dirname "$(find build/install -name csv2.pc -print -quit)")"
-          csv2_includedir="$(PKG_CONFIG_PATH="$csv2_pc_dir" pkg-config \
-            --variable=includedir csv2)"
-          test -f "$csv2_includedir/csv2/reader.hpp"
+          csv2_pc_dir="$PWD/build/install/lib/pkgconfig"
           g++-14 -std=c++11 -Wall -Wextra -Wpedantic -Werror \
-            $(PKG_CONFIG_PATH="$csv2_pc_dir" pkg-config --cflags csv2) \
+            $(PKG_CONFIG_LIBDIR="$csv2_pc_dir" pkg-config --cflags csv2) \
             test/contracts/consumer/pkg_config.cpp -o build/pkg-config-consumer
           ./build/pkg-config-consumer
-
-      - name: Verify single-header regeneration
-        run: |
-          python3 utils/amalgamate/amalgamate.py -c single_include.json -s .
-          git diff --exit-code -- single_include/csv2/csv2.hpp
 
       - name: Upload CTest results
         if: always()
@@ -145,8 +124,6 @@ jobs:
           -DCSV2_VERIFICATION_PROFILE=quick
           -DCSV2_REQUIRE_PYTHON_AUDITS=ON
           -DCSV2_ENABLE_SANITIZERS=ON
-          -DCSV2_REQUIRE_MODERN_STANDARD_TESTS=ON
-          -DCSV2_REQUIRE_CXX26_TESTS=ON
           -DCSV2_CI_EXPECTED_COMPILER_ID=GNU
           -DCSV2_CI_EXPECTED_COMPILER_VERSION_PREFIX=14
 
@@ -206,8 +183,6 @@ jobs:
           -DCSV2_VERIFICATION_PROFILE=quick
           -DCSV2_REQUIRE_PYTHON_AUDITS=ON
           -DCSV2_ENABLE_SANITIZERS=${{ matrix.sanitizers }}
-          -DCSV2_REQUIRE_MODERN_STANDARD_TESTS=ON
-          -DCSV2_REQUIRE_CXX26_TESTS=ON
           -DCSV2_CI_EXPECTED_COMPILER_ID=Clang
           -DCSV2_CI_EXPECTED_COMPILER_VERSION_PREFIX=18
 

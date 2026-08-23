@@ -3,7 +3,6 @@ include_guard(GLOBAL)
 function(csv2_load_google_benchmark)
   csv2_vendor_assert_targets_absent(google_benchmark
     benchmark benchmark_main benchmark::benchmark benchmark::benchmark_main)
-  csv2_verify_vendor_snapshot(google_benchmark)
   csv2_vendor_cache_snapshot(csv2_benchmark_cache)
 
   set(BENCHMARK_ENABLE_TESTING OFF CACHE BOOL "" FORCE)

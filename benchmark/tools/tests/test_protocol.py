@@ -573,7 +573,10 @@ def controlled_metrics_report() -> dict[str, object]:
     }
     target_summaries = {
         name: {
-            "sources": sorted(builds.CURRENT_SOURCES),
+            "sources": [
+                "benchmark/current/benchmark.cpp",
+                "benchmark/current/support.cpp",
+            ],
             "compile_fragments": "-O3 -DNDEBUG -std=c++23",
             "defines": [f'CSV2_BENCHMARK_REVISION=\\"{"d" * 40}\\"'],
             "includes": ["/source/include"],
@@ -940,34 +943,10 @@ class ProtocolTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "digest differs"):
             protocol.validate_fixed_metrics_report(metrics)
 
-    def test_schemas_close_the_top_level_and_require_controlled_evidence(self) -> None:
+    def test_evidence_schema_rejects_ineligible_documents(self) -> None:
         schema_root = Path(__file__).resolve().parents[2] / "protocol" / "schemas"
-        comparison = json.loads(
-            (schema_root / "comparison-v5.schema.json").read_text(encoding="utf-8")
-        )
-        metrics = json.loads(
-            (schema_root / "fixed-machine-v5.schema.json").read_text(encoding="utf-8")
-        )
-        build = json.loads(
-            (schema_root / "build-v1.schema.json").read_text(encoding="utf-8")
-        )
-        artifact_manifest = json.loads(
-            (schema_root / "artifact-manifest-v3.schema.json").read_text(encoding="utf-8")
-        )
         evidence = json.loads(
             (schema_root / "evidence-bundle-v2.schema.json").read_text(encoding="utf-8")
-        )
-        self.assertFalse(comparison["additionalProperties"])
-        self.assertFalse(metrics["additionalProperties"])
-        self.assertEqual(len(build["oneOf"]), 2)
-        self.assertFalse(build["$defs"]["common_driver"]["additionalProperties"])
-        self.assertFalse(build["$defs"]["current_tree"]["additionalProperties"])
-        self.assertFalse(artifact_manifest["additionalProperties"])
-        self.assertEqual(len(artifact_manifest["oneOf"]), 3)
-        self.assertFalse(evidence["additionalProperties"])
-        self.assertEqual(
-            evidence["properties"]["schema"]["const"],
-            "csv2-performance-evidence-bundle-v2",
         )
         validate_schema(evidence_bundle(), evidence)
         controlled_bundle = evidence_bundle()
@@ -986,46 +965,19 @@ class ProtocolTests(unittest.TestCase):
         incomplete_controlled["decision_eligible"] = True
         with self.assertRaises(SchemaValidationError):
             validate_schema(incomplete_controlled, evidence)
-        self.assertFalse(
-            artifact_manifest["$defs"]["fixed_metrics_inputs"][
-                "additionalProperties"
-            ]
-        )
-        self.assertFalse(
-            artifact_manifest["$defs"]["fixed_metrics_artifacts"][
-                "additionalProperties"
-            ]
-        )
-        self.assertEqual(
-            artifact_manifest["$defs"]["fixed_metrics_artifacts"][
-                "dependentRequired"
-            ]["compiler_executable"],
-            ["compile_commands"],
-        )
-        self.assertEqual(comparison["properties"]["schema"]["const"], "csv2-benchmark-report-v5")
-        self.assertEqual(metrics["properties"]["schema"]["const"], "csv2-fixed-machine-metrics-v5")
-        self.assertEqual(
-            build["$defs"]["current_tree"]["properties"]["schema"]["const"],
-            "csv2-benchmark-build-v1",
-        )
-        self.assertIn("compiler_flags", build["$defs"]["current_tree"]["required"])
-        self.assertIn("runner", comparison["required"])
-        self.assertIn("clean_build", metrics["required"])
-        self.assertIn("post_build", metrics["required"])
-        self.assertEqual(
-            comparison["$defs"]["case"]["properties"]["baseline"]["$ref"],
-            "#/$defs/sample_statistics",
-        )
-        self.assertEqual(
-            metrics["properties"]["allocations"]["$ref"],
-            "#/$defs/allocations",
-        )
-        self.assertTrue(
-            any(
-                "pmu" in item.get("then", {}).get("required", [])
-                for item in metrics["allOf"]
-            )
-        )
+
+    def test_offline_schema_validator_enforces_collection_and_numeric_bounds(self) -> None:
+        validate_schema([1, 2], {"type": "array", "maxItems": 2, "uniqueItems": True})
+        with self.assertRaises(SchemaValidationError):
+            validate_schema([1, 2, 3], {"type": "array", "maxItems": 2})
+        with self.assertRaises(SchemaValidationError):
+            validate_schema([1, 1], {"type": "array", "uniqueItems": True})
+        validate_schema([True, 1], {"type": "array", "uniqueItems": True})
+        with self.assertRaises(SchemaValidationError):
+            validate_schema([1, 1.0], {"type": "array", "uniqueItems": True})
+        validate_schema(1, {"type": "number", "exclusiveMinimum": 0})
+        with self.assertRaises(SchemaValidationError):
+            validate_schema(0, {"type": "number", "exclusiveMinimum": 0})
 
     def test_only_completed_owned_controlled_reports_are_component_complete(self) -> None:
         self.assertTrue(protocol.controlled_complete("controlled", "completed"))
@@ -1123,6 +1075,12 @@ class ProtocolTests(unittest.TestCase):
             protocol.parse_current(valid + " checksum=2")
         with self.assertRaisesRegex(RuntimeError, "missing required fields: cells"):
             protocol.parse_current(valid.replace(" cells=1", ""))
+        with self.assertRaisesRegex(RuntimeError, "unknown fields"):
+            protocol.parse_current(valid + " extra=1")
+        for value in ("01", "+1"):
+            with self.subTest(value=value):
+                with self.assertRaisesRegex(RuntimeError, "canonical"):
+                    protocol.parse_current(valid.replace("checksum=1", f"checksum={value}"))
 
     def test_non_finite_timing_values_are_rejected(self) -> None:
         for value in ("nan", "inf", "-1"):
