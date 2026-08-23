@@ -59,6 +59,17 @@ def metadata(path: Path, revision: str | None = None) -> dict[str, object]:
     return result
 
 
+def python_source_paths(entry_point: Path, package_root: Path) -> list[Path]:
+    """Return the entry point and every Python module in its tooling package."""
+    entry = canonical_existing(entry_point, "Python entry point")
+    package = canonical_existing(package_root, "Python package root")
+    if not entry.is_file() or not package.is_dir():
+        raise RuntimeError("Python tooling sources are not regular files")
+    members = {entry}
+    members.update(path.resolve(strict=True) for path in package.rglob("*.py"))
+    return sorted(members)
+
+
 def bundle_metadata(
     root: Path, paths: Sequence[Path], revision: str
 ) -> dict[str, object]:

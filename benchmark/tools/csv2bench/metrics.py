@@ -28,18 +28,9 @@ PMU_COUNTERS = ("cycles", "instructions", "branch-misses")
 def collector_source_paths() -> list[Path]:
     benchmark_root = Path(__file__).resolve().parents[2]
     package_root = Path(__file__).resolve().parent
-    return [
-        benchmark_root / "collect_metrics.py",
-        package_root / "__init__.py",
-        package_root / "artifacts.py",
-        package_root / "atomic.py",
-        package_root / "builds.py",
-        package_root / "derivation.py",
-        package_root / "metrics.py",
-        package_root / "machine.py",
-        package_root / "protocol.py",
-        package_root / "statistics.py",
-    ]
+    return artifacts.python_source_paths(
+        benchmark_root / "collect_metrics.py", package_root
+    )
 
 
 def cpu_identity() -> tuple[str, str]:

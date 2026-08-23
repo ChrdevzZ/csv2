@@ -47,17 +47,9 @@ def load_document(path: Path, label: str) -> tuple[Document, Path, Document]:
 def finalizer_source_paths() -> list[Path]:
     benchmark_root = Path(__file__).resolve().parents[2]
     package_root = Path(__file__).resolve().parent
-    return [
-        benchmark_root / "finalize_evidence.py",
-        package_root / "__init__.py",
-        package_root / "artifacts.py",
-        package_root / "atomic.py",
-        package_root / "builds.py",
-        package_root / "derivation.py",
-        package_root / "evidence.py",
-        package_root / "machine.py",
-        package_root / "protocol.py",
-    ]
+    return artifacts.python_source_paths(
+        benchmark_root / "finalize_evidence.py", package_root
+    )
 
 
 def _verify_artifact(record: Document, label: str) -> None:

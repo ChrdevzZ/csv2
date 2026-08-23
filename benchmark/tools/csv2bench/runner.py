@@ -230,18 +230,9 @@ def verify_artifact_unchanged(metadata: dict[str, object], label: str) -> None:
 def runner_source_paths() -> list[Path]:
     benchmark_root = Path(__file__).resolve().parents[2]
     package_root = Path(__file__).resolve().parent
-    return [
-        benchmark_root / "run_suite.py",
-        package_root / "__init__.py",
-        package_root / "artifacts.py",
-        package_root / "atomic.py",
-        package_root / "builds.py",
-        package_root / "derivation.py",
-        package_root / "machine.py",
-        package_root / "protocol.py",
-        package_root / "runner.py",
-        package_root / "statistics.py",
-    ]
+    return artifacts.python_source_paths(
+        benchmark_root / "run_suite.py", package_root
+    )
 
 
 def dataset_metadata(path: Path, logical_name: str | None = None) -> dict[str, object]:

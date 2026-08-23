@@ -11,6 +11,7 @@ if(CSV2_BENCHMARK_KIND STREQUAL "current-legacy-option")
       --operation rows_cells
     RESULT_VARIABLE csv2_result
     TIMEOUT 5)
+  set(csv2_expected_result 2)
 elseif(CSV2_BENCHMARK_KIND STREQUAL "common-zero-iterations")
   execute_process(
     COMMAND "${CSV2_BENCHMARK_EXECUTABLE}"
@@ -18,6 +19,7 @@ elseif(CSV2_BENCHMARK_KIND STREQUAL "common-zero-iterations")
       --source buffer --iterations 0
     RESULT_VARIABLE csv2_result
     TIMEOUT 5)
+  set(csv2_expected_result 1)
 elseif(CSV2_BENCHMARK_KIND STREQUAL "current-timing-no-operation")
   execute_process(
     COMMAND "${CSV2_BENCHMARK_EXECUTABLE}"
@@ -26,6 +28,7 @@ elseif(CSV2_BENCHMARK_KIND STREQUAL "current-timing-no-operation")
       --benchmark_min_time=0.001s
     RESULT_VARIABLE csv2_result
     TIMEOUT 5)
+  set(csv2_expected_result 2)
 elseif(CSV2_BENCHMARK_KIND STREQUAL "current-timing-all-sources")
   execute_process(
     COMMAND "${CSV2_BENCHMARK_EXECUTABLE}"
@@ -35,10 +38,48 @@ elseif(CSV2_BENCHMARK_KIND STREQUAL "current-timing-all-sources")
       --benchmark_min_time=0.001s
     RESULT_VARIABLE csv2_result
     TIMEOUT 5)
+  set(csv2_expected_result 2)
+elseif(CSV2_BENCHMARK_KIND STREQUAL "current-unsupported-list")
+  execute_process(
+    COMMAND "${CSV2_BENCHMARK_EXECUTABLE}"
+      --csv2-list --csv2-source file
+      --csv2-operation writer/raw-direct
+    RESULT_VARIABLE csv2_result
+    TIMEOUT 5)
+  set(csv2_expected_result 2)
+elseif(CSV2_BENCHMARK_KIND STREQUAL "current-unsupported-timing")
+  execute_process(
+    COMMAND "${CSV2_BENCHMARK_EXECUTABLE}"
+      --csv2-input "${CSV2_BENCHMARK_INPUT}"
+      --csv2-source file --csv2-operation writer/raw-direct
+      --benchmark_min_time=0.001s --benchmark_repetitions=1
+    RESULT_VARIABLE csv2_result
+    TIMEOUT 5)
+  set(csv2_expected_result 2)
+elseif(CSV2_BENCHMARK_KIND STREQUAL "current-validation-valid_as_invalid")
+  execute_process(
+    COMMAND "${CSV2_BENCHMARK_EXECUTABLE}"
+      --csv2-input "${CSV2_BENCHMARK_INPUT}"
+      --csv2-source buffer --csv2-operation validation/invalid-early
+      --csv2-verify
+    RESULT_VARIABLE csv2_result
+    TIMEOUT 5)
+  set(csv2_expected_result 2)
+elseif(CSV2_BENCHMARK_KIND STREQUAL "current-validation-invalid_as_valid")
+  execute_process(
+    COMMAND "${CSV2_BENCHMARK_EXECUTABLE}"
+      --csv2-input "${CSV2_BENCHMARK_INPUT}"
+      --csv2-source buffer --csv2-operation validation/valid
+      --csv2-verify
+    RESULT_VARIABLE csv2_result
+    TIMEOUT 5)
+  set(csv2_expected_result 2)
 else()
   message(FATAL_ERROR "unknown rejection contract: ${CSV2_BENCHMARK_KIND}")
 endif()
 
-if(csv2_result EQUAL 0)
-  message(FATAL_ERROR "benchmark unexpectedly accepted invalid arguments")
+if(NOT csv2_result MATCHES "^[0-9]+$" OR
+   NOT csv2_result EQUAL csv2_expected_result)
+  message(FATAL_ERROR
+    "benchmark rejection returned ${csv2_result}; expected ${csv2_expected_result}")
 endif()

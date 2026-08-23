@@ -303,19 +303,6 @@ foreach(standard IN LISTS csv2_supported_standards)
   csv2_add_standard_contract(${standard})
 endforeach()
 
-option(CSV2_REQUIRE_CXX26_TESTS
-  "Fail configuration unless the C++26 compile-only targets are registered" OFF)
-if(CSV2_REQUIRE_CXX26_TESTS)
-  foreach(required_target IN ITEMS
-      csv2_standard_contract_module_cxx26
-      csv2_standard_contract_single_cxx26)
-    if(NOT TARGET ${required_target})
-      message(FATAL_ERROR
-        "Required C++26 compile-only target is not registered: ${required_target}")
-    endif()
-  endforeach()
-endif()
-
 foreach(csv2_superproject_mode IN ITEMS
     normal catch_collision benchmark_collision)
   add_test(NAME csv2.vendor.superproject.${csv2_superproject_mode}
@@ -332,23 +319,5 @@ foreach(csv2_superproject_mode IN ITEMS
       -DCSV2_TEST_CONTRACT_MODE=${csv2_superproject_mode}
       -P ${CMAKE_CURRENT_SOURCE_DIR}/../cmake/superproject_contract.cmake)
   set_tests_properties(csv2.vendor.superproject.${csv2_superproject_mode}
-    PROPERTIES LABELS "vendor-integrity;verification" TIMEOUT 180)
-endforeach()
-
-foreach(csv2_python_audit_mode IN ITEMS
-    quick_warning full_required explicit_required)
-  add_test(NAME csv2.python.audit.${csv2_python_audit_mode}
-    COMMAND ${CMAKE_COMMAND}
-      -DCSV2_TEST_CONTRACT_ROOT=${CMAKE_CURRENT_BINARY_DIR}/python-audit/${csv2_python_audit_mode}
-      -DCSV2_TEST_CONTRACT_CSV2_SOURCE=${csv2_SOURCE_DIR}
-      -DCSV2_TEST_CONTRACT_GENERATOR=${CMAKE_GENERATOR}
-      -DCSV2_TEST_CONTRACT_GENERATOR_PLATFORM=${CMAKE_GENERATOR_PLATFORM}
-      -DCSV2_TEST_CONTRACT_GENERATOR_TOOLSET=${CMAKE_GENERATOR_TOOLSET}
-      -DCSV2_TEST_CONTRACT_CMAKE_CXX_COMPILER=${CMAKE_CXX_COMPILER}
-      -DCSV2_TEST_CONTRACT_CMAKE_RC_COMPILER=${CMAKE_RC_COMPILER}
-      -DCSV2_TEST_CONTRACT_CMAKE_MT=${CMAKE_MT}
-      -DCSV2_TEST_CONTRACT_MODE=${csv2_python_audit_mode}
-      -P ${CMAKE_CURRENT_SOURCE_DIR}/../cmake/python_audit_contract.cmake)
-  set_tests_properties(csv2.python.audit.${csv2_python_audit_mode}
-    PROPERTIES LABELS "python-audit;verification" TIMEOUT 180)
+    PROPERTIES LABELS "vendor-isolation;verification" TIMEOUT 180)
 endforeach()

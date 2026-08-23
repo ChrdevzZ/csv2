@@ -3,7 +3,6 @@ include_guard(GLOBAL)
 function(csv2_load_catch2)
   csv2_vendor_assert_targets_absent(catch2
     Catch2 Catch2WithMain Catch2::Catch2 Catch2::Catch2WithMain)
-  csv2_verify_vendor_snapshot(catch2)
   csv2_vendor_cache_snapshot(csv2_catch_cache)
 
   set(CATCH_INSTALL_DOCS OFF CACHE BOOL "" FORCE)

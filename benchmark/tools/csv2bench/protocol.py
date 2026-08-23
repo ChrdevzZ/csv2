@@ -96,6 +96,11 @@ def parse_current(output: str) -> dict[str, str]:
         "allocated_bytes",
     }
     result = parse_key_value_line(output, required)
+    unexpected = sorted(result.keys() - required)
+    if unexpected:
+        raise RuntimeError(
+            "benchmark output has unknown fields: " + ", ".join(unexpected)
+        )
     require_protocol(result, CURRENT_PROTOCOL)
     if not result["semantic_case_id"].startswith("csv2."):
         raise RuntimeError("benchmark semantic case ID is invalid")
@@ -104,12 +109,17 @@ def parse_current(output: str) -> dict[str, str]:
     if result["byte_basis"] != "input_corpus":
         raise RuntimeError("benchmark byte basis is invalid")
     for field in ("checksum", "bytes", "rows", "cells", "allocations", "allocated_bytes"):
+        encoded = result[field]
+        if not encoded.isascii() or not encoded.isdecimal():
+            raise RuntimeError(f"benchmark field must be canonical unsigned decimal: {field}")
         try:
-            value = int(result[field])
+            value = int(encoded)
         except ValueError as error:
             raise RuntimeError(f"benchmark field must be an integer: {field}") from error
-        if value < 0 or value > UINT64_MAX:
-            raise RuntimeError(f"benchmark field is outside uint64 range: {field}")
+        if value > UINT64_MAX or str(value) != encoded:
+            raise RuntimeError(
+                f"benchmark field is outside uint64 or is not canonical: {field}"
+            )
     return result
 
 
@@ -658,11 +668,18 @@ def _current_build(value: object, label: str) -> dict[str, object]:
     _required(api, {"compiler", "targets", "link_commands"}, f"{label}.file_api")
     api_targets = _object(api["targets"], f"{label}.file_api.targets")
     links = _object(api["link_commands"], f"{label}.file_api.link_commands")
+    reference_sources: set[str] | None = None
     for name in expected_targets:
         target = _object(api_targets.get(name), f"{label}.file_api.targets.{name}")
         sources = set(_array(target.get("sources"), f"{label}.file_api.targets.{name}.sources"))
-        if sources != audited_builds.CURRENT_SOURCES:
-            raise RuntimeError(f"{label}.file_api.targets.{name} source set is incomplete")
+        if not sources or not all(isinstance(source, str) and source for source in sources):
+            raise RuntimeError(f"{label}.file_api.targets.{name} source set is empty")
+        for source in sources:
+            audited_builds.safe_git_path(source)
+        if reference_sources is None:
+            reference_sources = sources
+        elif sources != reference_sources:
+            raise RuntimeError(f"{label}.file_api target source sets differ")
         commands = _array(links.get(name), f"{label}.file_api.link_commands.{name}")
         if not commands or not all(isinstance(command, str) and command for command in commands):
             raise RuntimeError(f"{label}.file_api lacks a link command for {name}")

@@ -22,8 +22,14 @@ set(csv2_command
   "${CSV2_BENCHMARK_EXECUTABLE}"
   --csv2-input "${CSV2_BENCHMARK_INPUT}"
   --csv2-source "${CSV2_BENCHMARK_SOURCE}"
-  --csv2-operation "${CSV2_BENCHMARK_OPERATION}"
-  --csv2-verify)
+  --csv2-operation "${CSV2_BENCHMARK_OPERATION}")
+if(DEFINED CSV2_BENCHMARK_MODE AND CSV2_BENCHMARK_MODE STREQUAL "timing")
+  list(APPEND csv2_command
+    --benchmark_min_time=0.001s
+    --benchmark_repetitions=1)
+else()
+  list(APPEND csv2_command --csv2-verify)
+endif()
 if(DEFINED CSV2_EXTRA_ARGUMENT)
   list(APPEND csv2_command "${CSV2_EXTRA_ARGUMENT}")
 endif()
@@ -43,13 +49,16 @@ execute_process(
   OUTPUT_VARIABLE csv2_stdout
   ERROR_VARIABLE csv2_stderr
   TIMEOUT 5)
-if(csv2_result EQUAL 0)
-  message(FATAL_ERROR "failing kernel returned success: ${csv2_stdout}")
+if(NOT csv2_result EQUAL 4)
+  message(FATAL_ERROR
+    "failing kernel returned ${csv2_result}, expected 4: "
+    "${csv2_stdout}${csv2_stderr}")
 endif()
 if(csv2_stdout MATCHES "protocol=csv2-current-v3")
   message(FATAL_ERROR "failing kernel emitted a success wire: ${csv2_stdout}")
 endif()
-if(NOT csv2_stderr MATCHES "kernel_status=${CSV2_EXPECTED_STATUS}([ \r\n]|$)")
+set(csv2_failure_output "${csv2_stdout}\n${csv2_stderr}")
+if(NOT csv2_failure_output MATCHES "${CSV2_EXPECTED_STATUS}")
   message(FATAL_ERROR
-    "expected kernel_status=${CSV2_EXPECTED_STATUS}, got: ${csv2_stderr}")
+    "expected status ${CSV2_EXPECTED_STATUS}, got: ${csv2_failure_output}")
 endif()

@@ -13,6 +13,29 @@ from csv2bench import artifacts, atomic
 
 
 class ArtifactTests(unittest.TestCase):
+    def test_python_source_discovery_tracks_package_changes(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            package = root / "package"
+            nested = package / "nested"
+            nested.mkdir(parents=True)
+            entry = root / "entry.py"
+            entry.write_text("from package.nested import helper\n", encoding="utf-8")
+            helper = nested / "helper.py"
+            helper.write_text("VALUE = 1\n", encoding="utf-8")
+            first = artifacts.bundle_metadata(
+                root,
+                artifacts.python_source_paths(entry, package),
+                "test",
+            )
+            helper.write_text("VALUE = 2\n", encoding="utf-8")
+            second = artifacts.bundle_metadata(
+                root,
+                artifacts.python_source_paths(entry, package),
+                "test",
+            )
+            self.assertNotEqual(first["sha256"], second["sha256"])
+
     def test_metadata_is_canonical_and_detects_drift(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "input.csv"

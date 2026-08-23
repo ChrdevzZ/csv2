@@ -169,12 +169,6 @@ strict-valid status. Committed fixtures are deliberately small and cover:
 - UTF-8 byte payloads and 15/16, 31/32, 63/64, 255/256, 4095/4096 boundaries;
 - strict-invalid input at early, middle, and late positions.
 
-Reproduce the committed corpus without writing it:
-
-```bash
-python3 benchmark/generate_datasets.py --check
-```
-
 Generate a larger corpus only under an ignored build tree:
 
 ```bash
@@ -182,10 +176,6 @@ python3 benchmark/generate_datasets.py \
   --output build-benchmark/corpus/fixtures \
   --manifest build-benchmark/corpus/manifest.json \
   --scale 100
-python3 benchmark/generate_datasets.py \
-  --output build-benchmark/corpus/fixtures \
-  --manifest build-benchmark/corpus/manifest.json \
-  --scale 100 --check
 ```
 
 With `CSV2_VERIFICATION_PROFILE=perf`, CMake exposes the equivalent explicit

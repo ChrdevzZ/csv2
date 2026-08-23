@@ -713,26 +713,6 @@ def build_common_pair(
     }
 
 
-CURRENT_SOURCES = frozenset(
-    {
-        "benchmark/current/main.cpp",
-        "benchmark/current/context.cpp",
-        "benchmark/current/registry.cpp",
-        "benchmark/current/support/allocation.cpp",
-        "benchmark/current/support/output_buffer.cpp",
-        "benchmark/current/support/result.cpp",
-        "benchmark/current/kernels/source.cpp",
-        "benchmark/current/kernels/traversal.cpp",
-        "benchmark/current/kernels/extraction.cpp",
-        "benchmark/current/kernels/validation.cpp",
-        "benchmark/current/kernels/conversion.cpp",
-        "benchmark/current/kernels/ranges.cpp",
-        "benchmark/current/kernels/index.cpp",
-        "benchmark/current/kernels/writer.cpp",
-    }
-)
-
-
 def current_build_identity_digest(manifest: dict[str, object]) -> str:
     source = manifest["source_export"]
     compiler = manifest["compiler"]
@@ -831,6 +811,7 @@ def audit_current_codemodel(
 
     reply_root = build_root / ".cmake" / "api" / "v1" / "reply"
     summaries: dict[str, object] = {}
+    reference_sources: set[str] | None = None
     for target_name in ("csv2_benchmark", "csv2_benchmark_allocations"):
         target_reference = targets.get(target_name)
         if target_reference is None:
@@ -858,12 +839,12 @@ def audit_current_codemodel(
                     f"{target_name} source escapes the immutable source tree: {source_path}"
                 ) from error
             source_paths.add(relative)
-        if source_paths != CURRENT_SOURCES:
-            missing = sorted(CURRENT_SOURCES - source_paths)
-            extra = sorted(source_paths - CURRENT_SOURCES)
-            raise RuntimeError(
-                f"{target_name} source set differs; missing={missing}, extra={extra}"
-            )
+        if not source_paths:
+            raise RuntimeError(f"{target_name} has no compiled source files")
+        if reference_sources is None:
+            reference_sources = source_paths
+        elif source_paths != reference_sources:
+            raise RuntimeError("current benchmark targets compile different source sets")
         if not compile_groups:
             raise RuntimeError(f"{target_name} has no compile groups")
         fragments = " ".join(

@@ -6,25 +6,13 @@ from __future__ import annotations
 import argparse
 import json
 import subprocess
+import sys
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tools"))
+from csv2bench import protocol as wire_protocol  # noqa: E402
 
 UINT64_MAX = (1 << 64) - 1
-
-
-def parse_wire(output: str) -> dict[str, str]:
-    lines = [line for line in output.splitlines() if line.strip()]
-    if len(lines) != 1:
-        raise RuntimeError("benchmark must print exactly one non-empty result line")
-    fields: dict[str, str] = {}
-    for token in lines[0].split():
-        if token.count("=") != 1:
-            raise RuntimeError(f"malformed benchmark field: {token!r}")
-        key, value = token.split("=", 1)
-        if not key or not value or key in fields:
-            raise RuntimeError(f"malformed or duplicate benchmark field: {token!r}")
-        fields[key] = value
-    return fields
 
 
 def load_manifest(path: Path) -> dict[str, object]:
@@ -63,7 +51,7 @@ def resolve_dataset(source_root: Path, value: object) -> Path:
     return dataset
 
 
-def verify(executable: Path, source_root: Path, manifest: Path) -> None:
+def verify(executable: Path, source_root: Path, manifest: Path, revision: str) -> None:
     executable = executable.resolve(strict=True)
     document = load_manifest(manifest.resolve(strict=True))
     protocol = str(document["protocol"])
@@ -78,7 +66,44 @@ def verify(executable: Path, source_root: Path, manifest: Path) -> None:
         if source not in {"buffer", "mmap", "file"}:
             raise RuntimeError("checksum check has an invalid source")
         dataset = resolve_dataset(source_root, raw_check.get("dataset"))
-        checksum = validate_checksum(raw_check.get("checksum"))
+        expected_fields = {
+            "protocol": protocol,
+            "revision": revision,
+            "operation": operation,
+            "source": str(source),
+            "dataset": dataset.name,
+        }
+        for field in (
+            "semantic_case_id",
+            "scope",
+            "byte_basis",
+            "checksum",
+            "bytes",
+            "rows",
+            "cells",
+            "allocations",
+            "allocated_bytes",
+        ):
+            value = raw_check.get(field)
+            if not isinstance(value, str) or not value:
+                raise RuntimeError(f"checksum check has no {field}")
+            expected_fields[field] = value
+        for field in (
+            "checksum",
+            "bytes",
+            "rows",
+            "cells",
+            "allocations",
+            "allocated_bytes",
+        ):
+            expected_fields[field] = validate_checksum(expected_fields[field])
+        allowed_manifest_fields = {
+            "operation", "source", "dataset",
+            "semantic_case_id", "scope", "byte_basis", "checksum",
+            "bytes", "rows", "cells", "allocations", "allocated_bytes",
+        }
+        if set(raw_check) != allowed_manifest_fields:
+            raise RuntimeError("checksum check has unknown or missing fields")
         key = (operation, str(source), str(dataset))
         if key in seen:
             raise RuntimeError("checksum manifest contains a duplicate check")
@@ -99,15 +124,8 @@ def verify(executable: Path, source_root: Path, manifest: Path) -> None:
             raise RuntimeError(
                 f"benchmark check failed for {operation}: {completed.stderr.strip()}"
             )
-        fields = parse_wire(completed.stdout)
-        expected = {
-            "protocol": protocol,
-            "operation": operation,
-            "source": str(source),
-            "dataset": dataset.name,
-            "checksum": checksum,
-        }
-        for field, value in expected.items():
+        fields = wire_protocol.parse_current(completed.stdout)
+        for field, value in expected_fields.items():
             if fields.get(field) != value:
                 raise RuntimeError(
                     f"benchmark {field} mismatch for {operation}: "
@@ -120,9 +138,15 @@ def main() -> int:
     parser.add_argument("--executable", type=Path, required=True)
     parser.add_argument("--source-root", type=Path, required=True)
     parser.add_argument("--manifest", type=Path, required=True)
+    parser.add_argument("--revision", required=True)
     arguments = parser.parse_args()
     try:
-        verify(arguments.executable, arguments.source_root, arguments.manifest)
+        verify(
+            arguments.executable,
+            arguments.source_root,
+            arguments.manifest,
+            arguments.revision,
+        )
     except (OSError, RuntimeError, subprocess.TimeoutExpired) as error:
         parser.error(str(error))
     return 0

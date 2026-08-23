@@ -5,25 +5,57 @@
       "dataset": "test/fixtures/upstream/test_01.csv",
       "operation": "traversal/rows-cells",
       "source": "buffer",
-      "checksum": "638386005512892526"
+      "semantic_case_id": "csv2.traversal.rows-cells.v1",
+      "scope": "traversal_only",
+      "byte_basis": "input_corpus",
+      "checksum": "638386005512892526",
+      "bytes": "9",
+      "rows": "3",
+      "cells": "9",
+      "allocations": "0",
+      "allocated_bytes": "0"
     },
     {
       "dataset": "benchmark/datasets/fixtures/quote_heavy.csv",
       "operation": "writer/raw-direct",
       "source": "buffer",
-      "checksum": "12859166230996484343"
+      "semantic_case_id": "csv2.writer.raw-direct.v1",
+      "scope": "writer_only",
+      "byte_basis": "input_corpus",
+      "checksum": "12859166230996484343",
+      "bytes": "13",
+      "rows": "1",
+      "cells": "3",
+      "allocations": "0",
+      "allocated_bytes": "0"
     },
     {
       "dataset": "benchmark/datasets/fixtures/quote_heavy.csv",
       "operation": "writer/escaped-direct",
       "source": "buffer",
-      "checksum": "3103906658680031245"
+      "semantic_case_id": "csv2.writer.escaped-direct.v1",
+      "scope": "writer_only",
+      "byte_basis": "input_corpus",
+      "checksum": "3103906658680031245",
+      "bytes": "19",
+      "rows": "1",
+      "cells": "3",
+      "allocations": "0",
+      "allocated_bytes": "0"
     },
     {
       "dataset": "benchmark/datasets/fixtures/numeric.csv",
       "operation": "conversion/integer-bool-error",
       "source": "buffer",
-      "checksum": "8166090483508935075"
+      "semantic_case_id": "csv2.conversion.integer-bool-error.v1",
+      "scope": "conversion_only",
+      "byte_basis": "input_corpus",
+      "checksum": "8166090483508935075",
+      "bytes": "2529",
+      "rows": "256",
+      "cells": "768",
+      "allocations": "0",
+      "allocated_bytes": "0"
     }
   ]
 }

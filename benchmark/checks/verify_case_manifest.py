@@ -9,15 +9,6 @@ import subprocess
 from pathlib import Path
 
 
-CONDITIONAL_OPERATIONS = {
-    "source/mmap-open",
-    "source/mmap-touch-resident",
-    "source/parse-span",
-    "conversion/integer-expected",
-    "ranges/to-container",
-}
-
-
 def run(command: list[str]) -> subprocess.CompletedProcess[str]:
     completed = subprocess.run(command, capture_output=True, text=True)
     if completed.returncode != 0:
@@ -28,27 +19,33 @@ def run(command: list[str]) -> subprocess.CompletedProcess[str]:
     return completed
 
 
-def load_manifest(path: Path, source_root: Path) -> dict[str, tuple[str, Path]]:
+def load_manifest(
+    path: Path, source_root: Path
+) -> tuple[dict[str, tuple[str, Path]], set[str]]:
     document = json.loads(path.read_text(encoding="utf-8"))
     if (
         not isinstance(document, dict)
         or set(document) != {"schema", "cases"}
-        or document["schema"] != "csv2-benchmark-case-manifest-v1"
+        or document["schema"] != "csv2-benchmark-case-manifest-v2"
         or not isinstance(document["cases"], list)
         or not document["cases"]
     ):
         raise RuntimeError("benchmark case manifest is malformed")
     result: dict[str, tuple[str, Path]] = {}
+    conditional: set[str] = set()
     for index, value in enumerate(document["cases"]):
-        if not isinstance(value, dict) or set(value) != {
-            "operation",
-            "source",
-            "dataset",
-        }:
+        required_fields = {"operation", "source", "dataset"}
+        allowed_fields = required_fields | {"conditional"}
+        if (
+            not isinstance(value, dict)
+            or not required_fields.issubset(value)
+            or set(value) - allowed_fields
+        ):
             raise RuntimeError(f"benchmark case {index} is malformed")
         operation = value["operation"]
         source = value["source"]
         dataset = value["dataset"]
+        is_conditional = value.get("conditional", False)
         if (
             not isinstance(operation, str)
             or not operation
@@ -57,6 +54,7 @@ def load_manifest(path: Path, source_root: Path) -> dict[str, tuple[str, Path]]:
             or not isinstance(dataset, str)
             or not dataset
             or "\\" in dataset
+            or not isinstance(is_conditional, bool)
         ):
             raise RuntimeError(f"benchmark case {index} has invalid metadata")
         root = source_root.resolve(strict=True)
@@ -68,7 +66,9 @@ def load_manifest(path: Path, source_root: Path) -> dict[str, tuple[str, Path]]:
         if not target.is_file():
             raise RuntimeError(f"benchmark case {index} dataset is not a file")
         result[operation] = (source, target)
-    return result
+        if is_conditional:
+            conditional.add(operation)
+    return result, conditional
 
 
 def registered_operations(executable: Path) -> dict[str, set[str]]:
@@ -113,14 +113,16 @@ def main() -> None:
     args = parser.parse_args()
 
     executable = args.executable.resolve(strict=True)
-    cases = load_manifest(args.manifest.resolve(strict=True), args.source_root)
+    cases, conditional = load_manifest(
+        args.manifest.resolve(strict=True), args.source_root
+    )
     operations = registered_operations(executable)
     missing = sorted(set(operations) - set(cases))
     if missing:
         raise RuntimeError(
             "registered operations lack stable cases: " + ", ".join(missing)
         )
-    stale = sorted(set(cases) - set(operations) - CONDITIONAL_OPERATIONS)
+    stale = sorted(set(cases) - set(operations) - conditional)
     if stale:
         raise RuntimeError(
             "case manifest contains unknown operations: " + ", ".join(stale)

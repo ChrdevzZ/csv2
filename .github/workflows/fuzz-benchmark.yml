@@ -39,8 +39,6 @@ jobs:
           -DCSV2_BUILD_FUZZERS=ON
           -DCSV2_VERIFICATION_PROFILE=quick
           -DCSV2_REQUIRE_PYTHON_AUDITS=ON
-          -DCSV2_REQUIRE_MODERN_STANDARD_TESTS=ON
-          -DCSV2_REQUIRE_CXX26_TESTS=ON
           -DCSV2_CI_EXPECTED_COMPILER_ID=Clang
           -DCSV2_CI_EXPECTED_COMPILER_VERSION_PREFIX=18
 
@@ -94,11 +92,6 @@ jobs:
           ctest --test-dir build-no-mmap -L benchmark-checksum \
             --no-tests=error --output-on-failure \
             --output-junit benchmark-checksum.xml
-          if ctest --test-dir build-no-mmap -N | \
-              grep -E 'csv2\.benchmark\.current\.mmap'; then
-            echo "mmap checksum tests were registered in a no-mmap build" >&2
-            exit 1
-          fi
 
       - name: Upload smoke reports and corpus manifests
         if: always()

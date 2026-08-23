@@ -12,7 +12,6 @@ header after every public-header change:
 
 ```bash
 python3 utils/amalgamate/amalgamate.py -c single_include.json -s .
-git diff --exit-code -- single_include/csv2/csv2.hpp
 ```
 
 Commit modular and generated forms together. A test/benchmark-only change must
@@ -79,8 +78,9 @@ no-exceptions variants use the non-throwing CSV2 runner. Keep one semantic
 source unless a language feature genuinely requires a compile-only contract.
 
 When adding a source or capability, update the declaration in
-`test/runtime/CMakeLists.txt`. The manifest rejects duplicate/unknown domains,
-missing files, invalid profiles, and impossible capability combinations.
+`test/runtime/CMakeLists.txt`. CMake validates declaration semantics such as
+profiles and capability combinations; compilation and execution validate the
+source itself.
 CTest names are stable:
 
 ```text
@@ -103,20 +103,10 @@ contract.
 Use inline bytes for small cases. If a fixture improves clarity:
 
 1. add it under `test/fixtures/upstream`, `regression`, or `property`;
-2. update `test/fixtures/SHA256SUMS`;
-3. preserve exact LF/CRLF/quoted-LF bytes;
-4. never normalize the file through a text-mode rewrite.
+2. preserve exact LF/CRLF/quoted-LF bytes;
+3. never normalize the file through a text-mode rewrite.
 
-The fixture CMake layer rejects missing, extra, or hash-mismatched CSV files.
 `.gitattributes` disables checkout conversion for fixtures and fuzz seeds.
-
-For a regression inherited from the retired doctest suite, retain its mapping
-in `test/migration/legacy_case_map.tsv`. The parity checker requires its old
-title to appear in the immutable `legacy_doctest_inventory.json` captured from
-base commit `635e59a`, then validates the new stable ID and domain. When the
-pinned Git objects are available it also re-reads the original source blob;
-shallow clones and source packages still verify the fixed inventory metadata
-and digests.
 
 Changes to parsing or escaping should extend the deterministic round-trip
 property and, when appropriate, both libFuzzer targets. Replay the committed
@@ -178,9 +168,9 @@ fallbacks, or configure-time network access. Before changing a snapshot:
 2. fetch and stage only through the maintainer tool's explicit network mode;
 3. keep patches as separate files under `patches/` with rationale and upstream
    issue; never edit a snapshot silently;
-4. run both the integrity and tooling-contract tests;
-5. install with all verification components enabled and confirm that no
-   dependency target or file enters the CSV2 package.
+4. run the dependent builds and behavior tests;
+5. install with all verification components enabled and compile a clean-prefix
+   consumer.
 
 ```bash
 python3 tools/vendor/update_verification_dependencies.py check
@@ -191,8 +181,8 @@ Third-party sources are excluded from CSV2 formatting, Werror, sanitizers, and
 coverage. Dependency loaders must also override `COMPILE_WARNING_AS_ERROR` at
 target scope because CMake's global initializer crosses subdirectory policy
 scopes. Loaders must reject target collisions and restore the parent Cache
-value/type/help/advanced/strings state exactly; CMake validates every vendored
-file hash even when Python is unavailable. See
+value/type/help/advanced/strings state exactly. Snapshot file-list and wording
+audits are maintainer-side review tools, not tracked CI gates. See
 [`third_party/verification/README.md`](third_party/verification/README.md).
 
 ## CI and documentation

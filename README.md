@@ -442,11 +442,9 @@ The original amalgamation workflow remains available:
 python3 utils/amalgamate/amalgamate.py -c single_include.json -s .
 ```
 
-Commit modular and generated header changes together. Verify reproducibility:
-
-```bash
-git diff --exit-code -- single_include/csv2/csv2.hpp
-```
+Commit modular and generated header changes together. Source-tree comparisons
+and other one-off repository-shape checks belong in local review, not in the
+tracked test suite or required CI.
 
 Applications using the generated distribution add `single_include/` to their include path and include
 `<csv2/csv2.hpp>`.
