@@ -251,6 +251,19 @@ int main(int argc, char **argv) {
     if (options.list)
       return list_operations(registry, options);
 
+    const bool batch_mode =
+        options.verify || options.observer_audit || options.preparation_audit;
+    if (!batch_mode) {
+      if (options.operation.empty()) {
+        std::cerr << "timing requires exactly one --csv2-operation\n";
+        return 2;
+      }
+      if (options.source == "all") {
+        std::cerr << "timing requires one concrete --csv2-source\n";
+        return 2;
+      }
+    }
+
     Context context;
     if (!load_selected_context(registry, context, options, error)) {
       std::cerr << error << '\n';
