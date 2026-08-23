@@ -11,4 +11,4 @@ function(csv2_add_common_benchmark target instrumentation modern_writer)
 endfunction()
 
 csv2_add_common_benchmark(csv2_common_benchmark 0 1)
-csv2_add_common_benchmark(csv2_common_benchmark_timer_audit 1 0)
+csv2_add_common_benchmark(csv2_common_benchmark_timer_audit 1 1)

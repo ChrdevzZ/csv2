@@ -25,7 +25,7 @@
   static ::csv2_test::registrar CSV2_TEST_JOIN(csv2_test_registrar_, number)(                      \
       id, domain, &CSV2_TEST_JOIN(csv2_test_function_, number));                                   \
   static void CSV2_TEST_JOIN(csv2_test_function_, number)()
-#define CSV2_TEST_CASE(id, domain) CSV2_TEST_CASE_IMPL(id, domain, __COUNTER__)
+#define CSV2_TEST_CASE(id, domain) CSV2_TEST_CASE_IMPL(id, domain, __LINE__)
 
 #define CSV2_CHECK(expression)                                                                     \
   do {                                                                                             \

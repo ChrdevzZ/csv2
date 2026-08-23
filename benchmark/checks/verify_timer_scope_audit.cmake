@@ -53,4 +53,11 @@ function(csv2_run_audit operation expect_traversal_steps)
 endfunction()
 
 csv2_run_audit(rows_cells TRUE)
-csv2_run_audit(legacy_writer_raw FALSE)
+foreach(writer_operation IN ITEMS
+    legacy_writer_raw
+    writer_raw_direct
+    writer_raw_streamable
+    writer_escaped_direct
+    writer_escaped_streamable)
+  csv2_run_audit(${writer_operation} FALSE)
+endforeach()

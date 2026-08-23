@@ -342,7 +342,7 @@ csv2_add_benchmark_check(csv2.benchmark.common.rows_cells
   PASS_REGEX "protocol=csv2-common-v5.*instrumentation=none.*semantic_case_id=csv2.traversal.rows-cells.v1.*rows=3.*cells=9.*timed_reader_steps=0.*timed_checksum_mix_calls=0")
 csv2_add_benchmark_check(csv2.benchmark.common.timer_scope_audit.protocol
   COMMAND csv2_common_benchmark_timer_audit --describe
-  PASS_REGEX "protocol=csv2-common-v5.*instrumentation=timer_scope_audit.*capabilities=legacy-reader,legacy-writer.*operations=rows_cells,legacy_writer_raw,legacy_mmap_rows_cells")
+  PASS_REGEX "protocol=csv2-common-v5.*instrumentation=timer_scope_audit.*capabilities=legacy-reader,legacy-writer,modern-writer.*operations=rows_cells,legacy_writer_raw,writer_raw_direct,writer_raw_streamable,writer_escaped_direct,writer_escaped_streamable,legacy_mmap_rows_cells")
 csv2_add_benchmark_check(csv2.benchmark.common.timer_scope_audit.behavior
   COMMAND ${CMAKE_COMMAND}
     -DCSV2_BENCHMARK_EXECUTABLE=$<TARGET_FILE:csv2_common_benchmark_timer_audit>

@@ -320,10 +320,53 @@ class BuildTests(unittest.TestCase):
                 enable_modern_writer_operations=True,
                 run_fn=fake_run,
             )
+            for reserved_flags in (
+                ("-O3", "-DCSV2_BENCHMARK_TIMER_SCOPE_AUDIT=1"),
+                ("-O3", "/DCSV2_BENCHMARK_ENABLE_MODERN_WRITER_OPERATIONS=1"),
+                ("-O3", "-D", "CSV2_BENCHMARK_TIMER_SCOPE_AUDIT=1"),
+                ("-O3", "/D", "CSV2_BENCHMARK_REVISION=forged"),
+                ("-O3", "-Wp,-DCSV2_BENCHMARK_TIMER_SCOPE_AUDIT=1"),
+            ):
+                with self.subTest(reserved_flags=reserved_flags):
+                    with self.assertRaisesRegex(RuntimeError, "reserved"):
+                        builds.compile_common_driver(
+                            header_export=headers,
+                            adapter_export=adapter,
+                            compiler=Path(sys.executable),
+                            compiler_flags=reserved_flags,
+                            output=root / "reserved-driver",
+                            run_fn=fake_run,
+                        )
+            for opaque_flags, message in (
+                (("-O3", "@flags.rsp"), "response files"),
+                (("-O3", "-Wp,@flags.rsp"), "response files"),
+                (("-O3", "-Wp,-include,defines.hpp"), "pass-through"),
+                (("-O3", "-include", "defines.hpp"), "preprocessor input"),
+                (("-O3", "/FIdefines.hpp"), "preprocessor input"),
+            ):
+                with self.subTest(opaque_flags=opaque_flags):
+                    with self.assertRaisesRegex(RuntimeError, message):
+                        builds.compile_common_driver(
+                            header_export=headers,
+                            adapter_export=adapter,
+                            compiler=Path(sys.executable),
+                            compiler_flags=opaque_flags,
+                            output=root / "opaque-driver",
+                            run_fn=fake_run,
+                        )
 
-        definition = "CSV2_BENCHMARK_ENABLE_MODERN_WRITER_OPERATIONS=1"
-        self.assertFalse(any(definition in argument for argument in legacy["argv"]))
-        self.assertTrue(any(definition in argument for argument in modern["argv"]))
+        modern_definition = "CSV2_BENCHMARK_ENABLE_MODERN_WRITER_OPERATIONS=1"
+        legacy_definition = "CSV2_BENCHMARK_ENABLE_MODERN_WRITER_OPERATIONS=0"
+        audit_definition = "CSV2_BENCHMARK_TIMER_SCOPE_AUDIT=0"
+        self.assertTrue(any(legacy_definition in argument for argument in legacy["argv"]))
+        self.assertFalse(any(modern_definition in argument for argument in legacy["argv"]))
+        self.assertTrue(any(modern_definition in argument for argument in modern["argv"]))
+        self.assertEqual(
+            sum(audit_definition in argument for argument in legacy["argv"]), 1
+        )
+        self.assertEqual(
+            sum(audit_definition in argument for argument in modern["argv"]), 1
+        )
 
 
 if __name__ == "__main__":
