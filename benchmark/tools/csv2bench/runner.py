@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Callable, Iterable, Sequence
 
 
-from . import artifacts, atomic, builds, protocol as wire, statistics as robust_statistics
+from . import artifacts, atomic, builds, derivation, protocol as wire
 from . import ARTIFACT_MANIFEST_SCHEMA
 from . import COMMON_PROTOCOL as PROTOCOL
 from . import COMPARISON_SCHEMA as SCHEMA
@@ -234,6 +234,7 @@ def runner_source_paths() -> list[Path]:
         package_root / "artifacts.py",
         package_root / "atomic.py",
         package_root / "builds.py",
+        package_root / "derivation.py",
         package_root / "protocol.py",
         package_root / "runner.py",
         package_root / "statistics.py",
@@ -248,18 +249,6 @@ def dataset_metadata(path: Path, logical_name: str | None = None) -> dict[str, o
         "size": resolved.stat().st_size,
         "sha256": sha256_file(resolved),
     }
-
-
-def median_mad(values: list[float]) -> tuple[float, float]:
-    return robust_statistics.median_mad(values)
-
-
-def bootstrap_ratio(
-    baseline: list[float], candidate: list[float], samples: int = 5000
-) -> tuple[float, float]:
-    return robust_statistics.paired_bootstrap_ratio(
-        baseline, candidate, samples=samples
-    )
 
 
 def selected(requested: str, available: Iterable[str]) -> list[str]:
@@ -398,8 +387,6 @@ def measure_case(
 ) -> dict[str, object]:
     if not math.isfinite(calibration_noise) or calibration_noise < 0:
         raise ValueError("calibration noise must be finite and non-negative")
-    baseline_values: list[float] = []
-    candidate_values: list[float] = []
     launches: list[dict[str, object]] = []
     signature: tuple[str, ...] | None = None
     if expected_bytes is None:
@@ -444,9 +431,6 @@ def measure_case(
                 "result": public_result(result),
             }
         )
-        if phase == "sample":
-            (baseline_values if side == "baseline" else candidate_values).append(throughput)
-
     for round_index in range(warmups):
         order = ((baseline, "baseline"), (candidate, "candidate"))
         if round_index % 2:
@@ -461,36 +445,23 @@ def measure_case(
         for position, (executable, side) in enumerate(order):
             launch(executable, side, "sample", round_index, position)
 
-    base_median, base_mad = median_mad(baseline_values)
-    candidate_median, candidate_mad = median_mad(candidate_values)
-    low, high = bootstrap_ratio(baseline_values, candidate_values)
-    measured_noise = 2.0 * base_mad / base_median if base_median else float("inf")
-    threshold = max(0.05, measured_noise, calibration_noise)
-    regression = candidate_median < base_median * (1.0 - threshold) and high < 1.0
-    improvement = candidate_median > base_median * (1.0 + threshold) and low > 1.0
-    observed_noise = max(
-        abs(candidate_median / base_median - 1.0), abs(low - 1.0), abs(high - 1.0)
-    )
-    return {
+    case: dict[str, object] = {
         "dataset": dataset.name,
         "operation": operation,
         "source": source,
-        "semantic_signature": list(signature or ()),
-        "baseline": {"median": base_median, "mad": base_mad, "samples": baseline_values},
-        "candidate": {
-            "median": candidate_median,
-            "mad": candidate_mad,
-            "samples": candidate_values,
-        },
-        "candidate_over_baseline_95pct": [low, high],
-        "measured_noise": measured_noise,
         "calibration_noise": calibration_noise,
-        "observed_noise": observed_noise,
-        "regression_threshold": threshold,
-        "regression": regression,
-        "improvement": improvement,
         "launches": launches,
     }
+    case.update(
+        derivation.derive_comparison_case(
+            case,
+            runs=runs,
+            warmups=warmups,
+            iterations=iterations,
+            common_protocol=PROTOCOL,
+        )
+    )
+    return case
 
 
 def case_key(dataset: str, operation: str, source: str) -> str:

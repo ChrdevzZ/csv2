@@ -34,6 +34,7 @@ def collector_source_paths() -> list[Path]:
         package_root / "artifacts.py",
         package_root / "atomic.py",
         package_root / "builds.py",
+        package_root / "derivation.py",
         package_root / "metrics.py",
         package_root / "protocol.py",
         package_root / "statistics.py",

@@ -148,31 +148,34 @@ def comparison_report() -> dict[str, object]:
     }
     signature = ["1", "1", "1", "1", "1", "1"]
 
+    throughput = 1_000_000_000.0 / float(1024**3)
+
     def launch(side_name: str, order: int) -> dict[str, object]:
+        result = {
+            "protocol": "csv2-common-v3",
+            "revision": revision,
+            "operation": "rows_cells",
+            "scope": "traversal_only",
+            "source": "buffer",
+            "bytes": "1",
+            "iterations": "1",
+            "elapsed_ns": "1",
+            "rows": "1",
+            "cells": "1",
+            "row_bytes": "1",
+            "checksum": "1",
+            "timed_reader_steps": "2",
+        }
         return {
             "phase": "sample",
             "round": 0,
             "order": order,
             "side": side_name,
             "command": ["driver"],
-            "stdout": "result",
+            "stdout": " ".join(f"{key}={value}" for key, value in result.items()),
             "stderr": "",
-            "throughput_gib_per_second": 1.0,
-            "result": {
-                "protocol": "csv2-common-v3",
-                "revision": revision,
-                "operation": "rows_cells",
-                "scope": "traversal_only",
-                "source": "buffer",
-                "bytes": "1",
-                "iterations": "1",
-                "elapsed_ns": "1",
-                "rows": "1",
-                "cells": "1",
-                "row_bytes": "1",
-                "checksum": "1",
-                "timed_reader_steps": "2",
-            },
+            "throughput_gib_per_second": throughput,
+            "result": result,
         }
 
     case = {
@@ -180,8 +183,8 @@ def comparison_report() -> dict[str, object]:
         "operation": "rows_cells",
         "source": "buffer",
         "semantic_signature": signature,
-        "baseline": {"median": 1.0, "mad": 0.0, "samples": [1.0]},
-        "candidate": {"median": 1.0, "mad": 0.0, "samples": [1.0]},
+        "baseline": {"median": throughput, "mad": 0.0, "samples": [throughput]},
+        "candidate": {"median": throughput, "mad": 0.0, "samples": [throughput]},
         "candidate_over_baseline_95pct": [1.0, 1.0],
         "measured_noise": 0.0,
         "calibration_noise": 0.0,
@@ -311,6 +314,9 @@ def controlled_comparison_report() -> dict[str, object]:
         side["description"]["revision"] = revision
     for launch in report["cases"][0]["launches"]:
         launch["result"]["revision"] = revision
+        launch["stdout"] = " ".join(
+            f"{key}={value}" for key, value in launch["result"].items()
+        )
     report["adapter_source"] = artifact(adapter_commit)
     report["adapter_source"]["sha256"] = adapter_sha256
     report["artifact_mode"] = "owned"
@@ -338,8 +344,9 @@ def controlled_comparison_report() -> dict[str, object]:
                 launch["order"] = order
                 launches.append(launch)
     case["launches"] = launches
-    case["baseline"]["samples"] = [1.0] * 20
-    case["candidate"]["samples"] = [1.0] * 20
+    sample = baseline_template["throughput_gib_per_second"]
+    case["baseline"]["samples"] = [sample] * 20
+    case["candidate"]["samples"] = [sample] * 20
 
     def git_export(
         root: str, commit: str, selection: str, path: str, sha256: str
@@ -566,6 +573,37 @@ def controlled_metrics_report() -> dict[str, object]:
 
 
 class ProtocolTests(unittest.TestCase):
+    def test_comparison_rejects_mutated_derived_truth(self) -> None:
+        mutations = {
+            "baseline median": lambda report: report["cases"][0]["baseline"].update(
+                median=2.0
+            ),
+            "launch throughput": lambda report: report["cases"][0]["launches"][0].update(
+                throughput_gib_per_second=2.0
+            ),
+            "raw stdout": lambda report: report["cases"][0]["launches"][0].update(
+                stdout=report["cases"][0]["launches"][0]["stdout"].replace(
+                    "checksum=1", "checksum=2"
+                )
+            ),
+            "launch order": lambda report: report["cases"][0]["launches"][0].update(
+                order=1
+            ),
+            "verdict": lambda report: report["cases"][0].update(regression=True),
+        }
+        for label, mutate in mutations.items():
+            with self.subTest(label=label):
+                report = comparison_report()
+                mutate(report)
+                with self.assertRaises(RuntimeError):
+                    protocol.validate_comparison_report(report)
+
+    def test_fixed_metrics_rejects_mutated_timing_summary(self) -> None:
+        report = fixed_metrics_report()
+        report["timing"]["bytes_per_second"]["median"] = 2.0
+        with self.assertRaisesRegex(RuntimeError, "median"):
+            protocol.validate_fixed_metrics_report(report)
+
     def test_completed_reports_pass_semantic_validation(self) -> None:
         protocol.validate_comparison_report(comparison_report())
         protocol.validate_fixed_metrics_report(fixed_metrics_report())

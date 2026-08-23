@@ -19,6 +19,7 @@ class MetricsTests(unittest.TestCase):
         }
         self.assertIn("collect_metrics.py", names)
         self.assertIn("tools/csv2bench/artifacts.py", names)
+        self.assertIn("tools/csv2bench/derivation.py", names)
         self.assertIn("tools/csv2bench/statistics.py", names)
 
     def test_verify_command_uses_current_v2_cli(self) -> None:
