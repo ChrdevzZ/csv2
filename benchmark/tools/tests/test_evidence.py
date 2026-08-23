@@ -28,6 +28,7 @@ class EvidenceBundleTests(unittest.TestCase):
                 "tools/csv2bench/artifacts.py",
                 "tools/csv2bench/atomic.py",
                 "tools/csv2bench/builds.py",
+                "tools/csv2bench/derivation.py",
                 "tools/csv2bench/evidence.py",
                 "tools/csv2bench/protocol.py",
             },
@@ -189,6 +190,18 @@ class EvidenceBundleTests(unittest.TestCase):
                     *values[:4], values[4], values[5], test_protocol.bundle()
                 )
         self.assertFalse(bundle["decision_eligible"])
+
+    def test_finalizer_rejects_calibration_noise_not_derived_from_aa_case(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            values = self.components(Path(directory))
+            values[1]["cases"][0]["calibration_noise"] = 0.01
+            with mock.patch.object(
+                evidence.builds, "validate_build_manifest"
+            ), mock.patch.object(evidence.builds, "verify_current_build_manifest"):
+                with self.assertRaisesRegex(RuntimeError, "calibration noise"):
+                    evidence.assemble_evidence(
+                        *values[:4], values[4], values[5], test_protocol.bundle()
+                    )
 
     def test_adapter_identity_ignores_workspace_path_and_mtime(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

@@ -59,7 +59,15 @@ class RunnerTests(unittest.TestCase):
         def invoke(executable, operation, dataset, source, iterations):
             side = str(executable)
             launches.append(side)
-            return result("base" if side == "base" else "candidate", 100)
+            value = result("base" if side == "base" else "candidate", 100)
+            value["_stdout"] = " ".join(
+                f"{key}={field}"
+                for key, field in value.items()
+                if not key.startswith("_")
+            )
+            value["_stderr"] = ""
+            value["_command"] = json.dumps([side])
+            return value
 
         with tempfile.TemporaryDirectory() as directory:
             dataset = Path(directory) / "data.csv"

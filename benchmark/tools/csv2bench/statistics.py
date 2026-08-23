@@ -6,6 +6,9 @@ import random
 import statistics
 from typing import Sequence
 
+BOOTSTRAP_RESAMPLES = 10_000
+BOOTSTRAP_SEED = 0x43535632
+
 
 def median_mad(values: Sequence[float]) -> tuple[float, float]:
     if not values:
@@ -18,8 +21,8 @@ def paired_bootstrap_ratio(
     baseline: Sequence[float],
     candidate: Sequence[float],
     *,
-    samples: int = 10_000,
-    seed: int = 0x43535632,
+    samples: int = BOOTSTRAP_RESAMPLES,
+    seed: int = BOOTSTRAP_SEED,
 ) -> tuple[float, float]:
     if not baseline or len(baseline) != len(candidate):
         raise ValueError("paired samples must be non-empty and equal in length")

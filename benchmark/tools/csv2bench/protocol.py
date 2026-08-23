@@ -7,6 +7,7 @@ from typing import Iterable
 
 from . import COMPARISON_SCHEMA, CURRENT_PROTOCOL, EVIDENCE_SCHEMA, METRICS_SCHEMA
 from . import COMMON_PROTOCOL
+from . import derivation
 
 UINT64_MAX = (1 << 64) - 1
 
@@ -313,6 +314,7 @@ def _timing(
             positive=summary_name == "seconds",
         )
         _number(summary["mad"], f"{summary_label}.mad")
+    derivation.validate_timing_summary(timing, label)
     return timing
 
 
@@ -919,6 +921,14 @@ def validate_comparison_report(report: object) -> None:
                 raise RuntimeError(f"{label} has incomplete {side} launches")
             if measured[side] != expected_samples:
                 raise RuntimeError(f"{label}.{side}.samples do not match launches")
+        derivation.validate_comparison_case(
+            case,
+            runs=runs,
+            warmups=warmups,
+            iterations=iterations,
+            common_protocol=COMMON_PROTOCOL,
+            label=label,
+        )
 
     controlled = document["evidence_level"] == "controlled"
     if controlled:

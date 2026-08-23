@@ -53,6 +53,7 @@ def finalizer_source_paths() -> list[Path]:
         package_root / "artifacts.py",
         package_root / "atomic.py",
         package_root / "builds.py",
+        package_root / "derivation.py",
         package_root / "evidence.py",
         package_root / "protocol.py",
     ]
@@ -286,6 +287,16 @@ def assemble_evidence(
 
     if calibration["mode"] != "aa" or comparison["mode"] != "compare":
         raise RuntimeError("complete evidence requires one A/A and one A/B report")
+    calibration_noise = {
+        (case["dataset"], case["operation"], case["source"]): case["observed_noise"]
+        for case in calibration["cases"]
+    }
+    for case in comparison["cases"]:
+        key = (case["dataset"], case["operation"], case["source"])
+        if key not in calibration_noise:
+            raise RuntimeError("A/B case has no corresponding A/A calibration case")
+        if case["calibration_noise"] != calibration_noise[key]:
+            raise RuntimeError("A/B case calibration noise differs from derived A/A noise")
     calibration_identity = identities["calibration_report"]
     calibration_reference = comparison["calibration"]
     if not isinstance(calibration_reference, dict) or any(
