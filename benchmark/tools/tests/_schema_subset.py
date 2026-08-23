@@ -9,6 +9,8 @@ schemas, not a second hand-written description of them.
 from __future__ import annotations
 
 import re
+import json
+from pathlib import Path
 from typing import Any
 
 
@@ -16,9 +18,22 @@ class ValidationError(AssertionError):
     pass
 
 
-def _resolve(root: dict[str, Any], reference: str) -> dict[str, Any]:
+def _resolve(
+    root: dict[str, Any], reference: str
+) -> tuple[dict[str, Any], dict[str, Any]]:
     if not reference.startswith("#/"):
-        raise ValidationError(f"unsupported schema reference: {reference}")
+        filename, separator, fragment = reference.partition("#")
+        if not filename or "/" in filename or "\\" in filename:
+            raise ValidationError(f"unsupported schema reference: {reference}")
+        path = Path(__file__).resolve().parents[2] / "protocol" / "schemas" / filename
+        try:
+            external = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as error:
+            raise ValidationError(f"unresolved schema reference: {reference}") from error
+        if not separator:
+            return external, external
+        resolved, _ = _resolve(external, f"#{fragment}")
+        return resolved, external
     value: Any = root
     for encoded in reference[2:].split("/"):
         token = encoded.replace("~1", "/").replace("~0", "~")
@@ -27,7 +42,7 @@ def _resolve(root: dict[str, Any], reference: str) -> dict[str, Any]:
         value = value[token]
     if not isinstance(value, dict):
         raise ValidationError(f"schema reference is not an object: {reference}")
-    return value
+    return value, root
 
 
 def _matches_type(value: object, expected: str) -> bool:
@@ -56,7 +71,8 @@ def _validate(
     instance: object, schema: dict[str, Any], root: dict[str, Any], path: str
 ) -> None:
     if "$ref" in schema:
-        _validate(instance, _resolve(root, str(schema["$ref"])), root, path)
+        resolved, resolved_root = _resolve(root, str(schema["$ref"]))
+        _validate(instance, resolved, resolved_root, path)
 
     for child in schema.get("allOf", []):
         _validate(instance, child, root, path)

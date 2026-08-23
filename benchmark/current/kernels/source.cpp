@@ -158,12 +158,13 @@ template <bool Verify> Result parse_span(Context &context, Source, TimedObserver
 } // namespace
 
 void register_source_operations(Registry &registry) {
-  registry.add("source/file-read", source_file, prepare_none, OperationScope::source_only,
+  registry.add("source/file-read-cached", source_file, prepare_none, OperationScope::source_only,
                file_read<false>, file_read<true>);
 #if CSV2_HAS_MMAP
   registry.add("source/mmap-open", source_mmap, prepare_none, OperationScope::source_only,
                mmap_open<false>, mmap_open<true>);
-  registry.add("source/mmap-touch", source_mmap, prepare_mapping, OperationScope::source_only,
+  registry.add("source/mmap-touch-resident", source_mmap, prepare_mapping,
+               OperationScope::source_only,
                mmap_touch<false>, mmap_touch<true>);
 #endif
   registry.add("source/parse-borrowed", source_buffer, prepare_data, OperationScope::source_only,

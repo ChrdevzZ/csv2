@@ -21,7 +21,7 @@ class CurrentSuiteTests(unittest.TestCase):
             Path("benchmark"),
             Path("datasets"),
             (
-                ("source/file-read", "file", "one.csv"),
+                ("source/file-read-cached", "file", "one.csv"),
                 ("traversal/rows", "buffer", "two.csv"),
             ),
             ("--benchmark_min_time=0.001s",),

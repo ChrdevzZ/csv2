@@ -108,7 +108,7 @@ class MetricsTests(unittest.TestCase):
         for marker in ({"error_occurred": True, "error_message": "read failed"},
                        {"skipped": True}):
             record = {
-                "name": "csv2/source/file-read/file/x.csv",
+                "name": "csv2/source/file-read-cached/file/x.csv",
                 "run_type": "iteration",
                 "real_time": 1,
                 "time_unit": "ns",

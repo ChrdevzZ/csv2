@@ -194,6 +194,70 @@ def _manifest_artifact(
     return artifact
 
 
+def _machine_profile(value: object, label: str) -> dict[str, object]:
+    binding = _object(value, label)
+    binding_fields = {"artifact", "profile", "digest", "observation"}
+    _required(binding, binding_fields, label)
+    _closed(binding, binding_fields, label)
+    artifact = _manifest_artifact(binding["artifact"], f"{label}.artifact", revision=False)
+    digest = _hex_digest(binding["digest"], f"{label}.digest", (64,))
+    if digest != artifact["sha256"]:
+        raise RuntimeError(f"{label}.digest differs from its artifact")
+    profile = _object(binding["profile"], f"{label}.profile")
+    profile_fields = {
+        "schema", "id", "system", "architecture", "cpu_model",
+        "logical_cpus", "allowed_affinity", "kernel_release", "governor",
+        "turbo_boost",
+    }
+    _required(profile, profile_fields, f"{label}.profile")
+    _closed(profile, profile_fields, f"{label}.profile")
+    if profile["schema"] != "csv2-machine-profile-v1":
+        raise RuntimeError(f"{label}.profile schema is invalid")
+    for field in profile_fields - {"logical_cpus", "allowed_affinity"}:
+        _string(profile[field], f"{label}.profile.{field}")
+    logical_cpus = _integer(
+        profile["logical_cpus"], f"{label}.profile.logical_cpus", 1
+    )
+    allowed = _array(profile["allowed_affinity"], f"{label}.profile.allowed_affinity")
+    if (
+        not allowed
+        or any(
+            isinstance(cpu, bool) or not isinstance(cpu, int) or cpu < 0
+            for cpu in allowed
+        )
+        or allowed != sorted(set(allowed))
+        or allowed[-1] >= logical_cpus
+    ):
+        raise RuntimeError(f"{label}.profile allowed affinity is invalid")
+    observation = _object(binding["observation"], f"{label}.observation")
+    observation_fields = {
+        "system", "architecture", "cpu_model", "logical_cpus",
+        "process_affinity", "kernel_release", "governor", "turbo_boost",
+    }
+    _required(observation, observation_fields, f"{label}.observation")
+    _closed(observation, observation_fields, f"{label}.observation")
+    for field in observation_fields - {"logical_cpus", "process_affinity"}:
+        _string(observation[field], f"{label}.observation.{field}")
+    _integer(observation["logical_cpus"], f"{label}.observation.logical_cpus", 1)
+    affinity = _array(
+        observation["process_affinity"], f"{label}.observation.process_affinity"
+    )
+    if not affinity or any(
+        isinstance(cpu, bool) or not isinstance(cpu, int) or cpu < 0
+        for cpu in affinity
+    ):
+        raise RuntimeError(f"{label}.observation affinity is invalid")
+    for field in (
+        "system", "architecture", "cpu_model", "logical_cpus", "kernel_release",
+        "governor", "turbo_boost",
+    ):
+        if profile[field] != observation[field]:
+            raise RuntimeError(f"{label} profile and observation differ for {field}")
+    if not set(affinity) <= set(allowed):
+        raise RuntimeError(f"{label}.observation affinity is outside the profile")
+    return binding
+
+
 def _source_bundle(value: object, label: str) -> dict[str, object]:
     bundle = _object(value, label)
     fields = {"kind", "root", "revision", "sha256", "files"}
@@ -621,7 +685,7 @@ def validate_comparison_report(report: object) -> None:
         "generated_at_utc", "completed_at_utc", "error", "runs", "warmups",
         "iterations_per_run", "compiler", "compiler_flags", "host", "runner",
         "adapter_source", "baseline", "candidate", "datasets", "calibration",
-        "cases",
+        "cases", "machine_profile",
     }
     required = allowed - {"completed_at_utc", "error"}
     _required(document, required, "comparison report")
@@ -639,6 +703,10 @@ def validate_comparison_report(report: object) -> None:
         raise RuntimeError("comparison report status is invalid")
     if document["evidence_level"] not in {"exploratory", "controlled"}:
         raise RuntimeError("comparison report evidence level is invalid")
+    if document["evidence_level"] == "controlled":
+        _machine_profile(document["machine_profile"], "comparison report.machine_profile")
+    elif document["machine_profile"] is not None:
+        raise RuntimeError("exploratory comparison report must not bind a machine profile")
     expected_complete = controlled_complete(
         str(document["evidence_level"]),
         str(document["status"]),
@@ -1039,14 +1107,14 @@ def validate_fixed_metrics_report(report: object) -> None:
         "compiler_identity", "compiler_flags", "operation", "source", "runs",
         "artifacts", "clean_build", "post_build", "verification", "allocations", "timing",
         "timing_invocation", "pmu", "pmu_invocation", "peak_rss", "code_size",
-        "comparison_binding",
+        "comparison_binding", "machine_profile",
     }
     required = {
         "schema", "artifact_mode", "build", "status", "evidence_level",
         "controlled_complete", "decision_eligible",
         "generated_at_utc", "machine", "compiler", "compiler_identity",
         "compiler_flags", "operation", "source", "runs", "artifacts", "clean_build",
-        "post_build",
+        "post_build", "machine_profile",
     }
     _required(document, required, "fixed-machine report")
     _closed(document, allowed, "fixed-machine report")
@@ -1069,6 +1137,10 @@ def validate_fixed_metrics_report(report: object) -> None:
         raise RuntimeError("fixed-machine report evidence level is invalid")
     if artifact_mode == "external" and evidence != "exploratory":
         raise RuntimeError("external fixed-machine artifacts are exploratory only")
+    if evidence == "controlled":
+        _machine_profile(document["machine_profile"], "fixed-machine report.machine_profile")
+    elif document["machine_profile"] is not None:
+        raise RuntimeError("exploratory fixed-machine report must not bind a machine profile")
     expected_complete = controlled_complete(
         str(evidence), str(status), owned_build=artifact_mode == "owned"
     )
@@ -1320,6 +1392,7 @@ def validate_evidence_bundle(bundle: object) -> None:
         "schema", "status", "evidence_level", "decision_eligible",
         "generated_at_utc", "completed_at_utc", "baseline_revision",
         "candidate_revision", "source_tree", "compiler_sha256", "machine",
+        "machine_profile",
         "datasets", "comparison_binding", "components", "checks", "artifacts",
         "finalizer",
     }
@@ -1336,6 +1409,13 @@ def validate_evidence_bundle(bundle: object) -> None:
         "decision_eligible"
     ] != (evidence == "controlled"):
         raise RuntimeError("performance evidence bundle decision eligibility is inconsistent")
+    if evidence == "controlled":
+        _machine_profile(
+            document["machine_profile"],
+            "performance evidence bundle.machine_profile",
+        )
+    elif document["machine_profile"] is not None:
+        raise RuntimeError("exploratory evidence must not bind a machine profile")
     _string(document["generated_at_utc"], "performance evidence bundle.generated_at_utc")
     _string(document["completed_at_utc"], "performance evidence bundle.completed_at_utc")
     for field in ("baseline_revision", "candidate_revision", "source_tree"):
@@ -1436,7 +1516,8 @@ def validate_evidence_bundle(bundle: object) -> None:
 
     check_names = {
         "artifact_manifests", "calibration", "revisions", "source_tree",
-        "compiler", "machine", "datasets", "corpus", "semantic_binding",
+        "compiler", "machine", "machine_profile", "datasets", "corpus",
+        "semantic_binding",
     }
     checks = _object(document["checks"], "performance evidence bundle.checks")
     _required(checks, check_names, "performance evidence bundle.checks")
@@ -1478,7 +1559,7 @@ def validate_artifact_manifest(manifest: object) -> None:
     _manifest_artifact(document["report"], "artifact manifest.report", revision=False)
     inputs = _object(document["inputs"], "artifact manifest.inputs")
     if kind == "comparison":
-        required = {"baseline", "candidate", "datasets", "builds"}
+        required = {"baseline", "candidate", "datasets", "builds", "machine_profile"}
         _required(inputs, required, "artifact manifest.inputs")
         _closed(inputs, required, "artifact manifest.inputs")
         _manifest_artifact(
@@ -1503,8 +1584,14 @@ def validate_artifact_manifest(manifest: object) -> None:
             value = digests[side]
             if value is not None:
                 _hex_digest(value, f"artifact manifest.inputs.builds.{side}", (64,))
+        if inputs["machine_profile"] is not None:
+            _manifest_artifact(
+                inputs["machine_profile"],
+                "artifact manifest.inputs.machine_profile",
+                revision=False,
+            )
     elif kind == "fixed-metrics":
-        input_fields = {"artifacts", "build"}
+        input_fields = {"artifacts", "build", "machine_profile"}
         _required(inputs, input_fields, "artifact manifest.inputs")
         _closed(inputs, input_fields, "artifact manifest.inputs")
 
@@ -1575,6 +1662,12 @@ def validate_artifact_manifest(manifest: object) -> None:
                 raise RuntimeError(
                     "artifact manifest owned build requires compiler artifacts"
                 )
+        if inputs["machine_profile"] is not None:
+            _manifest_artifact(
+                inputs["machine_profile"],
+                "artifact manifest.inputs.machine_profile",
+                revision=False,
+            )
     else:
         input_fields = {
             "calibration_report", "calibration_manifest", "comparison_report",

@@ -79,7 +79,7 @@
     },
     "comparison_inputs": {
       "type": "object",
-      "required": ["baseline", "candidate", "datasets", "builds"],
+      "required": ["baseline", "candidate", "datasets", "builds", "machine_profile"],
       "properties": {
         "baseline": {"$ref": "#/$defs/revision_artifact"},
         "candidate": {"$ref": "#/$defs/revision_artifact"},
@@ -96,6 +96,9 @@
             "candidate": {"$ref": "#/$defs/nullable_digest"}
           },
           "additionalProperties": false
+        },
+        "machine_profile": {
+          "oneOf": [{"$ref": "#/$defs/artifact"}, {"type": "null"}]
         }
       },
       "additionalProperties": false
@@ -119,10 +122,13 @@
     },
     "fixed_metrics_inputs": {
       "type": "object",
-      "required": ["artifacts", "build"],
+      "required": ["artifacts", "build", "machine_profile"],
       "properties": {
         "artifacts": {"$ref": "#/$defs/fixed_metrics_artifacts"},
-        "build": {"$ref": "#/$defs/nullable_digest"}
+        "build": {"$ref": "#/$defs/nullable_digest"},
+        "machine_profile": {
+          "oneOf": [{"$ref": "#/$defs/artifact"}, {"type": "null"}]
+        }
       },
       "additionalProperties": false,
       "oneOf": [

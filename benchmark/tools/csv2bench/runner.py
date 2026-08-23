@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Callable, Iterable, Sequence
 
 
-from . import artifacts, atomic, builds, derivation, protocol as wire
+from . import artifacts, atomic, builds, derivation, machine, protocol as wire
 from . import ARTIFACT_MANIFEST_SCHEMA
 from . import COMMON_PROTOCOL as PROTOCOL
 from . import COMPARISON_SCHEMA as SCHEMA
@@ -237,6 +237,7 @@ def runner_source_paths() -> list[Path]:
         package_root / "atomic.py",
         package_root / "builds.py",
         package_root / "derivation.py",
+        package_root / "machine.py",
         package_root / "protocol.py",
         package_root / "runner.py",
         package_root / "statistics.py",
@@ -562,6 +563,15 @@ def validate_calibration_context(
         if calibration.get(key) != current.get(key):
             raise RuntimeError(f"calibration {key} does not match this comparison")
 
+    calibration_profile = calibration.get("machine_profile")
+    current_profile = current.get("machine_profile")
+    if (calibration_profile is None) != (current_profile is None) or (
+        isinstance(calibration_profile, dict)
+        and isinstance(current_profile, dict)
+        and calibration_profile.get("digest") != current_profile.get("digest")
+    ):
+        raise RuntimeError("calibration machine profile does not match this comparison")
+
     for section, fields in (
         (
             "host",
@@ -654,6 +664,7 @@ def main() -> None:
         default="exploratory",
     )
     parser.add_argument("--cpu-affinity")
+    parser.add_argument("--machine-profile", type=Path)
     parser.add_argument("--compiler")
     parser.add_argument("--compiler-executable", type=Path)
     parser.add_argument("--compiler-flags", required=True)
@@ -708,6 +719,8 @@ def main() -> None:
             parser.error("controlled comparisons currently require Linux CPU affinity")
         if not args.cpu_affinity:
             parser.error("controlled comparisons require --cpu-affinity")
+        if args.machine_profile is None:
+            parser.error("controlled comparisons require --machine-profile")
         try:
             requested_affinity = sorted(
                 {int(value) for value in args.cpu_affinity.split(",") if value != ""}
@@ -718,6 +731,8 @@ def main() -> None:
             parser.error("--cpu-affinity must contain non-negative CPU indices")
         if requested_affinity != sorted(os.sched_getaffinity(0)):
             parser.error("current process affinity does not match --cpu-affinity")
+    elif args.machine_profile is not None:
+        parser.error("exploratory comparisons do not accept --machine-profile")
 
     artifact_mode = "external" if args.external_artifacts else "owned"
     owned_builds: dict[str, object] | None = None
@@ -756,6 +771,7 @@ def main() -> None:
     elif args.compiler is None:
         args.compiler = "external-artifact compiler (unverified)"
 
+    machine_profile: dict[str, object] | None = None
     try:
         runner_paths = [
             canonical_existing(path, "runner source") for path in runner_source_paths()
@@ -770,6 +786,12 @@ def main() -> None:
         args.candidate = canonical_existing(args.candidate, "candidate executable")
         args.adapter_source = canonical_existing(args.adapter_source, "adapter source")
         args.datasets = canonical_existing(args.datasets, "dataset directory")
+        if args.machine_profile is not None:
+            machine_profile = machine.load(args.machine_profile)
+            if machine_profile["observation"]["process_affinity"] != requested_affinity:
+                raise RuntimeError(
+                    "machine-profile affinity differs from --cpu-affinity"
+                )
         for label, path in (
             ("baseline executable", args.baseline),
             ("candidate executable", args.candidate),
@@ -801,6 +823,10 @@ def main() -> None:
             ("baseline executable", args.baseline),
             ("candidate executable", args.candidate),
         ]
+        if machine_profile is not None:
+            protected_paths.append(
+                ("machine profile", Path(str(machine_profile["artifact"]["path"])))
+            )
         if owned_builds is not None:
             for side in ("baseline", "candidate"):
                 export = owned_builds[side]["header_export"]
@@ -921,6 +947,7 @@ def main() -> None:
         "compiler": args.compiler,
         "compiler_flags": args.compiler_flags,
         "host": host_metadata(),
+        "machine_profile": machine_profile,
         "runner": runner_bundle,
         "adapter_source": artifact_metadata(
             args.adapter_source,
@@ -999,6 +1026,8 @@ def main() -> None:
             verify_artifact_unchanged(dataset, f"dataset {dataset['name']}")
         if calibration_metadata is not None:
             verify_artifact_unchanged(calibration_metadata, "calibration")
+        if machine_profile is not None:
+            verify_artifact_unchanged(machine_profile["artifact"], "machine profile")
         report["status"] = "completed"
         report["controlled_complete"] = wire.controlled_complete(
             args.evidence_level,
@@ -1024,6 +1053,9 @@ def main() -> None:
                     else None,
                 },
                 "datasets": [artifact_metadata(by_name[name]) for name in datasets],
+                "machine_profile": (
+                    machine_profile["artifact"] if machine_profile is not None else None
+                ),
             },
         }
         wire.validate_artifact_manifest(artifact_manifest)

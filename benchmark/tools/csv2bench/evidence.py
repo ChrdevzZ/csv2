@@ -134,6 +134,14 @@ def _verify_comparison_manifest(
         ):
             raise RuntimeError(f"{label} dataset artifacts differ from the report")
         _verify_artifact(recorded, f"{label} dataset {dataset['name']}")
+    expected_profile = report["machine_profile"]
+    expected_artifact = (
+        expected_profile["artifact"] if isinstance(expected_profile, dict) else None
+    )
+    if inputs["machine_profile"] != expected_artifact:
+        raise RuntimeError(f"{label} machine profile differs from the report")
+    if expected_artifact is not None:
+        _verify_artifact(expected_artifact, f"{label} machine profile")
 
 
 def _verify_fixed_manifest(
@@ -150,6 +158,14 @@ def _verify_fixed_manifest(
     expected_build = report["build"]["identity_digest"]
     if inputs["build"] != expected_build:
         raise RuntimeError("fixed-metrics manifest build differs from the report")
+    expected_profile = report["machine_profile"]
+    expected_artifact = (
+        expected_profile["artifact"] if isinstance(expected_profile, dict) else None
+    )
+    if inputs["machine_profile"] != expected_artifact:
+        raise RuntimeError("fixed-metrics manifest machine profile differs from the report")
+    if expected_artifact is not None:
+        _verify_artifact(expected_artifact, "fixed-metrics machine profile")
     for name, identity in inputs["artifacts"].items():
         _verify_artifact(identity, f"fixed-metrics {name}")
 
@@ -284,6 +300,23 @@ def assemble_evidence(
     ):
         if report["controlled_complete"] is not expected_complete:
             raise RuntimeError(f"{name} controlled completion is inconsistent")
+    profiles = [
+        calibration["machine_profile"],
+        comparison["machine_profile"],
+        fixed_metrics["machine_profile"],
+    ]
+    if expected_complete:
+        if any(not isinstance(profile, dict) for profile in profiles):
+            raise RuntimeError("controlled evidence requires machine profiles")
+        if len({profile["digest"] for profile in profiles}) != 1:
+            raise RuntimeError("evidence components use different machine profiles")
+        if any(profile != profiles[0] for profile in profiles[1:]):
+            raise RuntimeError("machine profile observations differ across components")
+        machine_profile = profiles[0]
+    else:
+        if any(profile is not None for profile in profiles):
+            raise RuntimeError("exploratory evidence must not bind a machine profile")
+        machine_profile = None
 
     if calibration["mode"] != "aa" or comparison["mode"] != "compare":
         raise RuntimeError("complete evidence requires one A/A and one A/B report")
@@ -438,6 +471,7 @@ def assemble_evidence(
         "source_tree": source_tree,
         "compiler_sha256": compiler_sha256,
         "machine": machine,
+        "machine_profile": machine_profile,
         "datasets": [
             {"name": name, "size": value["size"], "sha256": value["sha256"]}
             for name, value in sorted(comparison_datasets.items())
@@ -451,6 +485,7 @@ def assemble_evidence(
             "source_tree": True,
             "compiler": True,
             "machine": True,
+            "machine_profile": True,
             "datasets": True,
             "corpus": True,
             "semantic_binding": True,

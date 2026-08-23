@@ -214,6 +214,7 @@ class EvidenceBundleTests(unittest.TestCase):
             for report in values[:3]:
                 report["evidence_level"] = "exploratory"
                 report["controlled_complete"] = False
+                report["machine_profile"] = None
             with mock.patch.object(evidence.builds, "validate_build_manifest"), mock.patch.object(
                 evidence.builds, "verify_current_build_manifest"
             ):
@@ -235,6 +236,22 @@ class EvidenceBundleTests(unittest.TestCase):
                 evidence.builds, "verify_current_build_manifest"
             ):
                 with self.assertRaisesRegex(RuntimeError, "exactly one"):
+                    evidence.assemble_evidence(
+                        *values[:4], values[4], values[5], test_protocol.bundle()
+                    )
+
+    def test_components_must_use_the_same_machine_profile_digest(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            values = self.components(Path(directory))
+            profile = values[2]["machine_profile"]
+            profile["artifact"]["sha256"] = "b" * 64
+            profile["digest"] = "b" * 64
+            with mock.patch.object(
+                evidence.builds, "validate_build_manifest"
+            ), mock.patch.object(
+                evidence.builds, "verify_current_build_manifest"
+            ):
+                with self.assertRaisesRegex(RuntimeError, "different machine profiles"):
                     evidence.assemble_evidence(
                         *values[:4], values[4], values[5], test_protocol.bundle()
                     )

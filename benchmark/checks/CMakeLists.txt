@@ -109,13 +109,13 @@ if(csv2_benchmark_has_mmap)
 endif()
 foreach(csv2_io_failure IN LISTS csv2_io_failures)
   if(csv2_io_failure STREQUAL "open")
-    set(csv2_io_operation source/file-read)
+    set(csv2_io_operation source/file-read-cached)
     set(csv2_io_source file)
     set(csv2_io_status input_open_failed)
     set(csv2_io_argument --csv2-test-input-path-after-load)
     set(csv2_io_value ${csv2_missing_input})
   elseif(csv2_io_failure STREQUAL "read")
-    set(csv2_io_operation source/file-read)
+    set(csv2_io_operation source/file-read-cached)
     set(csv2_io_source file)
     set(csv2_io_status input_read_failed)
     set(csv2_io_argument --csv2-test-input-read-failure)
@@ -127,7 +127,7 @@ foreach(csv2_io_failure IN LISTS csv2_io_failures)
     set(csv2_io_argument --csv2-test-input-path-after-load)
     set(csv2_io_value ${csv2_missing_input})
   else()
-    set(csv2_io_operation source/file-read)
+    set(csv2_io_operation source/file-read-cached)
     set(csv2_io_source file)
     set(csv2_io_status input_changed)
     set(csv2_io_argument --csv2-test-input-path-after-load)
@@ -169,7 +169,7 @@ csv2_add_benchmark_check(csv2.benchmark.current.observer_audit.extraction
 
 csv2_add_benchmark_check(csv2.benchmark.current.observer_audit.file_read
   COMMAND csv2_benchmark_observer_audit --csv2-input ${csv2_check_fixture}
-    --csv2-source file --csv2-operation source/file-read
+    --csv2-source file --csv2-operation source/file-read-cached
     --csv2-observer-audit
   PASS_REGEX "memory_observations=[1-9][0-9]*")
 
@@ -182,7 +182,7 @@ csv2_add_benchmark_check(csv2.benchmark.current.observer_audit.writer
 
 csv2_add_benchmark_check(csv2.benchmark.current.preparation.file_read
   COMMAND csv2_benchmark --csv2-input ${csv2_check_fixture}
-    --csv2-source file --csv2-operation source/file-read
+    --csv2-source file --csv2-operation source/file-read-cached
     --csv2-preparation-audit
   PASS_REGEX "prepared=metadata-only decoded_rows=0 streamable_rows=0 output_capacity=0")
 

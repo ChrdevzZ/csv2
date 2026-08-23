@@ -112,6 +112,8 @@ class WorkflowContractTests(unittest.TestCase):
         perf = (workflow_directory / "perf.yml").read_text(encoding="utf-8")
         self.assertNotIn("cmake -S . -B", perf)
         self.assertIn("benchmark/collect_metrics.py", perf)
+        self.assertIn("CSV2_PERF_MACHINE_PROFILE is required", perf)
+        self.assertEqual(perf.count('--machine-profile "$PROFILE_PATH"'), 3)
 
     def test_fuzz_benchmark_builds_observer_audit_for_each_checksum_suite(self) -> None:
         workflow = (

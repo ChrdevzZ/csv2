@@ -7,7 +7,7 @@ from pathlib import Path
 import _support  # noqa: F401
 from _schema_subset import ValidationError as SchemaValidationError
 from _schema_subset import validate as validate_schema
-from csv2bench import builds, protocol
+from csv2bench import builds, derivation, protocol
 
 
 def artifact(revision: str | None = None) -> dict[str, object]:
@@ -34,6 +34,35 @@ def bundle() -> dict[str, object]:
     }
 
 
+def machine_profile() -> dict[str, object]:
+    return {
+        "artifact": artifact(),
+        "digest": "a" * 64,
+        "profile": {
+            "schema": "csv2-machine-profile-v1",
+            "id": "test-machine",
+            "system": "Linux",
+            "architecture": "x86",
+            "cpu_model": "cpu",
+            "logical_cpus": 1,
+            "allowed_affinity": [0],
+            "kernel_release": "1",
+            "governor": "performance",
+            "turbo_boost": "disabled",
+        },
+        "observation": {
+            "system": "Linux",
+            "architecture": "x86",
+            "cpu_model": "cpu",
+            "logical_cpus": 1,
+            "process_affinity": [0],
+            "kernel_release": "1",
+            "governor": "performance",
+            "turbo_boost": "disabled",
+        },
+    }
+
+
 def fixed_metrics_manifest(*, owned: bool = False) -> dict[str, object]:
     identities = {
         "collector": bundle(),
@@ -51,6 +80,7 @@ def fixed_metrics_manifest(*, owned: bool = False) -> dict[str, object]:
         "inputs": {
             "artifacts": identities,
             "build": "c" * 64 if owned else None,
+            "machine_profile": None,
         },
     }
 
@@ -63,6 +93,7 @@ def evidence_bundle() -> dict[str, object]:
         "source_tree": True,
         "compiler": True,
         "machine": True,
+        "machine_profile": True,
         "datasets": True,
         "corpus": True,
         "semantic_binding": True,
@@ -104,6 +135,7 @@ def evidence_bundle() -> dict[str, object]:
             "process_affinity": [0],
             "python": "3.10",
         },
+        "machine_profile": None,
         "datasets": [{"name": "input.csv", "size": 1, "sha256": "b" * 64}],
         "comparison_binding": {
             "dataset": "input.csv",
@@ -236,6 +268,7 @@ def comparison_report() -> dict[str, object]:
             "process_affinity": None,
             "python": "3.10",
         },
+        "machine_profile": None,
         "runner": bundle(),
         "adapter_source": artifact("shared-source"),
         "baseline": side,
@@ -270,6 +303,7 @@ def fixed_metrics_report() -> dict[str, object]:
             "process_affinity": None,
             "python": "3.10",
         },
+        "machine_profile": None,
         "compiler": "c++",
         "compiler_identity": None,
         "compiler_flags": "",
@@ -353,6 +387,7 @@ def controlled_comparison_report() -> dict[str, object]:
     report["runs"] = 20
     report["warmups"] = 3
     report["host"]["process_affinity"] = [0]
+    report["machine_profile"] = machine_profile()
     case = report["cases"][0]
     baseline_template = case["launches"][0]
     candidate_template = case["launches"][1]
@@ -465,6 +500,7 @@ def controlled_metrics_report() -> dict[str, object]:
     report["runs"] = 20
     report["compiler_flags"] = "-O3 -DNDEBUG"
     report["machine"]["process_affinity"] = [0]
+    report["machine_profile"] = machine_profile()
     report["timing"]["runs"] = 20
     report["timing"]["samples"] = report["timing"]["samples"] * 20
     compiler = artifact()
@@ -639,6 +675,36 @@ class ProtocolTests(unittest.TestCase):
     def test_completed_reports_pass_semantic_validation(self) -> None:
         protocol.validate_comparison_report(comparison_report())
         protocol.validate_fixed_metrics_report(fixed_metrics_report())
+
+    def test_comparison_noise_uses_the_noisier_side(self) -> None:
+        report = comparison_report()
+        case = report["cases"][0]
+        baseline = case["launches"][0]
+        candidate = case["launches"][1]
+        launches = []
+        for round_index, entries in enumerate(
+            ((baseline, candidate), (candidate, baseline))
+        ):
+            for order, template in enumerate(entries):
+                launch = json.loads(json.dumps(template))
+                launch["round"] = round_index
+                launch["order"] = order
+                if launch["side"] == "candidate" and round_index == 1:
+                    launch["result"]["elapsed_ns"] = "2"
+                    launch["stdout"] = " ".join(
+                        f"{key}={value}" for key, value in launch["result"].items()
+                    )
+                    launch["throughput_gib_per_second"] /= 2.0
+                launches.append(launch)
+        case["launches"] = launches
+        derived = derivation.derive_comparison_case(
+            case,
+            runs=2,
+            warmups=0,
+            iterations=1,
+            common_protocol="csv2-common-v4",
+        )
+        self.assertGreater(derived["measured_noise"], 0.6)
         controlled_comparison = controlled_comparison_report()
         for side in ("baseline", "candidate"):
             build = controlled_comparison[side]["build"]
@@ -762,6 +828,7 @@ class ProtocolTests(unittest.TestCase):
                 "candidate": artifact("candidate"),
                 "datasets": [artifact()],
                 "builds": {"baseline": "a" * 64, "candidate": "b" * 64},
+                "machine_profile": None,
             },
         }
         protocol.validate_artifact_manifest(manifest)
@@ -862,6 +929,17 @@ class ProtocolTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "binding differs"):
             protocol.validate_fixed_metrics_report(metrics)
 
+    def test_controlled_machine_profile_binding_is_strict(self) -> None:
+        report = controlled_comparison_report()
+        report["machine_profile"]["observation"]["governor"] = "powersave"
+        with self.assertRaisesRegex(RuntimeError, "governor"):
+            protocol.validate_comparison_report(report)
+
+        metrics = controlled_metrics_report()
+        metrics["machine_profile"]["digest"] = "b" * 64
+        with self.assertRaisesRegex(RuntimeError, "digest differs"):
+            protocol.validate_fixed_metrics_report(metrics)
+
     def test_schemas_close_the_top_level_and_require_controlled_evidence(self) -> None:
         schema_root = Path(__file__).resolve().parents[2] / "protocol" / "schemas"
         comparison = json.loads(
@@ -895,6 +973,7 @@ class ProtocolTests(unittest.TestCase):
         controlled_bundle = evidence_bundle()
         controlled_bundle["evidence_level"] = "controlled"
         controlled_bundle["decision_eligible"] = True
+        controlled_bundle["machine_profile"] = machine_profile()
         for component in controlled_bundle["components"].values():
             component["controlled_complete"] = True
         validate_schema(controlled_bundle, evidence)

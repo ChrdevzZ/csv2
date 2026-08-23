@@ -134,7 +134,10 @@ def derive_comparison_case(
     low, high = statistics.paired_bootstrap_ratio(
         samples["baseline"], samples["candidate"]
     )
-    measured_noise = 2.0 * baseline_mad / baseline_median
+    measured_noise = max(
+        2.0 * baseline_mad / baseline_median,
+        2.0 * candidate_mad / candidate_median,
+    )
     calibration_noise = case.get("calibration_noise")
     if isinstance(calibration_noise, bool) or not isinstance(calibration_noise, (int, float)):
         raise RuntimeError("comparison case calibration_noise must be numeric")
