@@ -82,7 +82,10 @@ other macros in `assertions.hpp`:
 The minitest `REQUIRE` path records the failure and returns from the current
 test function; it never uses an exception for control flow. Exception-only
 cases must be guarded so the same semantic source compiles with exceptions
-disabled. Each static registrar owns its intrusive list node, so registration
+disabled. Each scenario is a separate `CSV2_TEST_CASE`; the suite does not use
+Catch2 sections or a minitest section emulation, so setup, filtering, and
+failure boundaries have the same granularity in both backends. Each static
+registrar owns its intrusive list node, so registration
 has no fixed capacity and performs no dynamic allocation. A separate contract
 registers and executes 600 cases to prevent a silent capacity regression.
 

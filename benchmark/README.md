@@ -359,15 +359,22 @@ versions are rejected rather than converted. Every completed component and
 evidence JSON has a sibling v3 SHA-256 artifact manifest. See
 [`protocol/README.md`](protocol/README.md) for the wire boundary and schemas.
 
-The manual `Performance evidence` workflow produces and finalizes exploratory
-artifacts on a hosted runner or controlled artifacts only on a self-hosted
-runner carrying the `csv2-perf` label. It checks out the exact candidate,
-verifies `HEAD`, loads the preconfigured `CSV2_PERF_MACHINE_PROFILE` on a
-controlled runner, then uses only the owned-build APIs for common drivers and
-current-tree metrics; no
-workflow-local archive/compile path can stamp unrelated sources as that
-revision. For an explicit `files` subset, fixed metrics uses its first dataset
-so that the cross-report evidence overlaps. The workflow fails before evidence
-upload unless the final bundle and its artifact manifest are both produced;
-failed runs upload a separate diagnostics artifact, never an evidence artifact.
+Pull requests that touch verification infrastructure run a small exact-head
+protocol smoke. It produces current fixed metrics, a three-pair candidate A/A,
+a base/head A/B across two legacy operations and four modern Writer operations,
+and a separate legacy-only owned build against `9504e0b`; all timing remains
+`exploratory` and non-decision-eligible.
+
+The manual `Performance evidence` workflow produces and finalizes broader
+exploratory artifacts on a hosted runner or controlled artifacts only on a
+self-hosted runner carrying the `csv2-perf` label. It checks out the exact
+candidate, verifies `HEAD`, loads the preconfigured
+`CSV2_PERF_MACHINE_PROFILE` on a controlled runner, then uses only the
+owned-build APIs for common drivers and current-tree metrics; no workflow-local
+archive/compile path can stamp unrelated sources as that revision. Its
+`operations` input must include `rows_cells` because fixed metrics binds that
+semantic case. For an explicit `files` subset, fixed metrics uses its first
+dataset so that the cross-report evidence overlaps. The workflow fails before
+evidence upload unless the final bundle and its artifact manifest are both
+produced; failed runs upload a separate diagnostics artifact, never an evidence artifact.
 This Stage B infrastructure change makes no library performance claim.
