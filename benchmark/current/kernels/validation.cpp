@@ -19,8 +19,7 @@ bool validation_preflight(const Context &context, Source source, std::string &me
     message = "input does not satisfy an invalid CSV contract";
     return false;
   }
-  const std::size_t quarter =
-      context.input_size() / 4 + (context.input_size() % 4 == 0 ? 0 : 1);
+  const std::size_t quarter = context.input_size() / 4 + (context.input_size() % 4 == 0 ? 0 : 1);
   const bool early = error.byte_offset < quarter;
   const bool late = error.byte_offset >= context.input_size() - quarter;
   if constexpr (Scenario == ValidationScenario::invalid_early) {
