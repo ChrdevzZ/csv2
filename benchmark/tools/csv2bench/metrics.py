@@ -18,7 +18,7 @@ from pathlib import Path
 from typing import Sequence
 
 from . import ARTIFACT_MANIFEST_SCHEMA, METRICS_SCHEMA
-from . import artifacts, atomic, builds, protocol, statistics
+from . import artifacts, atomic, builds, machine, protocol, statistics
 
 
 TIME_SCALE = {"ns": 1e-9, "us": 1e-6, "ms": 1e-3, "s": 1.0}
@@ -36,6 +36,7 @@ def collector_source_paths() -> list[Path]:
         package_root / "builds.py",
         package_root / "derivation.py",
         package_root / "metrics.py",
+        package_root / "machine.py",
         package_root / "protocol.py",
         package_root / "statistics.py",
     ]
@@ -424,6 +425,7 @@ def main() -> None:
         default="exploratory",
     )
     parser.add_argument("--cpu-affinity")
+    parser.add_argument("--machine-profile", type=Path)
     parser.add_argument("--build-command")
     parser.add_argument("--post-build-command")
     parser.add_argument("--skip-pmu", action="store_true")
@@ -464,6 +466,10 @@ def main() -> None:
         parser.error("controlled evidence requires a positive warmup duration")
     if args.evidence_level == "controlled" and not args.cpu_affinity:
         parser.error("controlled evidence requires --cpu-affinity")
+    if args.evidence_level == "controlled" and args.machine_profile is None:
+        parser.error("controlled evidence requires --machine-profile")
+    if args.evidence_level == "exploratory" and args.machine_profile is not None:
+        parser.error("exploratory evidence does not accept --machine-profile")
     if args.evidence_level == "controlled" and platform.system() != "Linux":
         parser.error("controlled fixed-machine metrics currently require Linux")
     if args.evidence_level == "controlled" and (
@@ -516,6 +522,7 @@ def main() -> None:
         args.allocation_executable = args.executable.with_name(
             f"{args.executable.stem}_allocations{args.executable.suffix}"
         )
+    machine_profile: dict[str, object] | None = None
     try:
         collector_paths = [
             artifacts.canonical_existing(path, "collector source")
@@ -532,6 +539,8 @@ def main() -> None:
             args.allocation_executable, "allocation benchmark executable"
         )
         args.input = artifacts.canonical_existing(args.input, "input")
+        if args.machine_profile is not None:
+            machine_profile = machine.load(args.machine_profile)
         if args.compiler_executable is not None:
             args.compiler_executable = artifacts.canonical_existing(
                 args.compiler_executable, "compiler executable"
@@ -549,6 +558,10 @@ def main() -> None:
             ("allocation benchmark executable", args.allocation_executable),
             ("input", args.input),
         ]
+        if machine_profile is not None:
+            protected.append(
+                ("machine profile", Path(str(machine_profile["artifact"]["path"])))
+            )
         protected.extend(
             (f"collector source {path.name}", path) for path in collector_paths
         )
@@ -568,6 +581,8 @@ def main() -> None:
         actual = sorted(os.sched_getaffinity(0))
         if requested != actual:
             parser.error(f"process affinity {actual} does not match requested affinity {requested}")
+        if machine_profile["observation"]["process_affinity"] != requested:
+            parser.error("machine-profile affinity differs from --cpu-affinity")
 
     identities = {
         "collector": collector_bundle,
@@ -612,6 +627,7 @@ def main() -> None:
         "decision_eligible": False,
         "generated_at_utc": datetime.now(timezone.utc).isoformat(),
         "machine": machine_metadata(),
+        "machine_profile": machine_profile,
         "compiler": args.compiler,
         "compiler_identity": compiler_identity,
         "compiler_flags": args.compiler_flags,
@@ -727,6 +743,8 @@ def main() -> None:
 
         for label, identity in identities.items():
             artifacts.verify_unchanged(identity, label)
+        if machine_profile is not None:
+            artifacts.verify_unchanged(machine_profile["artifact"], "machine profile")
         if owned_build is not None:
             builds.verify_current_build_manifest(owned_build)
         report["status"] = "completed"
@@ -745,6 +763,9 @@ def main() -> None:
             "inputs": {
                 "artifacts": identities,
                 "build": owned_build["identity_digest"] if owned_build is not None else None,
+                "machine_profile": (
+                    machine_profile["artifact"] if machine_profile is not None else None
+                ),
             },
         }
         protocol.validate_artifact_manifest(manifest)

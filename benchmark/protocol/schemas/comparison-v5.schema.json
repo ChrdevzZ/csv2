@@ -8,7 +8,7 @@
     "controlled_complete", "decision_eligible",
     "generated_at_utc", "runs", "warmups", "iterations_per_run", "compiler",
     "compiler_flags", "host", "runner", "adapter_source", "baseline",
-    "candidate", "datasets", "calibration", "cases"
+    "candidate", "datasets", "calibration", "cases", "machine_profile"
   ],
   "properties": {
     "schema": {"const": "csv2-benchmark-report-v5"},
@@ -50,6 +50,9 @@
     "datasets": {"type": "array", "items": {"$ref": "#/$defs/dataset"}},
     "calibration": {"type": ["object", "null"]},
     "cases": {"type": "array", "items": {"$ref": "#/$defs/case"}}
+    ,"machine_profile": {
+      "oneOf": [{"$ref": "machine-profile-v1.schema.json"}, {"type": "null"}]
+    }
   },
   "$defs": {
     "artifact": {
@@ -263,8 +266,13 @@
           "runs": {"minimum": 20},
           "warmups": {"minimum": 3},
           "host": {"properties": {"process_affinity": {"type": "array", "minItems": 1}}}
+          ,"machine_profile": {"$ref": "machine-profile-v1.schema.json"}
         }
       }
+    },
+    {
+      "if": {"properties": {"evidence_level": {"const": "exploratory"}}, "required": ["evidence_level"]},
+      "then": {"properties": {"machine_profile": {"type": "null"}}}
     },
     {
       "if": {"properties": {"mode": {"const": "aa"}}, "required": ["mode"]},

@@ -8,7 +8,7 @@
     "controlled_complete", "decision_eligible",
     "generated_at_utc", "machine", "compiler", "compiler_identity",
     "compiler_flags", "operation", "source", "runs", "artifacts", "clean_build",
-    "post_build"
+    "post_build", "machine_profile"
   ],
   "properties": {
     "schema": {"const": "csv2-fixed-machine-metrics-v5"},
@@ -82,6 +82,9 @@
     "pmu_invocation": {"$ref": "#/$defs/invocation"},
     "peak_rss": {"oneOf": [{"$ref": "#/$defs/peak_rss"}, {"type": "null"}]},
     "code_size": {"oneOf": [{"$ref": "#/$defs/code_size"}, {"type": "null"}]}
+    ,"machine_profile": {
+      "oneOf": [{"$ref": "machine-profile-v1.schema.json"}, {"type": "null"}]
+    }
   },
   "$defs": {
     "artifact": {
@@ -304,9 +307,14 @@
             "required": ["artifact", "compile_command_matches", "version_command", "version_stdout", "version_stderr"],
             "properties": {"compile_command_matches": {"type": "integer", "minimum": 1}}
           },
-          "artifacts": {"required": ["compiler_executable", "compile_commands"]}
+          "artifacts": {"required": ["compiler_executable", "compile_commands"]},
+          "machine_profile": {"$ref": "machine-profile-v1.schema.json"}
         }
       }
+    },
+    {
+      "if": {"properties": {"evidence_level": {"const": "exploratory"}}, "required": ["evidence_level"]},
+      "then": {"properties": {"machine_profile": {"type": "null"}}}
     },
     {
       "if": {

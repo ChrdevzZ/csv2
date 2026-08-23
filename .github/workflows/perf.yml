@@ -206,6 +206,8 @@ jobs:
         run: |
           set -euo pipefail
           test "$RUNS" -ge 20
+          : "${CSV2_PERF_MACHINE_PROFILE:?CSV2_PERF_MACHINE_PROFILE is required}"
+          test -f "$CSV2_PERF_MACHINE_PROFILE"
           command -v taskset
           test -r /proc/sys/kernel/perf_event_paranoid
           baseline=$(git rev-parse "${BASELINE_INPUT}^{commit}")
@@ -218,6 +220,11 @@ jobs:
           printf 'BASELINE_SHA=%s\nCANDIDATE_SHA=%s\n' \
             "$baseline" "$candidate" >> "$GITHUB_ENV"
           mkdir -p build-perf/reports
+          cp --no-clobber "$CSV2_PERF_MACHINE_PROFILE" \
+            build-perf/reports/machine-profile.json
+          chmod 0444 build-perf/reports/machine-profile.json
+          printf 'PROFILE_PATH=%s\n' \
+            "$GITHUB_WORKSPACE/build-perf/reports/machine-profile.json" >> "$GITHUB_ENV"
 
       - name: Collect controlled current-tree metrics from owned build
         env:
@@ -239,6 +246,7 @@ jobs:
             --input "$metrics_file" --source buffer --runs "$RUNS" \
             --minimum-time 0.5s --warmup-seconds 0.5 \
             --evidence-level controlled --cpu-affinity 0 \
+            --machine-profile "$PROFILE_PATH" \
             --output build-perf/reports/current-metrics.json
           grep -q 'BENCHMARK_ENABLE_LIBPFM:BOOL=ON' \
             build-perf/current-owned/build/CMakeCache.txt
@@ -269,6 +277,7 @@ jobs:
             --operations rows_cells,legacy_writer_raw \
             --sources buffer,mmap --files "$FILES" --mode aa \
             --evidence-level controlled --cpu-affinity 0 \
+            --machine-profile "$PROFILE_PATH" \
             --output build-perf/reports/aa.json
           taskset -c 0 python3 benchmark/run_suite.py \
             --repository . \
@@ -282,6 +291,7 @@ jobs:
             --sources buffer,mmap --files "$FILES" --mode compare \
             --calibration build-perf/reports/aa.json \
             --evidence-level controlled --cpu-affinity 0 \
+            --machine-profile "$PROFILE_PATH" \
             --output build-perf/reports/ab.json
 
       - name: Finalize controlled evidence bundle
@@ -307,6 +317,7 @@ jobs:
             build-perf/reports/current-metrics.json.sha256.json \
             build-perf/reports/evidence.json \
             build-perf/reports/evidence.json.sha256.json \
+            build-perf/reports/machine-profile.json \
             build-perf/reports/benchmark-checksum.xml \
             build-perf/current-owned/build/benchmark-corpus/manifest.json; do
             test -s "$artifact"
