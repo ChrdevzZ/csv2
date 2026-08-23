@@ -54,6 +54,13 @@ Owned builds are the default. `--external-artifacts` is an explicit legacy
 escape hatch restricted to `exploratory`; it can never participate in a
 decision-eligible evidence bundle.
 
+The common-driver build manifest records `instrumentation=none` and its ordered
+capability set. Legacy reader and Writer capabilities are always present;
+`modern-writer` is present only when a requested operation needs the modern
+Writer adapter. Operation, source, and dataset selections are validated before
+the owned builder exports any Git object, and runtime descriptions/results must
+match the recorded build capabilities.
+
 ## Reports
 
 `csv2-benchmark-report-v6` embeds both common-driver build manifests, exact

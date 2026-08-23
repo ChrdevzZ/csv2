@@ -23,6 +23,8 @@ OBJECT_ID = re.compile(r"(?:[0-9a-f]{40}|[0-9a-f]{64})\Z")
 SHA256 = re.compile(r"[0-9a-f]{64}\Z")
 DRIVE_PREFIX = re.compile(r"[A-Za-z]:")
 Run = Callable[..., subprocess.CompletedProcess]
+LEGACY_COMMON_CAPABILITIES = ("legacy-reader", "legacy-writer")
+MODERN_WRITER_CAPABILITY = "modern-writer"
 
 
 def _canonical_json(document: object) -> bytes:
@@ -350,6 +352,8 @@ def common_build_identity_digest(manifest: dict[str, object]) -> str:
         "schema": BUILD_SCHEMA,
         "kind": "common-driver",
         "revision": manifest["revision"],
+        "instrumentation": manifest["instrumentation"],
+        "capabilities": manifest["capabilities"],
         "header_tree": header_export["tree"],
         "header_files": [
             {key: entry[key] for key in ("path", "mode", "oid", "size", "sha256")}
@@ -376,7 +380,7 @@ def compile_common_driver(
     compiler: Path,
     compiler_flags: Sequence[str],
     output: Path,
-    enable_modern_writer_operations: bool = True,
+    enable_modern_writer_operations: bool = False,
     run_fn: Run = subprocess.run,
 ) -> dict[str, object]:
     """Compile one common driver and return its complete audited build manifest."""
@@ -503,6 +507,15 @@ def compile_common_driver(
         "kind": "common-driver",
         "generated_at_utc": datetime.now(timezone.utc).isoformat(),
         "revision": revision,
+        "instrumentation": "none",
+        "capabilities": [
+            *LEGACY_COMMON_CAPABILITIES,
+            *(
+                (MODERN_WRITER_CAPABILITY,)
+                if enable_modern_writer_operations
+                else ()
+            ),
+        ],
         "header_export": header_export,
         "adapter_export": adapter_export,
         "compiler": {
@@ -536,6 +549,8 @@ def validate_build_manifest(manifest: dict[str, object]) -> None:
         "kind",
         "generated_at_utc",
         "revision",
+        "instrumentation",
+        "capabilities",
         "header_export",
         "adapter_export",
         "compiler",
@@ -551,6 +566,15 @@ def validate_build_manifest(manifest: dict[str, object]) -> None:
         raise RuntimeError("build manifest fields are incomplete or unknown")
     if manifest["schema"] != BUILD_SCHEMA or manifest["kind"] != "common-driver":
         raise RuntimeError("build manifest has the wrong schema or kind")
+    if manifest["instrumentation"] != "none":
+        raise RuntimeError("owned common-driver builds must be uninstrumented")
+    capabilities = manifest["capabilities"]
+    valid_capabilities = (
+        list(LEGACY_COMMON_CAPABILITIES),
+        [*LEGACY_COMMON_CAPABILITIES, MODERN_WRITER_CAPABILITY],
+    )
+    if capabilities not in valid_capabilities:
+        raise RuntimeError("common-driver capabilities are invalid")
     expected_digest = str(manifest["digest"])
     unsigned = dict(manifest)
     unsigned.pop("digest")
@@ -605,6 +629,12 @@ def validate_build_manifest(manifest: dict[str, object]) -> None:
     if Path(str(argv[0])).resolve(strict=True) != compiler_path:
         raise RuntimeError("build command did not invoke the recorded compiler")
     normalized_text = "\n".join(str(value) for value in normalized_argv)
+    modern_definition = "CSV2_BENCHMARK_ENABLE_MODERN_WRITER_OPERATIONS=1"
+    has_modern_definition = modern_definition in normalized_text
+    if has_modern_definition != (MODERN_WRITER_CAPABILITY in capabilities):
+        raise RuntimeError("common-driver capabilities differ from its build command")
+    if "CSV2_BENCHMARK_TIMER_SCOPE_AUDIT=1" in normalized_text:
+        raise RuntimeError("owned common-driver build enables timer-scope audit")
     for placeholder in ("{revision}", "{include_root}", "{adapter_source}", "{output}"):
         if placeholder not in normalized_text:
             raise RuntimeError(f"build command is missing normalized {placeholder}")
@@ -657,7 +687,7 @@ def build_common_pair(
     compiler: Path,
     compiler_flags: Sequence[str],
     workspace: Path,
-    enable_modern_writer_operations: bool = True,
+    enable_modern_writer_operations: bool = False,
     run_fn: Run = subprocess.run,
 ) -> dict[str, object]:
     """Build both comparison artifacts from immutable objects and one shared adapter."""

@@ -29,7 +29,19 @@ OPERATIONS = (
     "writer_escaped_direct",
     "writer_escaped_streamable",
 )
+MODERN_WRITER_OPERATIONS = frozenset(
+    {
+        "writer_raw_direct",
+        "writer_raw_streamable",
+        "writer_escaped_direct",
+        "writer_escaped_streamable",
+    }
+)
 SOURCES = ("buffer", "mmap")
+OPERATION_SOURCES = {
+    operation: frozenset({"buffer", "mmap"}) for operation in OPERATIONS
+}
+OPERATION_SOURCES["legacy_mmap_rows_cells"] = frozenset({"mmap"})
 UINT64_MAX = (1 << 64) - 1
 INT64_MAX = (1 << 63) - 1
 RESULT_FIELDS = {
@@ -268,6 +280,29 @@ def selected(requested: str, available: Iterable[str]) -> list[str]:
     return wanted
 
 
+def required_capabilities(operations: Iterable[str]) -> set[str]:
+    selected_operations = set(operations)
+    capabilities: set[str] = set()
+    if selected_operations & {"rows_cells", "legacy_mmap_rows_cells"}:
+        capabilities.add("legacy-reader")
+    if "legacy_writer_raw" in selected_operations:
+        capabilities.add("legacy-writer")
+    if selected_operations & MODERN_WRITER_OPERATIONS:
+        capabilities.add("modern-writer")
+    return capabilities
+
+
+def parse_capabilities(value: str) -> set[str]:
+    entries = value.split(",")
+    if any(not entry for entry in entries) or len(entries) != len(set(entries)):
+        raise RuntimeError("benchmark capabilities are malformed")
+    capabilities = set(entries)
+    allowed = {"legacy-reader", "legacy-writer", "modern-writer"}
+    if not capabilities <= allowed:
+        raise RuntimeError("benchmark capabilities contain an unknown entry")
+    return capabilities
+
+
 def validate_mode_invariants(
     mode: str,
     baseline_revision: str,
@@ -329,6 +364,7 @@ def validate_result(
     expected_byte_basis: str,
     expected_bytes: int,
     expected_revision: str | None = None,
+    expected_capabilities: str | None = None,
 ) -> float:
     expected = {
         "protocol": PROTOCOL,
@@ -349,6 +385,8 @@ def validate_result(
             "benchmark revision changed between description and measurement: "
             f"expected {expected_revision}, got {result.get('revision')}"
         )
+    if expected_capabilities is not None and result.get("capabilities") != expected_capabilities:
+        raise RuntimeError("benchmark capabilities changed between description and measurement")
     try:
         byte_count = int(result["bytes"])
         elapsed_ns = int(result["elapsed_ns"])
@@ -411,6 +449,7 @@ def measure_case(
     expected_scope: str,
     expected_semantic_case_id: str,
     expected_byte_basis: str,
+    expected_capabilities: str | None = None,
     invoke_fn: Invoke = invoke,
     calibration_noise: float = 0.0,
     baseline_revision: str | None = None,
@@ -444,6 +483,7 @@ def measure_case(
             expected_byte_basis=expected_byte_basis,
             expected_bytes=expected_bytes,
             expected_revision=expected_revision,
+            expected_capabilities=expected_capabilities,
         )
         current_signature = semantic_signature(result)
         if signature is None:
@@ -734,6 +774,38 @@ def main() -> None:
     elif args.machine_profile is not None:
         parser.error("exploratory comparisons do not accept --machine-profile")
 
+    try:
+        operations = selected(args.operations, OPERATIONS)
+        sources = selected(args.sources, SOURCES)
+        incompatible = [
+            operation
+            for operation in operations
+            if not OPERATION_SOURCES[operation].intersection(sources)
+        ]
+        if incompatible:
+            raise ValueError(
+                "selected sources are incompatible with operations: "
+                + ", ".join(incompatible)
+            )
+        args.datasets = canonical_existing(args.datasets, "dataset directory")
+        if not args.datasets.is_dir():
+            raise RuntimeError(f"dataset path is not a directory: {args.datasets}")
+        discovered_datasets = sorted(args.datasets.glob("*.csv"))
+        dataset_paths: list[tuple[str, Path]] = []
+        for path in discovered_datasets:
+            resolved = canonical_existing(path, f"dataset {path.name}")
+            if not resolved.is_file():
+                raise RuntimeError(f"dataset is not a file: {path.name}")
+            dataset_paths.append((path.name, resolved))
+        if not dataset_paths:
+            raise RuntimeError(f"no CSV datasets found in {args.datasets}")
+        datasets = selected(args.files, (name for name, _ in dataset_paths))
+    except (OSError, RuntimeError, ValueError) as error:
+        parser.error(str(error))
+
+    requested_capabilities = required_capabilities(operations)
+    enable_modern_writer_operations = "modern-writer" in requested_capabilities
+
     artifact_mode = "external" if args.external_artifacts else "owned"
     owned_builds: dict[str, object] | None = None
     if not args.external_artifacts:
@@ -750,6 +822,7 @@ def main() -> None:
                 compiler=compiler,
                 compiler_flags=compiler_flags,
                 workspace=canonical_output(args.build_root),
+                enable_modern_writer_operations=enable_modern_writer_operations,
             )
             args.compiler_flags = " ".join(compiler_flags)
             args.baseline = Path(str(owned_builds["baseline"]["output"]["path"]))
@@ -785,7 +858,6 @@ def main() -> None:
         args.baseline = canonical_existing(args.baseline, "baseline executable")
         args.candidate = canonical_existing(args.candidate, "candidate executable")
         args.adapter_source = canonical_existing(args.adapter_source, "adapter source")
-        args.datasets = canonical_existing(args.datasets, "dataset directory")
         if args.machine_profile is not None:
             machine_profile = machine.load(args.machine_profile)
             if machine_profile["observation"]["process_affinity"] != requested_affinity:
@@ -799,8 +871,6 @@ def main() -> None:
         ):
             if not path.is_file():
                 raise RuntimeError(f"{label} is not a file: {path}")
-        if not args.datasets.is_dir():
-            raise RuntimeError(f"dataset path is not a directory: {args.datasets}")
         if args.calibration is not None:
             args.calibration = canonical_existing(args.calibration, "calibration")
             if not args.calibration.is_file():
@@ -811,13 +881,6 @@ def main() -> None:
             or args.output.with_suffix(args.output.suffix + ".sha256.json")
         )
 
-        discovered_datasets = sorted(args.datasets.glob("*.csv"))
-        dataset_paths = []
-        for path in discovered_datasets:
-            resolved = canonical_existing(path, f"dataset {path.name}")
-            if not resolved.is_file():
-                raise RuntimeError(f"dataset is not a file: {path.name}")
-            dataset_paths.append((path.name, resolved))
         protected_paths = [
             ("adapter source", args.adapter_source),
             ("baseline executable", args.baseline),
@@ -868,12 +931,26 @@ def main() -> None:
         )
         if baseline_contracts != candidate_contracts:
             raise RuntimeError("baseline and candidate operation contracts differ")
+        baseline_capabilities = parse_capabilities(baseline_description["capabilities"])
+        candidate_capabilities = parse_capabilities(candidate_description["capabilities"])
+        if baseline_capabilities != candidate_capabilities:
+            raise RuntimeError("baseline and candidate capabilities differ")
         for description, contracts, side in (
             (baseline_description, baseline_contracts, "baseline"),
             (candidate_description, candidate_contracts, "candidate"),
         ):
-            if set(description["operations"].split(",")) != set(contracts):
+            described_operations = set(description["operations"].split(","))
+            if described_operations != set(contracts):
                 raise RuntimeError(f"{side} operation list and contracts differ")
+            described_capabilities = parse_capabilities(description["capabilities"])
+            if required_capabilities(described_operations) != described_capabilities:
+                raise RuntimeError(f"{side} capabilities and operations differ")
+            if owned_builds is not None and described_capabilities != set(
+                owned_builds[side]["capabilities"]
+            ):
+                raise RuntimeError(f"{side} runtime capabilities differ from its build")
+            if not requested_capabilities <= described_capabilities:
+                raise RuntimeError(f"{side} executable lacks a requested capability")
     except RuntimeError as error:
         parser.error(str(error))
 
@@ -896,15 +973,7 @@ def main() -> None:
     except ValueError as error:
         parser.error(str(error))
 
-    if not dataset_paths:
-        parser.error(f"no CSV datasets found in {args.datasets}")
     by_name = dict(dataset_paths)
-    try:
-        datasets = selected(args.files, (name for name, _ in dataset_paths))
-        operations = selected(args.operations, OPERATIONS)
-        sources = selected(args.sources, SOURCES)
-    except ValueError as error:
-        parser.error(str(error))
 
     for description, side in (
         (baseline_description, "baseline"),
@@ -1008,6 +1077,7 @@ def main() -> None:
                         expected_scope,
                         expected_semantic_case_id,
                         expected_byte_basis,
+                        expected_capabilities=baseline_description["capabilities"],
                         calibration_noise=calibration_noise.get(key, 0.0),
                         baseline_revision=args.baseline_revision,
                         candidate_revision=args.candidate_revision,

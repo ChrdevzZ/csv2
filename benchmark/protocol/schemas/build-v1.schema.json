@@ -11,7 +11,8 @@
       "type": "object",
       "required": [
         "schema", "kind", "generated_at_utc", "revision", "header_export",
-        "adapter_export", "compiler", "compiler_flags", "argv", "normalized_argv",
+        "adapter_export", "instrumentation", "capabilities", "compiler",
+        "compiler_flags", "argv", "normalized_argv",
         "build_log", "output", "identity_digest", "digest"
       ],
       "properties": {
@@ -19,6 +20,13 @@
         "kind": {"const": "common-driver"},
         "generated_at_utc": {"type": "string", "minLength": 1},
         "revision": {"$ref": "#/$defs/object_id"},
+        "instrumentation": {"const": "none"},
+        "capabilities": {
+          "oneOf": [
+            {"const": ["legacy-reader", "legacy-writer"]},
+            {"const": ["legacy-reader", "legacy-writer", "modern-writer"]}
+          ]
+        },
         "header_export": {"$ref": "#/$defs/git_export"},
         "adapter_export": {"$ref": "#/$defs/git_export"},
         "compiler": {"$ref": "#/$defs/compiler"},
