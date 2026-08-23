@@ -30,6 +30,7 @@ class EvidenceBundleTests(unittest.TestCase):
                 "tools/csv2bench/builds.py",
                 "tools/csv2bench/derivation.py",
                 "tools/csv2bench/evidence.py",
+                "tools/csv2bench/machine.py",
                 "tools/csv2bench/protocol.py",
             },
         )
@@ -59,7 +60,7 @@ class EvidenceBundleTests(unittest.TestCase):
                     "strict_valid": True,
                     "strict_error": {
                         "code": "none",
-                        "offset": 0,
+                        "byte_offset": 0,
                         "row": 0,
                         "column": 0,
                     },
@@ -129,6 +130,16 @@ class EvidenceBundleTests(unittest.TestCase):
         unsigned_build = dict(fixed["build"])
         unsigned_build.pop("digest")
         fixed["build"]["digest"] = test_protocol.builds.document_digest(unsigned_build)
+
+        profile_path = root / "machine-profile.json"
+        profile_document = test_protocol.machine_profile()["profile"]
+        profile_path.write_text(json.dumps(profile_document), encoding="utf-8")
+        profile_binding = test_protocol.machine_profile()
+        profile_binding["artifact"] = artifacts.metadata(profile_path)
+        profile_binding["digest"] = profile_binding["artifact"]["sha256"]
+        calibration["machine_profile"] = copy.deepcopy(profile_binding)
+        comparison["machine_profile"] = copy.deepcopy(profile_binding)
+        fixed["machine_profile"] = copy.deepcopy(profile_binding)
 
         identities = {
             "calibration_report": calibration_identity,
@@ -256,6 +267,32 @@ class EvidenceBundleTests(unittest.TestCase):
                         *values[:4], values[4], values[5], test_protocol.bundle()
                     )
 
+    def test_machine_profile_content_must_match_the_bound_artifact(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            values = self.components(Path(directory))
+            for report in values[:3]:
+                report["machine_profile"]["profile"]["governor"] = "powersave"
+                report["machine_profile"]["observation"]["governor"] = "powersave"
+            with mock.patch.object(
+                evidence.builds, "validate_build_manifest"
+            ), mock.patch.object(evidence.builds, "verify_current_build_manifest"):
+                with self.assertRaisesRegex(RuntimeError, "content differs"):
+                    evidence.assemble_evidence(
+                        *values[:4], values[4], values[5], test_protocol.bundle()
+                    )
+
+    def test_corpus_strict_diagnostics_are_closed_and_consistent(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            values = self.components(Path(directory))
+            values[3]["datasets"][0]["strict_error"]["byte_offset"] = 1
+            with mock.patch.object(
+                evidence.builds, "validate_build_manifest"
+            ), mock.patch.object(evidence.builds, "verify_current_build_manifest"):
+                with self.assertRaisesRegex(RuntimeError, "valid diagnostics"):
+                    evidence.assemble_evidence(
+                        *values[:4], values[4], values[5], test_protocol.bundle()
+                    )
+
     def test_finalizer_rejects_calibration_noise_not_derived_from_aa_case(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             values = self.components(Path(directory))
@@ -377,7 +414,7 @@ class EvidenceBundleTests(unittest.TestCase):
                     "strict_valid": True,
                     "strict_error": {
                         "code": "none",
-                        "offset": 0,
+                        "byte_offset": 0,
                         "row": 0,
                         "column": 0,
                     },

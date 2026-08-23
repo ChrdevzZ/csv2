@@ -128,7 +128,7 @@ def _validate_profile(document: object) -> dict[str, object]:
     return document
 
 
-def load(path: Path) -> dict[str, object]:
+def _read_profile(path: Path) -> tuple[dict[str, object], dict[str, object]]:
     canonical = artifacts.canonical_existing(path, "machine profile")
     if not canonical.is_file():
         raise RuntimeError("machine profile is not a regular file")
@@ -140,6 +140,14 @@ def load(path: Path) -> dict[str, object]:
     except (OSError, UnicodeDecodeError, json.JSONDecodeError, ValueError) as error:
         raise RuntimeError("machine profile is not valid unique-key UTF-8 JSON") from error
     profile = _validate_profile(document)
+    after = artifacts.metadata(canonical)
+    if before != after:
+        raise RuntimeError("machine profile changed while it was read")
+    return profile, before
+
+
+def load(path: Path) -> dict[str, object]:
+    profile, artifact = _read_profile(path)
     observation = observe()
     for field in (
         "system",
@@ -155,12 +163,24 @@ def load(path: Path) -> dict[str, object]:
     affinity = observation["process_affinity"]
     if not set(affinity) <= set(profile["allowed_affinity"]):
         raise RuntimeError("runtime CPU affinity is outside the machine profile")
-    after = artifacts.metadata(canonical)
-    if before != after:
-        raise RuntimeError("machine profile changed while it was read")
     return {
-        "artifact": before,
+        "artifact": artifact,
         "profile": profile,
-        "digest": before["sha256"],
+        "digest": artifact["sha256"],
         "observation": observation,
     }
+
+
+def verify_binding(binding: object, label: str = "machine profile") -> None:
+    if not isinstance(binding, dict):
+        raise RuntimeError(f"{label} binding must be an object")
+    artifact = binding.get("artifact")
+    if not isinstance(artifact, dict) or not isinstance(artifact.get("path"), str):
+        raise RuntimeError(f"{label} binding lacks its source artifact")
+    profile, actual_artifact = _read_profile(Path(artifact["path"]))
+    if actual_artifact != artifact:
+        raise RuntimeError(f"{label} artifact differs from its recorded identity")
+    if binding.get("digest") != actual_artifact["sha256"]:
+        raise RuntimeError(f"{label} digest differs from its source artifact")
+    if binding.get("profile") != profile:
+        raise RuntimeError(f"{label} content differs from its source artifact")

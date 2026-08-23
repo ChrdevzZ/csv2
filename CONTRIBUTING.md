@@ -163,8 +163,9 @@ results are `exploratory` and cannot establish “no regression”. Only a
 completed `controlled` evidence bundle produced by the cross-report finalizer
 is decision-eligible. Controlled work also requires a reviewed machine profile
 whose digest and runtime observation match A/A, A/B, and fixed metrics. Do not
-edit derived statistics or verdicts: validators rebuild them from launch wires,
-samples, and the recorded schedule.
+edit or synthesize the embedded profile: finalization reparses its bound source
+artifact. Do not edit derived statistics or verdicts: validators rebuild them
+from launch wires, samples, and the recorded schedule.
 
 ## Verification dependencies
 
