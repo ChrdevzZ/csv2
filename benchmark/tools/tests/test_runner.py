@@ -12,8 +12,10 @@ from csv2bench import runner
 
 def result(revision: str, elapsed: int = 100) -> dict[str, str]:
     return {
-        "protocol": "csv2-common-v4",
+        "protocol": "csv2-common-v5",
         "revision": revision,
+        "instrumentation": "none",
+        "capabilities": "legacy-reader,legacy-writer,modern-writer",
         "operation": "rows_cells",
         "scope": "traversal_only",
         "source": "buffer",
@@ -26,7 +28,8 @@ def result(revision: str, elapsed: int = 100) -> dict[str, str]:
         "cells": "2",
         "row_bytes": "3",
         "checksum": "42",
-        "timed_reader_steps": "3",
+        "timed_reader_steps": "0",
+        "timed_checksum_mix_calls": "0",
     }
 
 
@@ -61,7 +64,7 @@ class RunnerTests(unittest.TestCase):
         line = " ".join(f"{key}={value}" for key, value in result("x").items())
         self.assertEqual(runner.parse_output(line)["revision"], "x")
         with self.assertRaisesRegex(RuntimeError, "unsupported benchmark protocol"):
-            runner.parse_output(line.replace("csv2-common-v4", "csv2-common-v3"))
+            runner.parse_output(line.replace("csv2-common-v5", "csv2-common-v4"))
 
     def test_selection_rejects_unknown_duplicate_and_empty_entries(self) -> None:
         with self.assertRaisesRegex(ValueError, "unknown"):
@@ -117,7 +120,7 @@ class RunnerTests(unittest.TestCase):
             scope="writer_only",
             timed_reader_steps="1",
         )
-        with self.assertRaisesRegex(RuntimeError, "Reader state"):
+        with self.assertRaisesRegex(RuntimeError, "timer-scope audit work"):
             runner.validate_result(
                 writer_result,
                 "writer_raw_direct",
@@ -148,7 +151,7 @@ class RunnerTests(unittest.TestCase):
             path.write_text(
                 json.dumps(
                     {
-                        "schema": "csv2-benchmark-report-v5",
+                        "schema": "csv2-benchmark-report-v6",
                         "mode": "aa",
                         "status": "completed",
                     }

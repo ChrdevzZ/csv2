@@ -94,7 +94,7 @@ def verify_wire(stdout: str, operation: str, source: str) -> None:
             raise RuntimeError(f"duplicate or empty verification field: {field!r}")
         fields[key] = value
     expected = {
-        "protocol": "csv2-current-v3",
+        "protocol": "csv2-current-v4",
         "operation": operation,
         "source": source,
         "byte_basis": "input_corpus",

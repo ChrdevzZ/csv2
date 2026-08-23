@@ -1,4 +1,5 @@
 #include "context.hpp"
+#include "support/mapping_touch.hpp"
 
 #include <algorithm>
 #include <cerrno>
@@ -63,7 +64,8 @@ std::ostream &operator<<(std::ostream &stream, const StreamableField &field) {
 }
 
 Context::Context()
-    : input_size_(0), mmap_ready_(false), decoded_row_count_(0), decoded_cell_count_(0),
+    : input_size_(0), mmap_ready_(false), mapping_pretouch_sink_(0), decoded_row_count_(0),
+      decoded_cell_count_(0),
       output_stream_(&output_buffer_), force_output_stream_failure_(false),
       force_input_read_failure_(false), prepared_mask_(prepare_none),
       prepared_sources_(source_none) {}
@@ -79,6 +81,7 @@ bool Context::load(const std::string &path, unsigned requirements, unsigned sour
   buffer_random_positions_.clear();
   mmap_random_positions_.clear();
   mmap_ready_ = false;
+  mapping_pretouch_sink_ = 0;
   decoded_rows_.clear();
   streamable_rows_.clear();
   decoded_row_count_ = 0;
@@ -111,7 +114,9 @@ bool Context::load(const std::string &path, unsigned requirements, unsigned sour
   const bool mmap_reader_requested =
       (requirements & prepare_reader) != 0 && (sources & source_mmap) != 0;
   const bool data_requested = (requirements & prepare_data) != 0 || buffer_reader_requested;
-  const bool mapping_requested = (requirements & prepare_mapping) != 0 || mmap_reader_requested;
+  const bool mapping_requested = (requirements & prepare_mapping) != 0 ||
+                                 (requirements & prepare_pretouched_mapping) != 0 ||
+                                 mmap_reader_requested;
 
   if (data_requested) {
     input.seekg(0, std::ios::beg);
@@ -140,6 +145,10 @@ bool Context::load(const std::string &path, unsigned requirements, unsigned sour
       return false;
     }
     prepared_mask_ |= prepare_mapping;
+    if ((requirements & prepare_pretouched_mapping) != 0) {
+      mapping_pretouch_sink_ = touch_mapping_bytes(mapping_.data(), mapping_.size());
+      prepared_mask_ |= prepare_pretouched_mapping;
+    }
     if (mmap_reader_requested) {
       if (!mmap_reader_.parse_borrowed(mapping_.data(), mapping_.size())) {
         error = "unable to create mmap reader";
@@ -281,6 +290,8 @@ std::string Context::preparation_description() const {
     append("buffer-reader");
   if ((prepared_mask_ & prepare_mapping) != 0)
     append("mapping");
+  if ((prepared_mask_ & prepare_pretouched_mapping) != 0)
+    append("pretouched-mapping");
   if ((prepared_mask_ & prepare_reader) != 0 && (prepared_sources_ & source_mmap) != 0)
     append("mmap-reader");
   if ((prepared_mask_ & prepare_decoded_rows) != 0)

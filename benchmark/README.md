@@ -53,7 +53,7 @@ configuration.
 
 | Group | Operations |
 | --- | --- |
-| source | `file-read-cached`, `mmap-open`, `mmap-touch-resident`, `parse-borrowed`, `parse-owned`, conditional `parse-span` |
+| source | `file-read-cached`, `mmap-open`, `mmap-touch-pretouched`, `parse-borrowed`, `parse-owned`, conditional `parse-span` |
 | traversal | `rows`, `rows-cells` |
 | extraction | row raw; cell raw/decoded/content with fresh or reused string; decoded fresh/reused vector |
 | validation | `valid`, `invalid-early`, `invalid-middle`, `invalid-late` |
@@ -64,9 +64,10 @@ configuration.
 
 `file-read-cached` opens and reads a file repeatedly; it describes a cached
 filesystem path, not cold storage. `mmap-open` creates a fresh mapping without
-pre-mapping the input. `mmap-touch-resident` touches one byte per page and the
-final byte of a mapping prepared before timing; it describes resident-page
-access, not first page faults. Each operation declares source compatibility and
+pre-mapping the input. `mmap-touch-pretouched` touches the same 4096-byte stride
+addresses and final byte during setup and during the timed kernel. This establishes
+an explicit pretouch contract without claiming that the operating system keeps
+every page resident. Each operation declares source compatibility and
 a preparation bitmask. `Context` materializes only that state: source/traversal
 kernels do not decode Writer rows or allocate Writer buffers. Reused extraction
 buffers and Writer output capacity are reserved before timing only for
@@ -120,7 +121,7 @@ wire, never by floating-point benchmark counters:
   --csv2-verify
 ```
 
-The line begins with `protocol=csv2-current-v3` and includes a stable semantic
+The line begins with `protocol=csv2-current-v4` and includes a stable semantic
 case ID, scope, source, byte basis, decimal `uint64_t` checksum, bytes, rows,
 cells, allocations, and allocated bytes. The
 instrumented `csv2_benchmark_allocations` executable replaces ordinary and
@@ -191,7 +192,10 @@ each exact header tree directly from immutable Git blobs, then compiles both
 with one audited compiler and normalized command. It rejects links, unsafe
 paths, dirty-worktree substitution, mismatched flags, and output drift.
 
-The driver emits `csv2-common-v4`. Its `--describe` wire assigns every
+The formal driver emits `csv2-common-v5` with `instrumentation=none`. A separate
+timer-scope audit executable is built from the same C++11 source with
+`instrumentation=timer_scope_audit`; it is used only to prove measurement boundaries
+and is rejected by the comparison runner. The `--describe` wire assigns every
 operation an explicit semantic case ID, scope, byte basis, and supported source
 set. `rows_cells` is
 `traversal_only`; Writer operations are `writer_only` and consume pointer/length
@@ -325,7 +329,7 @@ scope, source, and byte basis match the fixed-metrics `comparison_binding`.
 Its output and sibling manifest paths must not already exist.
 Individual comparison and fixed-metrics reports expose
 `controlled_complete`, but always keep `decision_eligible=false`. Only the
-resulting `csv2-performance-evidence-bundle-v2` can be decision-eligible.
+resulting `csv2-performance-evidence-bundle-v3` can be decision-eligible.
 
 ## Evidence classes and protocols
 
@@ -340,9 +344,9 @@ resulting `csv2-performance-evidence-bundle-v2` can be decision-eligible.
   decision-eligible. Finalization reparses the profile artifact and compares its
   content with all embedded bindings.
 
-The fixed contracts are `csv2-common-v4`, `csv2-current-v3`,
-`csv2-benchmark-build-v1`, `csv2-benchmark-report-v5`,
-`csv2-fixed-machine-metrics-v5`, `csv2-performance-evidence-bundle-v2`,
+The fixed contracts are `csv2-common-v5`, `csv2-current-v4`,
+`csv2-benchmark-build-v1`, `csv2-benchmark-report-v6`,
+`csv2-fixed-machine-metrics-v6`, `csv2-performance-evidence-bundle-v3`,
 `csv2-artifact-manifest-v3`, and `csv2-machine-profile-v1`. Older or unknown
 versions are rejected rather than converted. Every completed component and
 evidence JSON has a sibling v3 SHA-256 artifact manifest. See

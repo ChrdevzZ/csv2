@@ -148,7 +148,7 @@ int verify_operations(Registry &registry, Context &context, const Options &optio
         return;
       }
 
-      std::cout << "protocol=csv2-current-v3" << " revision=" << CSV2_BENCHMARK_REVISION
+      std::cout << "protocol=csv2-current-v4" << " revision=" << CSV2_BENCHMARK_REVISION
                 << " operation=" << operation.id << " source=" << source_name(source)
                 << " dataset=" << safe_component(context.dataset_name())
                 << " semantic_case_id=" << operation.semantic_case_id

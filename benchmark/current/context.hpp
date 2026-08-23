@@ -36,7 +36,8 @@ enum PreparationMask : unsigned {
   prepare_vector_scratch = 1u << 6,
   prepare_output = 1u << 7,
   prepare_index = 1u << 8,
-  prepare_random_positions = 1u << 9
+  prepare_random_positions = 1u << 9,
+  prepare_pretouched_mapping = 1u << 10
 };
 
 const char *source_name(Source source) noexcept;
@@ -82,6 +83,7 @@ class Context {
   mio::mmap_source mapping_;
 #endif
   bool mmap_ready_;
+  unsigned char mapping_pretouch_sink_;
   std::uint64_t decoded_row_count_;
   std::uint64_t decoded_cell_count_;
   std::vector<std::vector<std::string>> decoded_rows_;

@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "title": "CSV2 fixed-machine metrics v5",
+  "title": "CSV2 fixed-machine metrics v6",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -11,7 +11,7 @@
     "post_build", "machine_profile"
   ],
   "properties": {
-    "schema": {"const": "csv2-fixed-machine-metrics-v5"},
+    "schema": {"const": "csv2-fixed-machine-metrics-v6"},
     "artifact_mode": {"enum": ["owned", "external"]},
     "build": {
       "oneOf": [
@@ -186,7 +186,7 @@
             "bytes", "rows", "cells", "allocations", "allocated_bytes"
           ],
           "properties": {
-            "protocol": {"const": "csv2-current-v3"},
+            "protocol": {"const": "csv2-current-v4"},
             "revision": {"type": "string", "minLength": 1},
             "operation": {"type": "string", "minLength": 1},
             "source": {"enum": ["buffer", "mmap", "file"]},

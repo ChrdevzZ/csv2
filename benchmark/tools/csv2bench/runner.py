@@ -48,6 +48,9 @@ RESULT_FIELDS = {
     "row_bytes",
     "checksum",
     "timed_reader_steps",
+    "timed_checksum_mix_calls",
+    "instrumentation",
+    "capabilities",
 }
 
 Executable = Path | Sequence[Path | str]
@@ -154,6 +157,8 @@ def parse_output(output: str) -> dict[str, str]:
     result = parse_key_value_line(output, RESULT_FIELDS)
     if result["protocol"] != PROTOCOL:
         raise RuntimeError(f"unsupported benchmark protocol: {result['protocol']}")
+    if result["instrumentation"] != "none":
+        raise RuntimeError("formal comparisons require instrumentation=none")
     return result
 
 
@@ -200,6 +205,8 @@ def describe(executable: Executable) -> dict[str, str]:
         {
             "protocol",
             "revision",
+            "instrumentation",
+            "capabilities",
             "operations",
             "sources",
             "operation_contracts",
@@ -207,6 +214,8 @@ def describe(executable: Executable) -> dict[str, str]:
     )
     if result["protocol"] != PROTOCOL:
         raise RuntimeError(f"unsupported benchmark protocol: {result['protocol']}")
+    if result["instrumentation"] != "none":
+        raise RuntimeError("formal comparisons require instrumentation=none")
     result["_command"] = json.dumps(command)
     result["_stdout"] = completed.stdout.rstrip("\n")
     result["_stderr"] = completed.stderr.rstrip("\n")
@@ -348,6 +357,7 @@ def validate_result(
         row_bytes = int(result["row_bytes"])
         checksum = int(result["checksum"])
         timed_reader_steps = int(result["timed_reader_steps"])
+        timed_checksum_mix_calls = int(result["timed_checksum_mix_calls"])
     except (KeyError, ValueError) as error:
         raise RuntimeError("benchmark numeric fields must be integers") from error
     if (
@@ -359,14 +369,17 @@ def validate_result(
         or row_bytes < 0
         or checksum < 0
         or timed_reader_steps < 0
+        or timed_checksum_mix_calls < 0
         or any(
             value > UINT64_MAX
             for value in (byte_count, rows, cells, row_bytes, checksum)
         )
     ):
         raise RuntimeError("benchmark numeric fields are outside their valid range")
-    if expected_scope == "writer_only" and timed_reader_steps != 0:
-        raise RuntimeError("writer-only benchmark traversed Reader state inside the timer")
+    if result["instrumentation"] != "none":
+        raise RuntimeError("formal comparisons require instrumentation=none")
+    if timed_reader_steps != 0 or timed_checksum_mix_calls != 0:
+        raise RuntimeError("formal benchmark result contains timer-scope audit work")
     if expected_bytes <= 0:
         raise ValueError("expected dataset byte count must be positive")
     if byte_count != expected_bytes:

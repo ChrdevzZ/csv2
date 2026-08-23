@@ -1,4 +1,5 @@
 #include "../registry.hpp"
+#include "../support/mapping_touch.hpp"
 
 #if CSV2_HAS_MMAP
 #include <csv2/mio.hpp>
@@ -74,14 +75,7 @@ template <bool Verify> Result mmap_touch(Context &context, Source, TimedObserver
 #if CSV2_HAS_MMAP
   if (context.mmap_ready()) {
     result.bytes = static_cast<std::uint64_t>(context.mapped_size());
-    volatile unsigned char sink = 0;
-    const std::size_t stride = 4096;
-    for (std::size_t index = 0; index < context.mapped_size(); index += stride)
-      sink = static_cast<unsigned char>(sink ^
-                                        static_cast<unsigned char>(context.mapped_data()[index]));
-    if (context.mapped_size())
-      sink = static_cast<unsigned char>(
-          sink ^ static_cast<unsigned char>(context.mapped_data()[context.mapped_size() - 1]));
+    const unsigned char sink = touch_mapping_bytes(context.mapped_data(), context.mapped_size());
     if (Verify)
       mix(result, sink);
     else {
@@ -163,8 +157,9 @@ void register_source_operations(Registry &registry) {
 #if CSV2_HAS_MMAP
   registry.add("source/mmap-open", source_mmap, prepare_none, OperationScope::source_only,
                mmap_open<false>, mmap_open<true>);
-  registry.add("source/mmap-touch-resident", source_mmap, prepare_mapping,
-               OperationScope::source_only, mmap_touch<false>, mmap_touch<true>);
+  registry.add("source/mmap-touch-pretouched", source_mmap,
+               prepare_mapping | prepare_pretouched_mapping, OperationScope::source_only,
+               mmap_touch<false>, mmap_touch<true>);
 #endif
   registry.add("source/parse-borrowed", source_buffer, prepare_data, OperationScope::source_only,
                parse_borrowed<false>, parse_borrowed<true>, true);

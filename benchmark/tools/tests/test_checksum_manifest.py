@@ -41,11 +41,11 @@ class ChecksumManifestTests(unittest.TestCase):
                 "allocated_bytes": "0",
             }
             manifest.write_text(
-                json.dumps({"protocol": "csv2-current-v3", "checks": [check]}),
+                json.dumps({"protocol": "csv2-current-v4", "checks": [check]}),
                 encoding="utf-8",
             )
             wire = (
-                "protocol=csv2-current-v3 revision=revision "
+                "protocol=csv2-current-v4 revision=revision "
                 "operation=traversal/rows source=buffer dataset=input.csv "
                 "semantic_case_id=csv2.traversal.rows.v1 scope=writer_only "
                 "byte_basis=input_corpus checksum=1 bytes=1 rows=1 cells=0 "
