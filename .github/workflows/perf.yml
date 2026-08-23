@@ -6,7 +6,6 @@ on:
       baseline_ref:
         description: Baseline commit or ref
         required: true
-        default: master
         type: string
       candidate_ref:
         description: Candidate commit or ref (empty uses the dispatched SHA)
@@ -69,6 +68,7 @@ jobs:
           requested_candidate=$(git rev-parse "${candidate_input}^{commit}")
           candidate=$(git rev-parse 'HEAD^{commit}')
           test "$candidate" = "$requested_candidate"
+          test "$baseline" != "$candidate"
           git cat-file -e "${baseline}^{commit}"
           printf 'BASELINE_SHA=%s\nCANDIDATE_SHA=%s\n' \
             "$baseline" "$candidate" >> "$GITHUB_ENV"
@@ -213,6 +213,7 @@ jobs:
           requested_candidate=$(git rev-parse "${candidate_input}^{commit}")
           candidate=$(git rev-parse 'HEAD^{commit}')
           test "$candidate" = "$requested_candidate"
+          test "$baseline" != "$candidate"
           git cat-file -e "${baseline}^{commit}"
           printf 'BASELINE_SHA=%s\nCANDIDATE_SHA=%s\n' \
             "$baseline" "$candidate" >> "$GITHUB_ENV"

@@ -955,11 +955,18 @@ def validate_comparison_report(report: object) -> None:
         raise RuntimeError("A/A comparison must not reference another calibration")
     if document["mode"] == "aa" and revisions[0] != revisions[1]:
         raise RuntimeError("A/A comparison revisions must match")
+    if document["mode"] == "compare" and revisions[0] == revisions[1]:
+        raise RuntimeError("A/B comparison requires different revisions")
     if document["mode"] == "aa":
         baseline_hash = document["baseline"]["artifact"]["sha256"]
         candidate_hash = document["candidate"]["artifact"]["sha256"]
         if baseline_hash != candidate_hash:
             raise RuntimeError("A/A comparison artifacts must be byte-identical")
+        if artifact_mode == "owned" and (
+            document["baseline"]["build"]["identity_digest"]
+            != document["candidate"]["build"]["identity_digest"]
+        ):
+            raise RuntimeError("A/A comparison owned build identities must match")
     if artifact_mode == "owned":
         candidate_build = document["candidate"]["build"]
         adapter_export = candidate_build["adapter_export"]
