@@ -47,7 +47,7 @@ jobs:
           cmake --build build --parallel
           --target csv2_fuzz csv2_fuzz_writer csv2_fuzz_smoke csv2_fuzz_writer_smoke
           csv2_benchmark csv2_benchmark_allocations csv2_benchmark_observer_audit
-          csv2_common_benchmark
+          csv2_common_benchmark csv2_common_benchmark_timer_audit
 
       - name: Run deterministic fuzz smoke
         run: >-
@@ -88,7 +88,7 @@ jobs:
           cmake --build build-no-mmap --parallel \
             --target csv2_benchmark csv2_benchmark_allocations \
             csv2_benchmark_observer_audit \
-            csv2_common_benchmark
+            csv2_common_benchmark csv2_common_benchmark_timer_audit
           ctest --test-dir build-no-mmap -L benchmark-checksum \
             --no-tests=error --output-on-failure \
             --output-junit benchmark-checksum.xml
