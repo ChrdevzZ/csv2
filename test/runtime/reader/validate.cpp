@@ -3,6 +3,16 @@
 
 using namespace csv2_test;
 
+using QuoteTrimReader =
+    csv2::Reader<csv2::delimiter<','>, csv2::quote_character<'"'>,
+                 csv2::first_row_is_header<false>, csv2::trim_policy::trim_characters<'"'>>;
+using MixedQuoteTrimReader =
+    csv2::Reader<csv2::delimiter<','>, csv2::quote_character<'"'>,
+                 csv2::first_row_is_header<false>, csv2::trim_policy::trim_characters<' ', '"'>>;
+using WhitespaceTrimReader =
+    csv2::Reader<csv2::delimiter<','>, csv2::quote_character<'"'>,
+                 csv2::first_row_is_header<false>, csv2::trim_policy::trim_whitespace>;
+
 CSV2_TEST_CASE("reader.validate.use-a-custom-trim-policy-on-complete-field-bounds",
                "reader.validate") {
   using ContextTrimReader = csv2::Reader<csv2::delimiter<','>, csv2::quote_character<'"'>,
@@ -29,99 +39,90 @@ CSV2_TEST_CASE("reader.validate.do-not-validate-a-suffix-using-a-different-trim-
   CSV2_REQUIRE(error.byte_offset == 3);
 }
 
-CSV2_TEST_CASE("reader.validate.preserve-quote-structure-when-the-trim-policy-includes-quotes",
+CSV2_TEST_CASE("reader.validate.keep-a-lone-opening-quote-visible-to-validation",
                "reader.validate") {
-  using QuoteTrimReader =
-      csv2::Reader<csv2::delimiter<','>, csv2::quote_character<'"'>,
-                   csv2::first_row_is_header<false>, csv2::trim_policy::trim_characters<'"'>>;
-  using MixedTrimReader =
-      csv2::Reader<csv2::delimiter<','>, csv2::quote_character<'"'>,
-                   csv2::first_row_is_header<false>, csv2::trim_policy::trim_characters<' ', '"'>>;
-
-  CSV2_SUBCASE("A lone opening quote remains visible") {
-    QuoteTrimReader reader;
-    std::string input("\"");
-    CSV2_REQUIRE(reader.parse(input));
-    csv2::parse_error error;
-    CSV2_REQUIRE_FALSE(reader.validate(error));
-    CSV2_REQUIRE(error.code == csv2::parse_errc::unclosed_quote);
-    CSV2_REQUIRE(error.byte_offset == 0);
-    CSV2_REQUIRE(error.row == 1);
-    CSV2_REQUIRE(error.column == 1);
-  }
-
-  CSV2_SUBCASE("A quoted empty field remains valid") {
-    QuoteTrimReader reader;
-    std::string input("\"\"");
-    CSV2_REQUIRE(reader.parse(input));
-    csv2::parse_error error;
-    CSV2_REQUIRE(reader.validate(error));
-  }
-
-  CSV2_SUBCASE("A quoted value remains valid") {
-    QuoteTrimReader reader;
-    std::string input("\"a\"");
-    CSV2_REQUIRE(reader.parse(input));
-    csv2::parse_error error;
-    CSV2_REQUIRE(reader.validate(error));
-  }
-
-  CSV2_SUBCASE("A trailing quote in an unquoted field remains visible") {
-    QuoteTrimReader reader;
-    std::string input("a\"");
-    CSV2_REQUIRE(reader.parse(input));
-    csv2::parse_error error;
-    CSV2_REQUIRE_FALSE(reader.validate(error));
-    CSV2_REQUIRE(error.code == csv2::parse_errc::unexpected_quote);
-    CSV2_REQUIRE(error.byte_offset == 1);
-  }
-
-  CSV2_SUBCASE("Non-structural trim bytes can still surround a quoted field") {
-    MixedTrimReader reader;
-    std::string input("  \"a\"  ");
-    CSV2_REQUIRE(reader.parse(input));
-    csv2::parse_error error;
-    CSV2_REQUIRE(reader.validate(error));
-  }
+  QuoteTrimReader reader;
+  std::string input("\"");
+  CSV2_REQUIRE(reader.parse(input));
+  csv2::parse_error error;
+  CSV2_REQUIRE_FALSE(reader.validate(error));
+  CSV2_REQUIRE(error.code == csv2::parse_errc::unclosed_quote);
+  CSV2_REQUIRE(error.byte_offset == 0);
+  CSV2_REQUIRE(error.row == 1);
+  CSV2_REQUIRE(error.column == 1);
 }
 
-CSV2_TEST_CASE("reader.validate.preserve-structural-diagnostics-after-a-quoted-field-suffix",
+CSV2_TEST_CASE("reader.validate.accept-a-quoted-empty-field-when-quotes-are-trimmable",
                "reader.validate") {
-  using TrimmedReader =
-      csv2::Reader<csv2::delimiter<','>, csv2::quote_character<'"'>,
-                   csv2::first_row_is_header<false>, csv2::trim_policy::trim_whitespace>;
+  QuoteTrimReader reader;
+  std::string input("\"\"");
+  CSV2_REQUIRE(reader.parse(input));
+  csv2::parse_error error;
+  CSV2_REQUIRE(reader.validate(error));
+}
 
-  CSV2_SUBCASE("A bare carriage return follows trimmable bytes") {
-    TrimmedReader reader;
-    std::string input("\"a\" \r");
-    CSV2_REQUIRE(reader.parse(input));
-    csv2::parse_error error;
-    CSV2_REQUIRE_FALSE(reader.validate(error));
-    CSV2_REQUIRE(error.code == csv2::parse_errc::bare_carriage_return);
-    CSV2_REQUIRE(error.byte_offset == 4);
-    CSV2_REQUIRE(error.row == 1);
-    CSV2_REQUIRE(error.column == 1);
-  }
+CSV2_TEST_CASE("reader.validate.accept-a-quoted-value-when-quotes-are-trimmable",
+               "reader.validate") {
+  QuoteTrimReader reader;
+  std::string input("\"a\"");
+  CSV2_REQUIRE(reader.parse(input));
+  csv2::parse_error error;
+  CSV2_REQUIRE(reader.validate(error));
+}
 
-  CSV2_SUBCASE("A quote follows trimmable bytes") {
-    TrimmedReader reader;
-    std::string input("\"a\"  \"b\"");
-    CSV2_REQUIRE(reader.parse(input));
-    csv2::parse_error error;
-    CSV2_REQUIRE_FALSE(reader.validate(error));
-    CSV2_REQUIRE(error.code == csv2::parse_errc::invalid_doubled_quote);
-    CSV2_REQUIRE(error.byte_offset == 5);
-  }
+CSV2_TEST_CASE("reader.validate.keep-a-trailing-unquoted-quote-visible-to-validation",
+               "reader.validate") {
+  QuoteTrimReader reader;
+  std::string input("a\"");
+  CSV2_REQUIRE(reader.parse(input));
+  csv2::parse_error error;
+  CSV2_REQUIRE_FALSE(reader.validate(error));
+  CSV2_REQUIRE(error.code == csv2::parse_errc::unexpected_quote);
+  CSV2_REQUIRE(error.byte_offset == 1);
+}
 
-  CSV2_SUBCASE("Ordinary content follows trimmable bytes") {
-    TrimmedReader reader;
-    std::string input("\"a\"  x");
-    CSV2_REQUIRE(reader.parse(input));
-    csv2::parse_error error;
-    CSV2_REQUIRE_FALSE(reader.validate(error));
-    CSV2_REQUIRE(error.code == csv2::parse_errc::characters_after_closing_quote);
-    CSV2_REQUIRE(error.byte_offset == 5);
-  }
+CSV2_TEST_CASE("reader.validate.trim-non-structural-bytes-around-a-quoted-field",
+               "reader.validate") {
+  MixedQuoteTrimReader reader;
+  std::string input("  \"a\"  ");
+  CSV2_REQUIRE(reader.parse(input));
+  csv2::parse_error error;
+  CSV2_REQUIRE(reader.validate(error));
+}
+
+CSV2_TEST_CASE("reader.validate.report-a-bare-carriage-return-after-trimmable-suffix-bytes",
+               "reader.validate") {
+  WhitespaceTrimReader reader;
+  std::string input("\"a\" \r");
+  CSV2_REQUIRE(reader.parse(input));
+  csv2::parse_error error;
+  CSV2_REQUIRE_FALSE(reader.validate(error));
+  CSV2_REQUIRE(error.code == csv2::parse_errc::bare_carriage_return);
+  CSV2_REQUIRE(error.byte_offset == 4);
+  CSV2_REQUIRE(error.row == 1);
+  CSV2_REQUIRE(error.column == 1);
+}
+
+CSV2_TEST_CASE("reader.validate.report-a-quote-after-trimmable-suffix-bytes",
+               "reader.validate") {
+  WhitespaceTrimReader reader;
+  std::string input("\"a\"  \"b\"");
+  CSV2_REQUIRE(reader.parse(input));
+  csv2::parse_error error;
+  CSV2_REQUIRE_FALSE(reader.validate(error));
+  CSV2_REQUIRE(error.code == csv2::parse_errc::invalid_doubled_quote);
+  CSV2_REQUIRE(error.byte_offset == 5);
+}
+
+CSV2_TEST_CASE("reader.validate.report-content-after-trimmable-suffix-bytes",
+               "reader.validate") {
+  WhitespaceTrimReader reader;
+  std::string input("\"a\"  x");
+  CSV2_REQUIRE(reader.parse(input));
+  csv2::parse_error error;
+  CSV2_REQUIRE_FALSE(reader.validate(error));
+  CSV2_REQUIRE(error.code == csv2::parse_errc::characters_after_closing_quote);
+  CSV2_REQUIRE(error.byte_offset == 5);
 }
 
 #if defined(__cpp_exceptions) || defined(__EXCEPTIONS) || defined(_CPPUNWIND)

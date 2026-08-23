@@ -13,7 +13,6 @@
 #define CSV2_REQUIRE_THROWS(expression) REQUIRE_THROWS(expression)
 #define CSV2_REQUIRE_THROWS_AS(expression, exception) REQUIRE_THROWS_AS(expression, exception)
 #define CSV2_CHECK_THROWS_AS(expression, exception) CHECK_THROWS_AS(expression, exception)
-#define CSV2_SUBCASE(name) SECTION(name)
 
 #else
 
@@ -51,10 +50,6 @@
 #define CSV2_CHECK_THROWS_AS(expression, exception)                                                \
   CSV2_CHECK(::csv2_test::throws_as<exception>([&]() { static_cast<void>(expression); }))
 #endif
-
-#define CSV2_SUBCASE_IMPL(name, number)                                                            \
-  if (::csv2_test::subcase CSV2_TEST_JOIN(csv2_test_subcase_, number) = ::csv2_test::subcase(name))
-#define CSV2_SUBCASE(name) CSV2_SUBCASE_IMPL(name, __COUNTER__)
 
 #endif
 
