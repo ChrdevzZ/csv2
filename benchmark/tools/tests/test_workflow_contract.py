@@ -40,6 +40,8 @@ class WorkflowContractTests(unittest.TestCase):
             BENCHMARK_DIR.parent / ".github" / "workflows" / "perf.yml"
         ).read_text(encoding="utf-8")
 
+        self.assertNotIn("default: master", workflow)
+        self.assertEqual(workflow.count('test "$baseline" != "$candidate"'), 2)
         self.assertEqual(
             workflow.count("ref: ${{ inputs.candidate_ref || github.sha }}"), 2
         )

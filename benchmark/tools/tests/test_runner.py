@@ -29,6 +29,22 @@ def result(revision: str, elapsed: int = 100) -> dict[str, str]:
 
 
 class RunnerTests(unittest.TestCase):
+    def test_mode_invariants_distinguish_calibration_from_comparison(self) -> None:
+        runner.validate_mode_invariants(
+            "aa", "same", "same", "a" * 64, "a" * 64, "b" * 64, "b" * 64
+        )
+        with self.assertRaisesRegex(ValueError, "same revision"):
+            runner.validate_mode_invariants(
+                "aa", "base", "candidate", "a" * 64, "a" * 64, None, None
+            )
+        with self.assertRaisesRegex(ValueError, "different revisions"):
+            runner.validate_mode_invariants(
+                "compare", "same", "same", "a" * 64, "b" * 64, None, None
+            )
+        with self.assertRaisesRegex(ValueError, "build identity"):
+            runner.validate_mode_invariants(
+                "aa", "same", "same", "a" * 64, "a" * 64, "b" * 64, "c" * 64
+            )
     def test_manifest_artifact_metadata_does_not_require_a_revision(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             artifact = Path(directory) / "report.json"

@@ -269,6 +269,29 @@ def selected(requested: str, available: Iterable[str]) -> list[str]:
     return wanted
 
 
+def validate_mode_invariants(
+    mode: str,
+    baseline_revision: str,
+    candidate_revision: str,
+    baseline_sha256: str,
+    candidate_sha256: str,
+    baseline_build_identity: str | None,
+    candidate_build_identity: str | None,
+) -> None:
+    if mode == "aa":
+        if baseline_revision != candidate_revision:
+            raise ValueError("A/A calibration requires the same revision")
+        if baseline_sha256 != candidate_sha256:
+            raise ValueError("A/A calibration requires byte-identical executables")
+        if baseline_build_identity != candidate_build_identity:
+            raise ValueError("A/A calibration requires the same owned build identity")
+    elif mode == "compare":
+        if baseline_revision == candidate_revision:
+            raise ValueError("A/B comparison requires different revisions")
+    else:
+        raise ValueError(f"unsupported comparison mode: {mode}")
+
+
 def public_result(result: dict[str, str]) -> dict[str, str]:
     return {key: value for key, value in result.items() if not key.startswith("_")}
 
@@ -817,8 +840,22 @@ def main() -> None:
 
     baseline_artifact = artifact_metadata(args.baseline, args.baseline_revision)
     candidate_artifact = artifact_metadata(args.candidate, args.candidate_revision)
-    if args.mode == "aa" and baseline_artifact["sha256"] != candidate_artifact["sha256"]:
-        parser.error("A/A calibration requires byte-identical executables")
+    try:
+        validate_mode_invariants(
+            args.mode,
+            str(args.baseline_revision),
+            str(args.candidate_revision),
+            str(baseline_artifact["sha256"]),
+            str(candidate_artifact["sha256"]),
+            str(owned_builds["baseline"]["identity_digest"])
+            if owned_builds is not None
+            else None,
+            str(owned_builds["candidate"]["identity_digest"])
+            if owned_builds is not None
+            else None,
+        )
+    except ValueError as error:
+        parser.error(str(error))
 
     if not dataset_paths:
         parser.error(f"no CSV datasets found in {args.datasets}")

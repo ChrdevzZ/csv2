@@ -598,6 +598,12 @@ class ProtocolTests(unittest.TestCase):
                 with self.assertRaises(RuntimeError):
                     protocol.validate_comparison_report(report)
 
+    def test_comparison_mode_requires_distinct_revisions(self) -> None:
+        report = comparison_report()
+        report["mode"] = "compare"
+        with self.assertRaisesRegex(RuntimeError, "different revisions"):
+            protocol.validate_comparison_report(report)
+
     def test_fixed_metrics_rejects_mutated_timing_summary(self) -> None:
         report = fixed_metrics_report()
         report["timing"]["bytes_per_second"]["median"] = 2.0

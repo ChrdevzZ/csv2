@@ -74,6 +74,31 @@ class EvidenceBundleTests(unittest.TestCase):
         calibration["runner"] = copy.deepcopy(runner_bundle)
         comparison["runner"] = copy.deepcopy(runner_bundle)
         comparison["mode"] = "compare"
+        baseline_revision = "c" * 40
+        baseline = comparison["baseline"]
+        baseline["artifact"]["revision"] = baseline_revision
+        baseline["description"]["revision"] = baseline_revision
+        baseline_build = baseline["build"]
+        baseline_build["revision"] = baseline_revision
+        baseline_build["output"]["revision"] = baseline_revision
+        header_export = baseline_build["header_export"]
+        header_export["reference"] = baseline_revision
+        header_export["commit"] = baseline_revision
+        unsigned_export = dict(header_export)
+        unsigned_export.pop("digest")
+        header_export["digest"] = test_protocol.builds.document_digest(unsigned_export)
+        baseline_build["identity_digest"] = (
+            test_protocol.builds.common_build_identity_digest(baseline_build)
+        )
+        unsigned_build = dict(baseline_build)
+        unsigned_build.pop("digest")
+        baseline_build["digest"] = test_protocol.builds.document_digest(unsigned_build)
+        for launch in comparison["cases"][0]["launches"]:
+            if launch["side"] == "baseline":
+                launch["result"]["revision"] = baseline_revision
+                launch["stdout"] = " ".join(
+                    f"{key}={value}" for key, value in launch["result"].items()
+                )
         comparison["datasets"][0].update(
             path=str(dataset_path.resolve()), size=1, sha256=dataset_hash
         )
