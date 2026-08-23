@@ -111,11 +111,9 @@ CSV2_TEST_CASE("reader.scan.report-a-bare-carriage-return-before-a-line-feed-quo
   CSV2_REQUIRE(error.byte_offset == 1);
 }
 
-CSV2_TEST_CASE("reader.scan.reject-a-carriage-return-quote-outside-a-quoted-field",
-               "reader.scan") {
-  using CarriageReturnQuoteReader =
-      csv2::Reader<csv2::delimiter<','>, csv2::quote_character<'\r'>,
-                   csv2::first_row_is_header<false>>;
+CSV2_TEST_CASE("reader.scan.reject-a-carriage-return-quote-outside-a-quoted-field", "reader.scan") {
+  using CarriageReturnQuoteReader = csv2::Reader<csv2::delimiter<','>, csv2::quote_character<'\r'>,
+                                                 csv2::first_row_is_header<false>>;
   CarriageReturnQuoteReader reader;
   std::string input("a\rb");
   CSV2_REQUIRE(reader.parse(input));

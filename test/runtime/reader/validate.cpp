@@ -4,14 +4,14 @@
 using namespace csv2_test;
 
 using QuoteTrimReader =
-    csv2::Reader<csv2::delimiter<','>, csv2::quote_character<'"'>,
-                 csv2::first_row_is_header<false>, csv2::trim_policy::trim_characters<'"'>>;
+    csv2::Reader<csv2::delimiter<','>, csv2::quote_character<'"'>, csv2::first_row_is_header<false>,
+                 csv2::trim_policy::trim_characters<'"'>>;
 using MixedQuoteTrimReader =
-    csv2::Reader<csv2::delimiter<','>, csv2::quote_character<'"'>,
-                 csv2::first_row_is_header<false>, csv2::trim_policy::trim_characters<' ', '"'>>;
+    csv2::Reader<csv2::delimiter<','>, csv2::quote_character<'"'>, csv2::first_row_is_header<false>,
+                 csv2::trim_policy::trim_characters<' ', '"'>>;
 using WhitespaceTrimReader =
-    csv2::Reader<csv2::delimiter<','>, csv2::quote_character<'"'>,
-                 csv2::first_row_is_header<false>, csv2::trim_policy::trim_whitespace>;
+    csv2::Reader<csv2::delimiter<','>, csv2::quote_character<'"'>, csv2::first_row_is_header<false>,
+                 csv2::trim_policy::trim_whitespace>;
 
 CSV2_TEST_CASE("reader.validate.use-a-custom-trim-policy-on-complete-field-bounds",
                "reader.validate") {
@@ -103,8 +103,7 @@ CSV2_TEST_CASE("reader.validate.report-a-bare-carriage-return-after-trimmable-su
   CSV2_REQUIRE(error.column == 1);
 }
 
-CSV2_TEST_CASE("reader.validate.report-a-quote-after-trimmable-suffix-bytes",
-               "reader.validate") {
+CSV2_TEST_CASE("reader.validate.report-a-quote-after-trimmable-suffix-bytes", "reader.validate") {
   WhitespaceTrimReader reader;
   std::string input("\"a\"  \"b\"");
   CSV2_REQUIRE(reader.parse(input));
@@ -114,8 +113,7 @@ CSV2_TEST_CASE("reader.validate.report-a-quote-after-trimmable-suffix-bytes",
   CSV2_REQUIRE(error.byte_offset == 5);
 }
 
-CSV2_TEST_CASE("reader.validate.report-content-after-trimmable-suffix-bytes",
-               "reader.validate") {
+CSV2_TEST_CASE("reader.validate.report-content-after-trimmable-suffix-bytes", "reader.validate") {
   WhitespaceTrimReader reader;
   std::string input("\"a\"  x");
   CSV2_REQUIRE(reader.parse(input));
