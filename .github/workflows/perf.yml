@@ -1,6 +1,14 @@
 name: Performance evidence
 
 on:
+  pull_request:
+    paths:
+      - .github/workflows/perf.yml
+      - benchmark/**
+      - cmake/verification/**
+      - test/**
+      - third_party/verification/**
+      - CMakeLists.txt
   workflow_dispatch:
     inputs:
       baseline_ref:
@@ -22,6 +30,11 @@ on:
         required: true
         default: all
         type: string
+      operations:
+        description: Common-driver operations; must include rows_cells
+        required: true
+        default: rows_cells,legacy_writer_raw,writer_raw_direct,writer_raw_streamable,writer_escaped_direct,writer_escaped_streamable
+        type: string
       corpus_scale:
         description: Deterministic corpus row multiplier
         required: true
@@ -40,10 +53,122 @@ permissions:
   contents: read
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}-${{ inputs.evidence }}
-  cancel-in-progress: false
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}-${{ inputs.evidence || 'protocol-smoke' }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
+  protocol-smoke:
+    if: github.event_name == 'pull_request'
+    name: Perf / PR protocol smoke / GCC 14
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Check out exact pull request head
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Resolve exact base and head revisions
+        env:
+          BASELINE_SHA: ${{ github.event.pull_request.base.sha }}
+          CANDIDATE_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse 'HEAD^{commit}')" = "$CANDIDATE_SHA"
+          test "$BASELINE_SHA" != "$CANDIDATE_SHA"
+          git cat-file -e "${BASELINE_SHA}^{commit}"
+          git cat-file -e '9504e0b^{commit}'
+          printf 'BASELINE_SHA=%s\nCANDIDATE_SHA=%s\n' \
+            "$BASELINE_SHA" "$CANDIDATE_SHA" >> "$GITHUB_ENV"
+          mkdir -p build-perf-smoke/reports
+
+      - name: Build current-tree metrics and deterministic corpus
+        run: |
+          python3 benchmark/collect_metrics.py \
+            --repository . --candidate-ref "$CANDIDATE_SHA" \
+            --build-root build-perf-smoke/current-owned \
+            --corpus-scale 1 \
+            --compiler-executable "$(command -v g++-14)" \
+            --compiler-flags="-O3 -DNDEBUG" \
+            --operation traversal/rows-cells \
+            --input short_unquoted.csv --source buffer --runs 1 \
+            --minimum-time 0.001s --warmup-seconds 0 \
+            --evidence-level exploratory --skip-pmu \
+            --output build-perf-smoke/reports/current-metrics.json
+          cmake --build build-perf-smoke/current-owned/build --parallel
+          ctest --test-dir build-perf-smoke/current-owned/build \
+            -L benchmark-checksum --no-tests=error --output-on-failure \
+            --output-junit "$GITHUB_WORKSPACE/build-perf-smoke/reports/benchmark-checksum.xml"
+
+      - name: Run owned candidate A/A and base-to-head A/B
+        run: |
+          datasets=build-perf-smoke/current-owned/build/benchmark-corpus/fixtures
+          compiler=$(command -v g++-14)
+          operations=rows_cells,legacy_writer_raw,writer_raw_direct,writer_raw_streamable,writer_escaped_direct,writer_escaped_streamable
+          python3 benchmark/run_suite.py \
+            --repository . \
+            --baseline-ref "$CANDIDATE_SHA" --candidate-ref "$CANDIDATE_SHA" \
+            --build-root build-perf-smoke/common-aa \
+            --compiler-executable "$compiler" \
+            --compiler-flags="-std=c++11 -O3 -DNDEBUG" \
+            --datasets "$datasets" --runs 3 --warmups 1 --iterations 1 \
+            --operations "$operations" --sources buffer \
+            --files short_unquoted.csv --mode aa \
+            --evidence-level exploratory \
+            --output build-perf-smoke/reports/aa.json
+          python3 benchmark/run_suite.py \
+            --repository . \
+            --baseline-ref "$BASELINE_SHA" --candidate-ref "$CANDIDATE_SHA" \
+            --build-root build-perf-smoke/common-ab \
+            --compiler-executable "$compiler" \
+            --compiler-flags="-std=c++11 -O3 -DNDEBUG" \
+            --datasets "$datasets" --runs 3 --warmups 1 --iterations 1 \
+            --operations "$operations" --sources buffer \
+            --files short_unquoted.csv --mode compare \
+            --calibration build-perf-smoke/reports/aa.json \
+            --evidence-level exploratory \
+            --output build-perf-smoke/reports/ab.json
+
+      - name: Verify legacy-only owned build against the original baseline
+        run: |
+          python3 benchmark/run_suite.py \
+            --repository . \
+            --baseline-ref 9504e0b --candidate-ref "$CANDIDATE_SHA" \
+            --build-root build-perf-smoke/common-legacy \
+            --compiler-executable "$(command -v g++-14)" \
+            --compiler-flags="-std=c++11 -O3 -DNDEBUG" \
+            --datasets build-perf-smoke/current-owned/build/benchmark-corpus/fixtures \
+            --runs 1 --warmups 0 --iterations 1 \
+            --operations rows_cells,legacy_writer_raw --sources buffer \
+            --files short_unquoted.csv --mode compare --allow-uncalibrated \
+            --evidence-level exploratory \
+            --output build-perf-smoke/reports/legacy-ab.json
+
+      - name: Finalize and validate exploratory evidence
+        run: |
+          python3 benchmark/finalize_evidence.py \
+            --calibration build-perf-smoke/reports/aa.json \
+            --calibration-manifest build-perf-smoke/reports/aa.json.sha256.json \
+            --comparison build-perf-smoke/reports/ab.json \
+            --comparison-manifest build-perf-smoke/reports/ab.json.sha256.json \
+            --fixed-metrics build-perf-smoke/reports/current-metrics.json \
+            --fixed-metrics-manifest build-perf-smoke/reports/current-metrics.json.sha256.json \
+            --corpus-manifest build-perf-smoke/current-owned/build/benchmark-corpus/manifest.json \
+            --output build-perf-smoke/reports/evidence.json
+          python3 -B -c 'import json,sys; sys.path.insert(0,"benchmark/tools"); from csv2bench import protocol; root="build-perf-smoke/reports/"; [protocol.validate_comparison_report(json.load(open(root+n,encoding="utf-8"))) for n in ("aa.json","ab.json","legacy-ab.json")]; protocol.validate_fixed_metrics_report(json.load(open(root+"current-metrics.json",encoding="utf-8"))); protocol.validate_evidence_bundle(json.load(open(root+"evidence.json",encoding="utf-8")))'
+
+      - name: Upload protocol-smoke diagnostics
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: csv2-perf-protocol-smoke-${{ github.run_id }}
+          path: |
+            build-perf-smoke/reports
+            build-perf-smoke/current-owned/build/benchmark-corpus/manifest.json
+          if-no-files-found: error
+
   exploratory:
     if: inputs.evidence == 'exploratory'
     name: Perf / exploratory / hosted Linux
@@ -61,6 +186,7 @@ jobs:
         env:
           BASELINE_INPUT: ${{ inputs.baseline_ref }}
           CANDIDATE_INPUT: ${{ inputs.candidate_ref }}
+          OPERATIONS: ${{ inputs.operations }}
         run: |
           set -euo pipefail
           baseline=$(git rev-parse "${BASELINE_INPUT}^{commit}")
@@ -69,6 +195,7 @@ jobs:
           candidate=$(git rev-parse 'HEAD^{commit}')
           test "$candidate" = "$requested_candidate"
           test "$baseline" != "$candidate"
+          python3 -c 'import sys; values=[v.strip() for v in sys.argv[1].split(",")]; assert "rows_cells" in values and all(values) and len(values)==len(set(values)), "operations must be unique and include rows_cells"' "$OPERATIONS"
           git cat-file -e "${baseline}^{commit}"
           printf 'BASELINE_SHA=%s\nCANDIDATE_SHA=%s\n' \
             "$baseline" "$candidate" >> "$GITHUB_ENV"
@@ -107,6 +234,7 @@ jobs:
         env:
           RUNS: ${{ inputs.runs }}
           FILES: ${{ inputs.files }}
+          OPERATIONS: ${{ inputs.operations }}
         run: |
           datasets=build-perf/current-owned/build/benchmark-corpus/fixtures
           compiler=$(command -v g++-14)
@@ -118,7 +246,7 @@ jobs:
             --compiler-executable "$compiler" \
             --compiler-flags="-std=c++11 -O3 -DNDEBUG" \
             --datasets "$datasets" --runs "$RUNS" --warmups 3 --iterations 10 \
-            --operations rows_cells,legacy_writer_raw \
+            --operations "$OPERATIONS" \
             --sources buffer,mmap --files "$FILES" --mode aa \
             --evidence-level exploratory \
             --output build-perf/reports/aa.json
@@ -130,7 +258,7 @@ jobs:
             --compiler-executable "$compiler" \
             --compiler-flags="-std=c++11 -O3 -DNDEBUG" \
             --datasets "$datasets" --runs "$RUNS" --warmups 3 --iterations 10 \
-            --operations rows_cells,legacy_writer_raw \
+            --operations "$OPERATIONS" \
             --sources buffer,mmap --files "$FILES" --mode compare \
             --calibration build-perf/reports/aa.json \
             --evidence-level exploratory \
@@ -186,6 +314,7 @@ jobs:
           BASELINE_INPUT: ${{ inputs.baseline_ref }}
           CANDIDATE_INPUT: ${{ inputs.candidate_ref }}
           RUNS: ${{ inputs.runs }}
+          OPERATIONS: ${{ inputs.operations }}
         run: |
           set -euo pipefail
           test "$RUNS" -ge 20
@@ -197,6 +326,7 @@ jobs:
           candidate=$(git rev-parse 'HEAD^{commit}')
           test "$candidate" = "$requested_candidate"
           test "$baseline" != "$candidate"
+          python3 -c 'import sys; values=[v.strip() for v in sys.argv[1].split(",")]; assert "rows_cells" in values and all(values) and len(values)==len(set(values)), "operations must be unique and include rows_cells"' "$OPERATIONS"
           git cat-file -e "${baseline}^{commit}"
           printf 'BASELINE_SHA=%s\nCANDIDATE_SHA=%s\n' \
             "$baseline" "$candidate" >> "$GITHUB_ENV"
@@ -241,6 +371,7 @@ jobs:
         env:
           RUNS: ${{ inputs.runs }}
           FILES: ${{ inputs.files }}
+          OPERATIONS: ${{ inputs.operations }}
         run: |
           datasets=build-perf/current-owned/build/benchmark-corpus/fixtures
           compiler=$(command -v g++)
@@ -252,7 +383,7 @@ jobs:
             --compiler-executable "$compiler" \
             --compiler-flags="-std=c++11 -O3 -DNDEBUG" \
             --datasets "$datasets" --runs "$RUNS" --warmups 3 --iterations 10 \
-            --operations rows_cells,legacy_writer_raw \
+            --operations "$OPERATIONS" \
             --sources buffer,mmap --files "$FILES" --mode aa \
             --evidence-level controlled --cpu-affinity 0 \
             --machine-profile "$PROFILE_PATH" \
@@ -265,7 +396,7 @@ jobs:
             --compiler-executable "$compiler" \
             --compiler-flags="-std=c++11 -O3 -DNDEBUG" \
             --datasets "$datasets" --runs "$RUNS" --warmups 3 --iterations 10 \
-            --operations rows_cells,legacy_writer_raw \
+            --operations "$OPERATIONS" \
             --sources buffer,mmap --files "$FILES" --mode compare \
             --calibration build-perf/reports/aa.json \
             --evidence-level controlled --cpu-affinity 0 \
