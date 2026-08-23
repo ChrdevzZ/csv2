@@ -64,6 +64,8 @@ int list_operations(const Registry &registry, const Options &options) {
     selected += for_each_selected_source(operation, options, [&](Source source) {
       std::cout << operation.id << " source=" << source_name(source)
                 << " scope=" << operation_scope_name(operation.scope)
+                << " semantic_case_id=" << operation.semantic_case_id
+                << " byte_basis=" << operation.byte_basis
                 << " zero_allocations=" << (operation.expect_zero_allocations ? "true" : "false")
                 << '\n';
     });
@@ -146,11 +148,13 @@ int verify_operations(Registry &registry, Context &context, const Options &optio
         return;
       }
 
-      std::cout << "protocol=csv2-current-v2" << " revision=" << CSV2_BENCHMARK_REVISION
+      std::cout << "protocol=csv2-current-v3" << " revision=" << CSV2_BENCHMARK_REVISION
                 << " operation=" << operation.id << " source=" << source_name(source)
                 << " dataset=" << safe_component(context.dataset_name())
-                << " checksum=" << result.checksum << " bytes=" << result.bytes
-                << " rows=" << result.rows << " cells=" << result.cells
+                << " semantic_case_id=" << operation.semantic_case_id
+                << " scope=" << operation_scope_name(operation.scope)
+                << " byte_basis=" << operation.byte_basis << " checksum=" << result.checksum
+                << " bytes=" << result.bytes << " rows=" << result.rows << " cells=" << result.cells
                 << " allocations=" << result.allocations
                 << " allocated_bytes=" << result.allocated_bytes << '\n';
       if (operation.expect_zero_allocations && result.allocations != 0) {
@@ -269,8 +273,7 @@ int main(int argc, char **argv) {
     if (options.list)
       return list_operations(registry, options);
 
-    const bool batch_mode =
-        options.verify || options.observer_audit || options.preparation_audit;
+    const bool batch_mode = options.verify || options.observer_audit || options.preparation_audit;
     if (!batch_mode) {
       if (options.operation.empty()) {
         std::cerr << "timing requires exactly one --csv2-operation\n";

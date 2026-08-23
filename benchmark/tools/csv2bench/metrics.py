@@ -689,12 +689,21 @@ def main() -> None:
         allocation, allocation_invocation = verify(
             args.allocation_executable, args.operation, args.input, args.source, args.revision
         )
-        semantic_fields = ("operation", "source", "dataset", "checksum", "bytes", "rows", "cells")
+        semantic_fields = (
+            "operation", "source", "dataset", "semantic_case_id", "scope",
+            "byte_basis", "checksum", "bytes", "rows", "cells",
+        )
         if any(verification[field] != allocation[field] for field in semantic_fields):
             raise RuntimeError("allocation executable changed benchmark semantics")
         report["verification"] = {
             "result": verification,
             "invocation": verification_invocation,
+        }
+        report["comparison_binding"] = {
+            field: verification[field]
+            for field in (
+                "dataset", "semantic_case_id", "scope", "source", "byte_basis"
+            )
         }
         report["allocations"] = {
             "count": int(allocation["allocations"]),

@@ -45,7 +45,7 @@ def fixed_metrics_manifest(*, owned: bool = False) -> dict[str, object]:
         identities["compiler_executable"] = artifact()
         identities["compile_commands"] = artifact()
     return {
-        "schema": "csv2-artifact-manifest-v2",
+        "schema": "csv2-artifact-manifest-v3",
         "kind": "fixed-metrics",
         "report": artifact(),
         "inputs": {
@@ -65,6 +65,7 @@ def evidence_bundle() -> dict[str, object]:
         "machine": True,
         "datasets": True,
         "corpus": True,
+        "semantic_binding": True,
     }
     artifacts = {
         name: artifact()
@@ -79,13 +80,13 @@ def evidence_bundle() -> dict[str, object]:
         )
     }
     component = {
-        "schema": "csv2-benchmark-report-v4",
+        "schema": "csv2-benchmark-report-v5",
         "revision": "d" * 40,
         "build_digest": "a" * 64,
         "controlled_complete": False,
     }
     return {
-        "schema": "csv2-performance-evidence-bundle-v1",
+        "schema": "csv2-performance-evidence-bundle-v2",
         "status": "completed",
         "evidence_level": "exploratory",
         "decision_eligible": False,
@@ -104,12 +105,19 @@ def evidence_bundle() -> dict[str, object]:
             "python": "3.10",
         },
         "datasets": [{"name": "input.csv", "size": 1, "sha256": "b" * 64}],
+        "comparison_binding": {
+            "dataset": "input.csv",
+            "semantic_case_id": "csv2.traversal.rows-cells.v1",
+            "scope": "traversal_only",
+            "source": "buffer",
+            "byte_basis": "input_corpus",
+        },
         "components": {
             "calibration": json.loads(json.dumps(component)),
             "comparison": json.loads(json.dumps(component)),
             "fixed_metrics": {
                 **component,
-                "schema": "csv2-fixed-machine-metrics-v4",
+                "schema": "csv2-fixed-machine-metrics-v5",
             },
         },
         "checks": checks,
@@ -121,7 +129,7 @@ def evidence_bundle() -> dict[str, object]:
 def evidence_manifest() -> dict[str, object]:
     report = evidence_bundle()
     return {
-        "schema": "csv2-artifact-manifest-v2",
+        "schema": "csv2-artifact-manifest-v3",
         "kind": "evidence-bundle",
         "report": artifact(),
         "inputs": {**report["artifacts"], "finalizer": report["finalizer"]},
@@ -138,11 +146,14 @@ def comparison_report() -> dict[str, object]:
         "artifact": artifact(revision),
         "build": None,
         "description": {
-            "protocol": "csv2-common-v3",
+            "protocol": "csv2-common-v4",
             "revision": revision,
             "operations": "rows_cells",
             "sources": "buffer",
-            "operation_contracts": "rows_cells:traversal_only:buffer",
+            "operation_contracts": (
+                "rows_cells:traversal_only:buffer:"
+                "csv2.traversal.rows-cells.v1:input_corpus"
+            ),
         },
         "description_invocation": invocation(),
     }
@@ -152,11 +163,13 @@ def comparison_report() -> dict[str, object]:
 
     def launch(side_name: str, order: int) -> dict[str, object]:
         result = {
-            "protocol": "csv2-common-v3",
+            "protocol": "csv2-common-v4",
             "revision": revision,
             "operation": "rows_cells",
             "scope": "traversal_only",
             "source": "buffer",
+            "semantic_case_id": "csv2.traversal.rows-cells.v1",
+            "byte_basis": "input_corpus",
             "bytes": "1",
             "iterations": "1",
             "elapsed_ns": "1",
@@ -182,6 +195,9 @@ def comparison_report() -> dict[str, object]:
         "dataset": "input.csv",
         "operation": "rows_cells",
         "source": "buffer",
+        "semantic_case_id": "csv2.traversal.rows-cells.v1",
+        "scope": "traversal_only",
+        "byte_basis": "input_corpus",
         "semantic_signature": signature,
         "baseline": {"median": throughput, "mad": 0.0, "samples": [throughput]},
         "candidate": {"median": throughput, "mad": 0.0, "samples": [throughput]},
@@ -195,7 +211,7 @@ def comparison_report() -> dict[str, object]:
         "launches": [launch("baseline", 0), launch("candidate", 1)],
     }
     return {
-        "schema": "csv2-benchmark-report-v4",
+        "schema": "csv2-benchmark-report-v5",
         "artifact_mode": "external",
         "mode": "aa",
         "status": "completed",
@@ -234,7 +250,7 @@ def comparison_report() -> dict[str, object]:
 
 def fixed_metrics_report() -> dict[str, object]:
     return {
-        "schema": "csv2-fixed-machine-metrics-v4",
+        "schema": "csv2-fixed-machine-metrics-v5",
         "artifact_mode": "external",
         "build": None,
         "status": "completed",
@@ -257,7 +273,7 @@ def fixed_metrics_report() -> dict[str, object]:
         "compiler": "c++",
         "compiler_identity": None,
         "compiler_flags": "",
-        "operation": "traversal/rows",
+        "operation": "traversal/rows-cells",
         "source": "buffer",
         "runs": 1,
         "artifacts": {
@@ -268,13 +284,23 @@ def fixed_metrics_report() -> dict[str, object]:
         },
         "clean_build": None,
         "post_build": None,
+        "comparison_binding": {
+            "dataset": "input.csv",
+            "semantic_case_id": "csv2.traversal.rows-cells.v1",
+            "scope": "traversal_only",
+            "source": "buffer",
+            "byte_basis": "input_corpus",
+        },
         "verification": {
             "result": {
-                "protocol": "csv2-current-v2",
+                "protocol": "csv2-current-v3",
                 "revision": "candidate",
-                "operation": "traversal/rows",
+                "operation": "traversal/rows-cells",
                 "source": "buffer",
                 "dataset": "input.csv",
+                "semantic_case_id": "csv2.traversal.rows-cells.v1",
+                "scope": "traversal_only",
+                "byte_basis": "input_corpus",
                 "checksum": "1",
                 "bytes": "1",
                 "rows": "1",
@@ -286,11 +312,11 @@ def fixed_metrics_report() -> dict[str, object]:
         },
         "allocations": {"count": 0, "bytes": 0, "invocation": invocation()},
         "timing": {
-            "benchmark": "csv2/traversal/rows/buffer/input.csv",
+            "benchmark": "csv2/traversal/rows-cells/buffer/input.csv",
             "runs": 1,
             "samples": [
                 {
-                    "name": "csv2/traversal/rows/buffer/input.csv",
+                    "name": "csv2/traversal/rows-cells/buffer/input.csv",
                     "seconds": 1.0,
                     "bytes_per_second": 1.0,
                     "items_per_second": 1.0,
@@ -716,19 +742,19 @@ class ProtocolTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "compiler_flags differ"):
             protocol.validate_comparison_report(comparison)
 
-    def test_v3_reports_are_explicitly_rejected(self) -> None:
+    def test_v4_component_reports_are_explicitly_rejected(self) -> None:
         comparison = comparison_report()
-        comparison["schema"] = "csv2-benchmark-report-v3"
+        comparison["schema"] = "csv2-benchmark-report-v4"
         with self.assertRaisesRegex(RuntimeError, "unsupported schema"):
             protocol.validate_comparison_report(comparison)
         metrics = fixed_metrics_report()
-        metrics["schema"] = "csv2-fixed-machine-metrics-v3"
+        metrics["schema"] = "csv2-fixed-machine-metrics-v4"
         with self.assertRaisesRegex(RuntimeError, "unsupported schema"):
             protocol.validate_fixed_metrics_report(metrics)
 
-    def test_artifact_manifest_v2_rejects_old_or_incomplete_inputs(self) -> None:
+    def test_artifact_manifest_v3_rejects_old_or_incomplete_inputs(self) -> None:
         manifest = {
-            "schema": "csv2-artifact-manifest-v2",
+            "schema": "csv2-artifact-manifest-v3",
             "kind": "comparison",
             "report": artifact(),
             "inputs": {
@@ -741,21 +767,21 @@ class ProtocolTests(unittest.TestCase):
         protocol.validate_artifact_manifest(manifest)
         schema_root = Path(__file__).resolve().parents[2] / "protocol" / "schemas"
         schema = json.loads(
-            (schema_root / "artifact-manifest-v2.schema.json").read_text(
+            (schema_root / "artifact-manifest-v3.schema.json").read_text(
                 encoding="utf-8"
             )
         )
         validate_schema(manifest, schema)
         protocol.validate_artifact_manifest(evidence_manifest())
         validate_schema(evidence_manifest(), schema)
-        manifest["schema"] = "csv2-artifact-manifest-v1"
+        manifest["schema"] = "csv2-artifact-manifest-v2"
         with self.assertRaisesRegex(RuntimeError, "unsupported schema"):
             protocol.validate_artifact_manifest(manifest)
 
     def test_fixed_metrics_artifact_manifest_is_closed_and_complete(self) -> None:
         schema_root = Path(__file__).resolve().parents[2] / "protocol" / "schemas"
         schema = json.loads(
-            (schema_root / "artifact-manifest-v2.schema.json").read_text(
+            (schema_root / "artifact-manifest-v3.schema.json").read_text(
                 encoding="utf-8"
             )
         )
@@ -809,7 +835,8 @@ class ProtocolTests(unittest.TestCase):
     def test_comparison_uses_declared_operation_contracts(self) -> None:
         report = comparison_report()
         report["candidate"]["description"]["operation_contracts"] = (
-            "rows_cells:writer_only:buffer"
+            "rows_cells:writer_only:buffer:"
+            "csv2.traversal.rows-cells.v1:input_corpus"
         )
         with self.assertRaisesRegex(RuntimeError, "scope differs"):
             protocol.validate_comparison_report(report)
@@ -819,22 +846,38 @@ class ProtocolTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "timed_reader_steps"):
             protocol.validate_comparison_report(report)
 
+    def test_semantic_bindings_are_closed_and_derived_from_wires(self) -> None:
+        report = comparison_report()
+        report["cases"][0]["semantic_case_id"] = "csv2.other.v1"
+        with self.assertRaisesRegex(RuntimeError, "semantic_case_id"):
+            protocol.validate_comparison_report(report)
+
+        report = comparison_report()
+        report["cases"][0]["launches"][0]["result"]["byte_basis"] = "output"
+        with self.assertRaisesRegex(RuntimeError, "byte basis"):
+            protocol.validate_comparison_report(report)
+
+        metrics = fixed_metrics_report()
+        metrics["comparison_binding"]["scope"] = "writer_only"
+        with self.assertRaisesRegex(RuntimeError, "binding differs"):
+            protocol.validate_fixed_metrics_report(metrics)
+
     def test_schemas_close_the_top_level_and_require_controlled_evidence(self) -> None:
         schema_root = Path(__file__).resolve().parents[2] / "protocol" / "schemas"
         comparison = json.loads(
-            (schema_root / "comparison-v4.schema.json").read_text(encoding="utf-8")
+            (schema_root / "comparison-v5.schema.json").read_text(encoding="utf-8")
         )
         metrics = json.loads(
-            (schema_root / "fixed-machine-v4.schema.json").read_text(encoding="utf-8")
+            (schema_root / "fixed-machine-v5.schema.json").read_text(encoding="utf-8")
         )
         build = json.loads(
             (schema_root / "build-v1.schema.json").read_text(encoding="utf-8")
         )
         artifact_manifest = json.loads(
-            (schema_root / "artifact-manifest-v2.schema.json").read_text(encoding="utf-8")
+            (schema_root / "artifact-manifest-v3.schema.json").read_text(encoding="utf-8")
         )
         evidence = json.loads(
-            (schema_root / "evidence-bundle-v1.schema.json").read_text(encoding="utf-8")
+            (schema_root / "evidence-bundle-v2.schema.json").read_text(encoding="utf-8")
         )
         self.assertFalse(comparison["additionalProperties"])
         self.assertFalse(metrics["additionalProperties"])
@@ -846,7 +889,7 @@ class ProtocolTests(unittest.TestCase):
         self.assertFalse(evidence["additionalProperties"])
         self.assertEqual(
             evidence["properties"]["schema"]["const"],
-            "csv2-performance-evidence-bundle-v1",
+            "csv2-performance-evidence-bundle-v2",
         )
         validate_schema(evidence_bundle(), evidence)
         controlled_bundle = evidence_bundle()
@@ -880,8 +923,8 @@ class ProtocolTests(unittest.TestCase):
             ]["compiler_executable"],
             ["compile_commands"],
         )
-        self.assertEqual(comparison["properties"]["schema"]["const"], "csv2-benchmark-report-v4")
-        self.assertEqual(metrics["properties"]["schema"]["const"], "csv2-fixed-machine-metrics-v4")
+        self.assertEqual(comparison["properties"]["schema"]["const"], "csv2-benchmark-report-v5")
+        self.assertEqual(metrics["properties"]["schema"]["const"], "csv2-fixed-machine-metrics-v5")
         self.assertEqual(
             build["$defs"]["current_tree"]["properties"]["schema"]["const"],
             "csv2-benchmark-build-v1",
@@ -930,6 +973,11 @@ class ProtocolTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "differs from the candidate"):
             protocol.validate_evidence_bundle(bundle_value)
 
+        old_bundle = evidence_bundle()
+        old_bundle["schema"] = "csv2-performance-evidence-bundle-v1"
+        with self.assertRaisesRegex(RuntimeError, "unsupported schema"):
+            protocol.validate_evidence_bundle(old_bundle)
+
         bundle_value = evidence_bundle()
         bundle_value["components"]["comparison"]["build_digest"] = "e" * 64
         with self.assertRaisesRegex(RuntimeError, "candidate builds differ"):
@@ -942,42 +990,52 @@ class ProtocolTests(unittest.TestCase):
                 with self.assertRaisesRegex(RuntimeError, "safe relative path"):
                     protocol.validate_evidence_bundle(bundle_value)
 
-    def test_common_v3_is_accepted_and_v2_is_rejected(self) -> None:
+    def test_common_v4_is_accepted_and_v3_is_rejected(self) -> None:
         result = protocol.parse_common(
-            "protocol=csv2-common-v3 revision=x", {"revision"}
+            "protocol=csv2-common-v4 revision=x", {"revision"}
         )
         self.assertEqual(result["revision"], "x")
-        with self.assertRaisesRegex(RuntimeError, "expected csv2-common-v3"):
+        with self.assertRaisesRegex(RuntimeError, "expected csv2-common-v4"):
             protocol.parse_common(
-                "protocol=csv2-common-v2 revision=x", {"revision"}
+                "protocol=csv2-common-v3 revision=x", {"revision"}
             )
 
     def test_operation_contracts_are_strict_and_self_describing(self) -> None:
         contracts = protocol.parse_operation_contracts(
-            "rows_cells:traversal_only:buffer+mmap;"
-            "writer_raw_direct:writer_only:buffer"
+            "rows_cells:traversal_only:buffer+mmap:"
+            "csv2.traversal.rows-cells.v1:input_corpus;"
+            "writer_raw_direct:writer_only:buffer:"
+            "csv2.writer.raw-direct.v1:input_corpus"
         )
         self.assertEqual(contracts["rows_cells"][0], "traversal_only")
         self.assertEqual(contracts["rows_cells"][1], frozenset({"buffer", "mmap"}))
         with self.assertRaisesRegex(RuntimeError, "duplicate operation contract"):
             protocol.parse_operation_contracts(
-                "rows_cells:traversal_only:buffer;rows_cells:traversal_only:mmap"
+                "rows_cells:traversal_only:buffer:csv2.rows.v1:input_corpus;"
+                "rows_cells:traversal_only:mmap:csv2.rows.v1:input_corpus"
             )
         with self.assertRaisesRegex(RuntimeError, "unsupported operation scope"):
-            protocol.parse_operation_contracts("rows_cells:guessed:buffer")
+            protocol.parse_operation_contracts(
+                "rows_cells:guessed:buffer:csv2.rows.v1:input_corpus"
+            )
 
-    def test_current_v2_parses_exact_uint64_fields(self) -> None:
+    def test_current_v3_parses_exact_uint64_fields(self) -> None:
         output = (
-            "protocol=csv2-current-v2 revision=r operation=traversal/rows "
-            "source=buffer dataset=x.csv checksum=18446744073709551615 "
+            "protocol=csv2-current-v3 revision=r operation=traversal/rows "
+            "source=buffer dataset=x.csv semantic_case_id=csv2.traversal.rows.v1 "
+            "scope=traversal_only byte_basis=input_corpus "
+            "checksum=18446744073709551615 "
             "bytes=4 rows=1 cells=0 allocations=0 allocated_bytes=0"
         )
         result = protocol.parse_current(output)
         self.assertEqual(result["checksum"], "18446744073709551615")
+        with self.assertRaisesRegex(RuntimeError, "expected csv2-current-v3"):
+            protocol.parse_current(output.replace("csv2-current-v3", "csv2-current-v2"))
 
     def test_current_rejects_overflow_duplicate_and_missing_fields(self) -> None:
         valid = (
-            "protocol=csv2-current-v2 revision=r operation=o source=buffer dataset=x "
+            "protocol=csv2-current-v3 revision=r operation=o source=buffer dataset=x "
+            "semantic_case_id=csv2.o.v1 scope=source_only byte_basis=input_corpus "
             "checksum=1 bytes=1 rows=1 cells=1 allocations=0 allocated_bytes=0"
         )
         with self.assertRaisesRegex(RuntimeError, "outside uint64"):

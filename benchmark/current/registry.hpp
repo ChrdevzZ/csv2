@@ -34,6 +34,8 @@ const char *operation_scope_name(OperationScope scope) noexcept;
 
 struct Operation {
   std::string id;
+  std::string semantic_case_id;
+  std::string byte_basis;
   unsigned sources;
   unsigned preparations;
   OperationScope scope;

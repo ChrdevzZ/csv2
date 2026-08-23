@@ -32,7 +32,7 @@ def load_manifest(path: Path) -> dict[str, object]:
         document = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as error:
         raise RuntimeError("checksum manifest is malformed") from error
-    if not isinstance(document, dict) or document.get("protocol") != "csv2-current-v2":
+    if not isinstance(document, dict) or document.get("protocol") != "csv2-current-v3":
         raise RuntimeError("checksum manifest has an unsupported protocol")
     checks = document.get("checks")
     if not isinstance(checks, list) or not checks:

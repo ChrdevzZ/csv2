@@ -57,6 +57,12 @@ class EvidenceBundleTests(unittest.TestCase):
                     "raw_checksum": "1",
                     "content_checksum": "1",
                     "strict_valid": True,
+                    "strict_error": {
+                        "code": "none",
+                        "offset": 0,
+                        "row": 0,
+                        "column": 0,
+                    },
                 }
             ],
         }
@@ -216,6 +222,23 @@ class EvidenceBundleTests(unittest.TestCase):
                 )
         self.assertFalse(bundle["decision_eligible"])
 
+    def test_fixed_metrics_must_bind_one_comparison_semantic_case(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            values = self.components(Path(directory))
+            values[2]["comparison_binding"]["semantic_case_id"] = "csv2.other.v1"
+            values[2]["verification"]["result"]["semantic_case_id"] = (
+                "csv2.other.v1"
+            )
+            with mock.patch.object(
+                evidence.builds, "validate_build_manifest"
+            ), mock.patch.object(
+                evidence.builds, "verify_current_build_manifest"
+            ):
+                with self.assertRaisesRegex(RuntimeError, "exactly one"):
+                    evidence.assemble_evidence(
+                        *values[:4], values[4], values[5], test_protocol.bundle()
+                    )
+
     def test_finalizer_rejects_calibration_noise_not_derived_from_aa_case(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             values = self.components(Path(directory))
@@ -335,6 +358,12 @@ class EvidenceBundleTests(unittest.TestCase):
                     "raw_checksum": "1",
                     "content_checksum": "1",
                     "strict_valid": True,
+                    "strict_error": {
+                        "code": "none",
+                        "offset": 0,
+                        "row": 0,
+                        "column": 0,
+                    },
                 }
             )
             corpus_path.write_text(json.dumps(corpus), encoding="utf-8")

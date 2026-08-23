@@ -21,7 +21,7 @@ namespace {
 using CommonReader = csv2::Reader<csv2::delimiter<','>, csv2::quote_character<'"'>,
                                   csv2::first_row_is_header<false>>;
 
-const char protocol[] = "csv2-common-v3";
+const char protocol[] = "csv2-common-v4";
 volatile std::uint64_t benchmark_sink = 0;
 bool timed_phase = false;
 std::uint64_t timed_checksum_mix_calls = 0;
@@ -534,55 +534,58 @@ struct OperationContract {
   const char *operation;
   const char *scope;
   const char *sources;
+  const char *semantic_case_id;
+  const char *byte_basis;
 };
 
 const OperationContract operation_contracts[] = {
     {"rows_cells", "traversal_only",
 #if CSV2_HAS_MMAP
-     "buffer+mmap"
+     "buffer+mmap",
 #else
-     "buffer"
+     "buffer",
 #endif
-    },
+     "csv2.traversal.rows-cells.v1", "input_corpus"},
     {"legacy_writer_raw", "writer_only",
 #if CSV2_HAS_MMAP
-     "buffer+mmap"
+     "buffer+mmap",
 #else
-     "buffer"
+     "buffer",
 #endif
-    },
+     "csv2.writer.legacy-raw.v1", "input_corpus"},
 #if defined(CSV2_BENCHMARK_ENABLE_MODERN_WRITER_OPERATIONS)
     {"writer_raw_direct", "writer_only",
 #if CSV2_HAS_MMAP
-     "buffer+mmap"
+     "buffer+mmap",
 #else
-     "buffer"
+     "buffer",
 #endif
-    },
+     "csv2.writer.raw-direct.v1", "input_corpus"},
     {"writer_raw_streamable", "writer_only",
 #if CSV2_HAS_MMAP
-     "buffer+mmap"
+     "buffer+mmap",
 #else
-     "buffer"
+     "buffer",
 #endif
-    },
+     "csv2.writer.raw-streamable.v1", "input_corpus"},
     {"writer_escaped_direct", "writer_only",
 #if CSV2_HAS_MMAP
-     "buffer+mmap"
+     "buffer+mmap",
 #else
-     "buffer"
+     "buffer",
 #endif
-    },
+     "csv2.writer.escaped-direct.v1", "input_corpus"},
     {"writer_escaped_streamable", "writer_only",
 #if CSV2_HAS_MMAP
-     "buffer+mmap"
+     "buffer+mmap",
 #else
-     "buffer"
+     "buffer",
 #endif
-    },
+     "csv2.writer.escaped-streamable.v1", "input_corpus"},
 #endif
 #if CSV2_HAS_MMAP
-    {"legacy_mmap_rows_cells", "mmap_and_traversal", "mmap"},
+    {"legacy_mmap_rows_cells", "mmap_and_traversal", "mmap", "csv2.legacy.mmap-rows-cells.v1",
+     "input_corpus"},
 #endif
 };
 
@@ -632,7 +635,9 @@ int main(int argc, char **argv) {
       if (index != 0)
         std::cout << ';';
       std::cout << operation_contracts[index].operation << ':' << operation_contracts[index].scope
-                << ':' << operation_contracts[index].sources;
+                << ':' << operation_contracts[index].sources << ':'
+                << operation_contracts[index].semantic_case_id << ':'
+                << operation_contracts[index].byte_basis;
     }
     std::cout << '\n';
     return EXIT_SUCCESS;
@@ -673,7 +678,8 @@ int main(int argc, char **argv) {
   benchmark_sink = result.rows ^ result.cells ^ result.row_bytes ^ checksum;
   std::cout << "protocol=" << protocol << " revision=" << CSV2_BENCHMARK_REVISION
             << " operation=" << options.operation << " scope=" << contract->scope
-            << " source=" << options.source << " bytes=" << bytes
+            << " source=" << options.source << " semantic_case_id=" << contract->semantic_case_id
+            << " byte_basis=" << contract->byte_basis << " bytes=" << bytes
             << " iterations=" << options.iterations << " elapsed_ns=" << elapsed_ns
             << " rows=" << result.rows << " cells=" << result.cells
             << " row_bytes=" << result.row_bytes << " checksum=" << checksum

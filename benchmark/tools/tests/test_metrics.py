@@ -22,7 +22,7 @@ class MetricsTests(unittest.TestCase):
         self.assertIn("tools/csv2bench/derivation.py", names)
         self.assertIn("tools/csv2bench/statistics.py", names)
 
-    def test_verify_command_uses_current_v2_cli(self) -> None:
+    def test_verify_command_uses_current_v3_cli(self) -> None:
         command = metrics.verify_command(
             Path("bench"), "traversal/rows", Path("input.csv"), "buffer"
         )
@@ -36,8 +36,10 @@ class MetricsTests(unittest.TestCase):
             "run",
             return_value=unittest.mock.Mock(
                 stdout=(
-                    "protocol=csv2-current-v2 revision=other operation=traversal/rows "
-                    "source=buffer dataset=x.csv checksum=1 bytes=1 rows=1 cells=0 "
+                    "protocol=csv2-current-v3 revision=other operation=traversal/rows "
+                    "source=buffer dataset=x.csv semantic_case_id=csv2.traversal.rows.v1 "
+                    "scope=traversal_only byte_basis=input_corpus "
+                    "checksum=1 bytes=1 rows=1 cells=0 "
                     "allocations=0 allocated_bytes=0\n"
                 ),
                 stderr="",

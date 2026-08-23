@@ -12,11 +12,13 @@ from csv2bench import runner
 
 def result(revision: str, elapsed: int = 100) -> dict[str, str]:
     return {
-        "protocol": "csv2-common-v3",
+        "protocol": "csv2-common-v4",
         "revision": revision,
         "operation": "rows_cells",
         "scope": "traversal_only",
         "source": "buffer",
+        "semantic_case_id": "csv2.traversal.rows-cells.v1",
+        "byte_basis": "input_corpus",
         "bytes": "4",
         "iterations": "1",
         "elapsed_ns": str(elapsed),
@@ -59,7 +61,7 @@ class RunnerTests(unittest.TestCase):
         line = " ".join(f"{key}={value}" for key, value in result("x").items())
         self.assertEqual(runner.parse_output(line)["revision"], "x")
         with self.assertRaisesRegex(RuntimeError, "unsupported benchmark protocol"):
-            runner.parse_output(line.replace("csv2-common-v3", "csv2-common-v2"))
+            runner.parse_output(line.replace("csv2-common-v4", "csv2-common-v3"))
 
     def test_selection_rejects_unknown_duplicate_and_empty_entries(self) -> None:
         with self.assertRaisesRegex(ValueError, "unknown"):
@@ -98,6 +100,8 @@ class RunnerTests(unittest.TestCase):
                 iterations=1,
                 warmups=0,
                 expected_scope="traversal_only",
+                expected_semantic_case_id="csv2.traversal.rows-cells.v1",
+                expected_byte_basis="input_corpus",
                 calibration_noise=0.0,
                 baseline_revision="base",
                 candidate_revision="candidate",
@@ -120,6 +124,8 @@ class RunnerTests(unittest.TestCase):
                 "buffer",
                 1,
                 expected_scope="writer_only",
+                expected_semantic_case_id="csv2.traversal.rows-cells.v1",
+                expected_byte_basis="input_corpus",
                 expected_bytes=4,
                 expected_revision="candidate",
             )
@@ -142,7 +148,7 @@ class RunnerTests(unittest.TestCase):
             path.write_text(
                 json.dumps(
                     {
-                        "schema": "csv2-benchmark-report-v4",
+                        "schema": "csv2-benchmark-report-v5",
                         "mode": "aa",
                         "status": "completed",
                     }
