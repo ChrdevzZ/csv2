@@ -59,7 +59,14 @@ capability set. Legacy reader and Writer capabilities are always present;
 `modern-writer` is present only when a requested operation needs the modern
 Writer adapter. Operation, source, and dataset selections are validated before
 the owned builder exports any Git object, and runtime descriptions/results must
-match the recorded build capabilities.
+match the recorded build capabilities. Both the online builder and offline
+report validator require the build command to define timer auditing as disabled,
+bind the exact revision, and include the modern Writer definition exactly when
+the recorded capability requires it; caller compiler flags cannot override these
+reserved definitions.
+Response files and forced preprocessor inputs are not accepted in owned common
+driver compiler flags because the manifest cannot audit their hidden contents;
+preprocessor pass-through options are rejected for the same reason.
 
 ## Reports
 

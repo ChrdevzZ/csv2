@@ -65,8 +65,13 @@ class EvidenceBundleTests(unittest.TestCase):
         baseline["artifact"]["revision"] = baseline_revision
         baseline["description"]["revision"] = baseline_revision
         baseline_build = baseline["build"]
+        original_build_revision = str(baseline_build["revision"])
         baseline_build["revision"] = baseline_revision
         baseline_build["output"]["revision"] = baseline_revision
+        baseline_build["argv"] = [
+            argument.replace(original_build_revision, baseline_revision)
+            for argument in baseline_build["argv"]
+        ]
         header_export = baseline_build["header_export"]
         header_export["reference"] = baseline_revision
         header_export["commit"] = baseline_revision

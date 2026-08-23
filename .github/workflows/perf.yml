@@ -6,6 +6,8 @@ on:
       - .github/workflows/perf.yml
       - benchmark/**
       - cmake/verification/**
+      - include/**
+      - single_include/**
       - test/**
       - third_party/verification/**
       - CMakeLists.txt

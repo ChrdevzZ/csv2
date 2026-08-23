@@ -601,6 +601,10 @@ def _common_build(value: object, label: str) -> dict[str, object]:
             raise RuntimeError(f"{label}.{field} is malformed")
     if len(build["argv"]) != len(build["normalized_argv"]):
         raise RuntimeError(f"{label} normalized command length differs")
+    try:
+        audited_builds.validate_common_build_command_contract(build)
+    except RuntimeError as error:
+        raise RuntimeError(f"{label} {error}") from error
     normalized_text = "\n".join(build["normalized_argv"])
     for placeholder in ("{revision}", "{include_root}", "{adapter_source}", "{output}"):
         if placeholder not in normalized_text:

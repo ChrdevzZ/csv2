@@ -195,7 +195,10 @@ paths, dirty-worktree substitution, mismatched flags, and output drift.
 The formal driver emits `csv2-common-v5` with `instrumentation=none`. A separate
 timer-scope audit executable is built from the same C++11 source with
 `instrumentation=timer_scope_audit`; it is used only to prove measurement boundaries
-and is rejected by the comparison runner. The `--describe` wire assigns every
+and is rejected by the comparison runner. The audit build exposes the same four
+modern Writer operations as the formal build and verifies that all five Writer
+paths perform no Reader traversal or checksum mixing while timed. The `--describe`
+wire assigns every
 operation an explicit semantic case ID, scope, byte basis, and supported source
 set. `rows_cells` is
 `traversal_only`; Writer operations are `writer_only` and consume pointer/length
@@ -207,9 +210,14 @@ checksum; a mismatch prevents a performance decision.
 Both description and result wires declare `legacy-reader`, `legacy-writer`, and
 the conditional `modern-writer` capability. Owned mode validates operation,
 source, and dataset selections before exporting Git objects. It omits the modern
-Writer definition unless one of the four modern Writer operations is requested,
-so legacy-only comparisons can compile against historical header revisions that
-predate those APIs.
+Writer capability unless one of the four modern Writer operations is requested,
+and always defines its compile-time switch explicitly as `0` or `1`. Legacy-only
+comparisons can therefore compile against historical header revisions that
+predate those APIs. The build manifest also binds the explicit uninstrumented
+definition and rejects compiler flags that try to override revision,
+instrumentation, or Writer capabilities. Response files and forced preprocessor
+inputs and preprocessor pass-through options are rejected because their hidden
+contents cannot be bound by the command manifest.
 
 ## Comparison pipeline
 

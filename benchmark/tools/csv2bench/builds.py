@@ -25,6 +25,11 @@ DRIVE_PREFIX = re.compile(r"[A-Za-z]:")
 Run = Callable[..., subprocess.CompletedProcess]
 LEGACY_COMMON_CAPABILITIES = ("legacy-reader", "legacy-writer")
 MODERN_WRITER_CAPABILITY = "modern-writer"
+_COMMON_BUILD_DEFINITIONS = {
+    "CSV2_BENCHMARK_REVISION",
+    "CSV2_BENCHMARK_TIMER_SCOPE_AUDIT",
+    "CSV2_BENCHMARK_ENABLE_MODERN_WRITER_OPERATIONS",
+}
 
 
 def _canonical_json(document: object) -> bytes:
@@ -38,6 +43,94 @@ def _canonical_json(document: object) -> bytes:
 
 def document_digest(document: object) -> str:
     return hashlib.sha256(_canonical_json(document)).hexdigest()
+
+
+def _common_build_definitions(arguments: Sequence[object]) -> dict[str, list[str]]:
+    definitions: dict[str, list[str]] = {
+        name: [] for name in _COMMON_BUILD_DEFINITIONS
+    }
+    index = 0
+    while index < len(arguments):
+        argument = arguments[index]
+        if not isinstance(argument, str):
+            raise RuntimeError("common-driver build command contains a non-string argument")
+        payload: str | None = None
+        if argument == "-D" or argument.lower() == "/d":
+            index += 1
+            if index >= len(arguments) or not isinstance(arguments[index], str):
+                raise RuntimeError("common-driver build command has an incomplete definition")
+            payload = str(arguments[index])
+        elif argument.startswith("-D"):
+            payload = argument[2:]
+        elif argument.lower().startswith("/d"):
+            payload = argument[2:]
+        if payload:
+            name, separator, value = payload.partition("=")
+            if name in definitions:
+                definitions[name].append(value if separator else "1")
+        index += 1
+    return definitions
+
+
+def _validate_common_compiler_flags(arguments: Sequence[object]) -> None:
+    """Reject caller flags that can alter tool-owned preprocessor definitions."""
+    for argument in arguments:
+        if not isinstance(argument, str):
+            raise RuntimeError("common-driver compiler flags contain a non-string argument")
+        lowered = argument.lower()
+        if any(name in argument for name in _COMMON_BUILD_DEFINITIONS):
+            raise RuntimeError("compiler flags override a reserved common-driver definition")
+        if "@" in argument:
+            raise RuntimeError("common-driver compiler flags cannot use response files")
+        if lowered.startswith("-wp,"):
+            raise RuntimeError(
+                "common-driver compiler flags cannot use preprocessor pass-through options"
+            )
+        if (
+            lowered in ("-include", "-imacros", "-include-pch", "/fi")
+            or lowered.startswith("-include=")
+            or lowered.startswith("-imacros=")
+            or lowered.startswith("-include-pch=")
+            or (lowered.startswith("/fi") and len(argument) > 3)
+        ):
+            raise RuntimeError("common-driver compiler flags cannot force preprocessor input")
+
+
+def validate_common_build_command_contract(manifest: dict[str, object]) -> None:
+    """Validate common-driver defines without consulting mutable filesystem state."""
+    capabilities = manifest.get("capabilities")
+    valid_capabilities = (
+        list(LEGACY_COMMON_CAPABILITIES),
+        [*LEGACY_COMMON_CAPABILITIES, MODERN_WRITER_CAPABILITY],
+    )
+    if capabilities not in valid_capabilities:
+        raise RuntimeError("common-driver capabilities are invalid")
+    if manifest.get("instrumentation") != "none":
+        raise RuntimeError("owned common-driver builds must be uninstrumented")
+
+    compiler_flags = manifest.get("compiler_flags")
+    argv = manifest.get("argv")
+    normalized_argv = manifest.get("normalized_argv")
+    if not all(isinstance(value, list) for value in (compiler_flags, argv, normalized_argv)):
+        raise RuntimeError("common-driver build command fields are malformed")
+    _validate_common_compiler_flags(compiler_flags)
+
+    actual = _common_build_definitions(argv)
+    normalized = _common_build_definitions(normalized_argv)
+    revision = str(manifest.get("revision", ""))
+    expected_modern = ["1" if MODERN_WRITER_CAPABILITY in capabilities else "0"]
+    if actual["CSV2_BENCHMARK_TIMER_SCOPE_AUDIT"] != ["0"]:
+        raise RuntimeError("common-driver build command contradicts its instrumentation")
+    if normalized["CSV2_BENCHMARK_TIMER_SCOPE_AUDIT"] != ["0"]:
+        raise RuntimeError("normalized common-driver command contradicts its instrumentation")
+    if actual["CSV2_BENCHMARK_ENABLE_MODERN_WRITER_OPERATIONS"] != expected_modern:
+        raise RuntimeError("common-driver build command contradicts its capabilities")
+    if normalized["CSV2_BENCHMARK_ENABLE_MODERN_WRITER_OPERATIONS"] != expected_modern:
+        raise RuntimeError("normalized common-driver command contradicts its capabilities")
+    if actual["CSV2_BENCHMARK_REVISION"] != [f'"{revision}"']:
+        raise RuntimeError("common-driver build command contradicts its revision")
+    if normalized["CSV2_BENCHMARK_REVISION"] != ['"{revision}"']:
+        raise RuntimeError("normalized common-driver command contradicts its revision")
 
 
 def safe_git_path(value: str) -> PurePosixPath:
@@ -386,6 +479,7 @@ def compile_common_driver(
     """Compile one common driver and return its complete audited build manifest."""
     if not compiler_flags or any(not flag for flag in compiler_flags):
         raise RuntimeError("owned common-driver builds require non-empty compiler flags")
+    _validate_common_compiler_flags(compiler_flags)
     verify_git_export(header_export)
     verify_git_export(adapter_export)
     revision = str(header_export.get("commit", ""))
@@ -431,7 +525,11 @@ def compile_common_driver(
     temporary_output.unlink()
     temporary_object = temporary_output.with_suffix(temporary_output.suffix + ".obj")
     revision_definition = f'CSV2_BENCHMARK_REVISION="{revision}"'
-    modern_definition = "CSV2_BENCHMARK_ENABLE_MODERN_WRITER_OPERATIONS=1"
+    instrumentation_definition = "CSV2_BENCHMARK_TIMER_SCOPE_AUDIT=0"
+    modern_definition = (
+        "CSV2_BENCHMARK_ENABLE_MODERN_WRITER_OPERATIONS="
+        + ("1" if enable_modern_writer_operations else "0")
+    )
     if msvc:
         lower_flags = {flag.lower() for flag in compiler_flags}
         reproducibility_flags = [
@@ -449,7 +547,8 @@ def compile_common_driver(
             *compiler_flags,
             *reproducibility_flags,
             f"/D{revision_definition}",
-            *([f"/D{modern_definition}"] if enable_modern_writer_operations else []),
+            f"/D{instrumentation_definition}",
+            f"/D{modern_definition}",
             f"/I{include_root}",
             str(adapter_source),
             f"/Fe:{temporary_output}",
@@ -460,7 +559,8 @@ def compile_common_driver(
             str(compiler),
             *compiler_flags,
             f"-D{revision_definition}",
-            *([f"-D{modern_definition}"] if enable_modern_writer_operations else []),
+            f"-D{instrumentation_definition}",
+            f"-D{modern_definition}",
             f"-I{include_root}",
             str(adapter_source),
             "-o",
@@ -566,8 +666,6 @@ def validate_build_manifest(manifest: dict[str, object]) -> None:
         raise RuntimeError("build manifest fields are incomplete or unknown")
     if manifest["schema"] != BUILD_SCHEMA or manifest["kind"] != "common-driver":
         raise RuntimeError("build manifest has the wrong schema or kind")
-    if manifest["instrumentation"] != "none":
-        raise RuntimeError("owned common-driver builds must be uninstrumented")
     capabilities = manifest["capabilities"]
     valid_capabilities = (
         list(LEGACY_COMMON_CAPABILITIES),
@@ -575,6 +673,7 @@ def validate_build_manifest(manifest: dict[str, object]) -> None:
     )
     if capabilities not in valid_capabilities:
         raise RuntimeError("common-driver capabilities are invalid")
+    validate_common_build_command_contract(manifest)
     expected_digest = str(manifest["digest"])
     unsigned = dict(manifest)
     unsigned.pop("digest")
@@ -629,12 +728,6 @@ def validate_build_manifest(manifest: dict[str, object]) -> None:
     if Path(str(argv[0])).resolve(strict=True) != compiler_path:
         raise RuntimeError("build command did not invoke the recorded compiler")
     normalized_text = "\n".join(str(value) for value in normalized_argv)
-    modern_definition = "CSV2_BENCHMARK_ENABLE_MODERN_WRITER_OPERATIONS=1"
-    has_modern_definition = modern_definition in normalized_text
-    if has_modern_definition != (MODERN_WRITER_CAPABILITY in capabilities):
-        raise RuntimeError("common-driver capabilities differ from its build command")
-    if "CSV2_BENCHMARK_TIMER_SCOPE_AUDIT=1" in normalized_text:
-        raise RuntimeError("owned common-driver build enables timer-scope audit")
     for placeholder in ("{revision}", "{include_root}", "{adapter_source}", "{output}"):
         if placeholder not in normalized_text:
             raise RuntimeError(f"build command is missing normalized {placeholder}")

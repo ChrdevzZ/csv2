@@ -479,7 +479,9 @@ def controlled_comparison_report() -> dict[str, object]:
                 "adapter.cpp",
                 "-o",
                 f"/{side_name}",
-                f"-D{revision}",
+                f'-DCSV2_BENCHMARK_REVISION="{revision}"',
+                "-DCSV2_BENCHMARK_TIMER_SCOPE_AUDIT=0",
+                "-DCSV2_BENCHMARK_ENABLE_MODERN_WRITER_OPERATIONS=0",
             ],
             "normalized_argv": [
                 "/artifact",
@@ -487,7 +489,9 @@ def controlled_comparison_report() -> dict[str, object]:
                 "{adapter_source}",
                 "-o",
                 "{output}",
-                "-D{revision}",
+                '-DCSV2_BENCHMARK_REVISION="{revision}"',
+                "-DCSV2_BENCHMARK_TIMER_SCOPE_AUDIT=0",
+                "-DCSV2_BENCHMARK_ENABLE_MODERN_WRITER_OPERATIONS=0",
             ],
             "build_log": {"returncode": 0, "stdout": "", "stderr": ""},
             "output": output,
@@ -818,6 +822,31 @@ class ProtocolTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "compiler_flags differ"):
             protocol.validate_comparison_report(comparison)
 
+    def test_common_build_rejects_capability_and_instrumentation_command_drift(self) -> None:
+        for definitions, message in (
+            (("-DCSV2_BENCHMARK_ENABLE_MODERN_WRITER_OPERATIONS=1",), "reserved"),
+            (("/DCSV2_BENCHMARK_ENABLE_MODERN_WRITER_OPERATIONS=1",), "reserved"),
+            (("-D", "CSV2_BENCHMARK_TIMER_SCOPE_AUDIT=1"), "reserved"),
+            (("/D", "CSV2_BENCHMARK_TIMER_SCOPE_AUDIT=1"), "reserved"),
+            (("-Wp,-DCSV2_BENCHMARK_TIMER_SCOPE_AUDIT=1",), "reserved"),
+            (("@flags.rsp",), "response files"),
+            (("-Wp,-include,defines.hpp",), "pass-through"),
+            (("-include", "defines.hpp"), "preprocessor input"),
+        ):
+            with self.subTest(definitions=definitions):
+                report = controlled_comparison_report()
+                for side in ("baseline", "candidate"):
+                    build = report[side]["build"]
+                    build["compiler_flags"].extend(definitions)
+                    build["argv"][1:1] = definitions
+                    build["normalized_argv"][1:1] = definitions
+                    build["identity_digest"] = builds.common_build_identity_digest(build)
+                    unsigned = dict(build)
+                    unsigned.pop("digest")
+                    build["digest"] = builds.document_digest(unsigned)
+                with self.assertRaisesRegex(RuntimeError, message):
+                    protocol.validate_comparison_report(report)
+
     def test_v4_component_reports_are_explicitly_rejected(self) -> None:
         comparison = comparison_report()
         comparison["schema"] = "csv2-benchmark-report-v4"
@@ -1028,14 +1057,14 @@ class ProtocolTests(unittest.TestCase):
                 with self.assertRaisesRegex(RuntimeError, "safe relative path"):
                     protocol.validate_evidence_bundle(bundle_value)
 
-    def test_common_v4_is_accepted_and_v3_is_rejected(self) -> None:
+    def test_common_v5_is_accepted_and_v4_is_rejected(self) -> None:
         result = protocol.parse_common(
             "protocol=csv2-common-v5 revision=x", {"revision"}
         )
         self.assertEqual(result["revision"], "x")
         with self.assertRaisesRegex(RuntimeError, "expected csv2-common-v5"):
             protocol.parse_common(
-                "protocol=csv2-common-v3 revision=x", {"revision"}
+                "protocol=csv2-common-v4 revision=x", {"revision"}
             )
 
     def test_operation_contracts_are_strict_and_self_describing(self) -> None:
@@ -1057,7 +1086,7 @@ class ProtocolTests(unittest.TestCase):
                 "rows_cells:guessed:buffer:csv2.rows.v1:input_corpus"
             )
 
-    def test_current_v3_parses_exact_uint64_fields(self) -> None:
+    def test_current_v4_parses_exact_uint64_fields_and_rejects_v3(self) -> None:
         output = (
             "protocol=csv2-current-v4 revision=r operation=traversal/rows "
             "source=buffer dataset=x.csv semantic_case_id=csv2.traversal.rows.v1 "
