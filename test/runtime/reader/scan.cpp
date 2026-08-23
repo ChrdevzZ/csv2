@@ -53,77 +53,77 @@ CSV2_TEST_CASE("reader.scan.give-a-newline-quote-policy-precedence-over-record-b
   CSV2_REQUIRE(std::distance(reader.begin()->begin(), reader.begin()->end()) == 2);
 }
 
-CSV2_TEST_CASE("reader.scan.preserve-carriage-return-quote-bytes-at-record-boundaries",
+CSV2_TEST_CASE("reader.scan.preserve-a-closing-carriage-return-quote-before-line-feed",
                "reader.scan") {
   using CarriageReturnQuoteReader = csv2::Reader<csv2::delimiter<','>, csv2::quote_character<'\r'>,
                                                  csv2::first_row_is_header<false>>;
+  CarriageReturnQuoteReader reader;
+  std::string input("\ra\r\nb");
+  CSV2_REQUIRE(reader.parse(input));
 
-  CSV2_SUBCASE("closing quote before LF") {
-    CarriageReturnQuoteReader reader;
-    std::string input("\ra\r\nb");
-    CSV2_REQUIRE(reader.parse(input));
-
-    csv2::parse_error error;
-    CSV2_REQUIRE(reader.validate(error));
-    CSV2_REQUIRE(reader.rows() == 2);
-    CSV2_REQUIRE(reader.begin()->raw_size() == 3);
-    std::string raw;
-    reader.begin()->read_raw_value(raw);
-    CSV2_REQUIRE(raw == std::string("\ra\r", 3));
-  }
-
-  CSV2_SUBCASE("opening quote before LF") {
-    CarriageReturnQuoteReader reader;
-    std::string input("\r\nx\r");
-    CSV2_REQUIRE(reader.parse(input));
-
-    csv2::parse_error error;
-    CSV2_REQUIRE(reader.validate(error));
-    CSV2_REQUIRE(reader.rows() == 1);
-    CSV2_REQUIRE(reader.begin()->raw_size() == input.size());
-  }
+  csv2::parse_error error;
+  CSV2_REQUIRE(reader.validate(error));
+  CSV2_REQUIRE(reader.rows() == 2);
+  CSV2_REQUIRE(reader.begin()->raw_size() == 3);
+  std::string raw;
+  reader.begin()->read_raw_value(raw);
+  CSV2_REQUIRE(raw == std::string("\ra\r", 3));
 }
 
-CSV2_TEST_CASE("reader.scan.reject-record-separator-quotes-outside-a-quoted-field", "reader.scan") {
-  CSV2_SUBCASE("newline quote") {
-    using NewlineQuoteReader = csv2::Reader<csv2::delimiter<','>, csv2::quote_character<'\n'>,
-                                            csv2::first_row_is_header<false>>;
-    NewlineQuoteReader reader;
-    std::string input("a\nb");
-    CSV2_REQUIRE(reader.parse(input));
+CSV2_TEST_CASE("reader.scan.preserve-an-opening-carriage-return-quote-before-line-feed",
+               "reader.scan") {
+  using CarriageReturnQuoteReader = csv2::Reader<csv2::delimiter<','>, csv2::quote_character<'\r'>,
+                                                 csv2::first_row_is_header<false>>;
+  CarriageReturnQuoteReader reader;
+  std::string input("\r\nx\r");
+  CSV2_REQUIRE(reader.parse(input));
 
-    csv2::parse_error error;
-    CSV2_REQUIRE_FALSE(reader.validate(error));
-    CSV2_REQUIRE(error.code == csv2::parse_errc::unexpected_quote);
-    CSV2_REQUIRE(error.byte_offset == 1);
-  }
+  csv2::parse_error error;
+  CSV2_REQUIRE(reader.validate(error));
+  CSV2_REQUIRE(reader.rows() == 1);
+  CSV2_REQUIRE(reader.begin()->raw_size() == input.size());
+}
 
-  CSV2_SUBCASE("newline quote after carriage return") {
-    using NewlineQuoteReader = csv2::Reader<csv2::delimiter<','>, csv2::quote_character<'\n'>,
-                                            csv2::first_row_is_header<false>>;
-    NewlineQuoteReader reader;
-    std::string input("a\r\nb");
-    CSV2_REQUIRE(reader.parse(input));
+CSV2_TEST_CASE("reader.scan.reject-a-line-feed-quote-outside-a-quoted-field", "reader.scan") {
+  using NewlineQuoteReader = csv2::Reader<csv2::delimiter<','>, csv2::quote_character<'\n'>,
+                                          csv2::first_row_is_header<false>>;
+  NewlineQuoteReader reader;
+  std::string input("a\nb");
+  CSV2_REQUIRE(reader.parse(input));
 
-    csv2::parse_error error;
-    CSV2_REQUIRE_FALSE(reader.validate(error));
-    CSV2_REQUIRE(error.code == csv2::parse_errc::bare_carriage_return);
-    CSV2_REQUIRE(error.byte_offset == 1);
-  }
+  csv2::parse_error error;
+  CSV2_REQUIRE_FALSE(reader.validate(error));
+  CSV2_REQUIRE(error.code == csv2::parse_errc::unexpected_quote);
+  CSV2_REQUIRE(error.byte_offset == 1);
+}
 
-  CSV2_SUBCASE("carriage-return quote") {
-    using CarriageReturnQuoteReader =
-        csv2::Reader<csv2::delimiter<','>, csv2::quote_character<'\r'>,
-                     csv2::first_row_is_header<false>>;
-    CarriageReturnQuoteReader reader;
-    std::string input("a\rb");
-    CSV2_REQUIRE(reader.parse(input));
+CSV2_TEST_CASE("reader.scan.report-a-bare-carriage-return-before-a-line-feed-quote",
+               "reader.scan") {
+  using NewlineQuoteReader = csv2::Reader<csv2::delimiter<','>, csv2::quote_character<'\n'>,
+                                          csv2::first_row_is_header<false>>;
+  NewlineQuoteReader reader;
+  std::string input("a\r\nb");
+  CSV2_REQUIRE(reader.parse(input));
 
-    csv2::parse_error error;
-    CSV2_REQUIRE_FALSE(reader.validate(error));
-    CSV2_REQUIRE(error.code == csv2::parse_errc::unexpected_quote);
-    CSV2_REQUIRE(error.byte_offset == 1);
-  }
+  csv2::parse_error error;
+  CSV2_REQUIRE_FALSE(reader.validate(error));
+  CSV2_REQUIRE(error.code == csv2::parse_errc::bare_carriage_return);
+  CSV2_REQUIRE(error.byte_offset == 1);
+}
+
+CSV2_TEST_CASE("reader.scan.reject-a-carriage-return-quote-outside-a-quoted-field",
+               "reader.scan") {
+  using CarriageReturnQuoteReader =
+      csv2::Reader<csv2::delimiter<','>, csv2::quote_character<'\r'>,
+                   csv2::first_row_is_header<false>>;
+  CarriageReturnQuoteReader reader;
+  std::string input("a\rb");
+  CSV2_REQUIRE(reader.parse(input));
+
+  csv2::parse_error error;
+  CSV2_REQUIRE_FALSE(reader.validate(error));
+  CSV2_REQUIRE(error.code == csv2::parse_errc::unexpected_quote);
+  CSV2_REQUIRE(error.byte_offset == 1);
 }
 
 CSV2_TEST_CASE("reader.scan.scan-cell-boundaries-through-the-shared-fast-path", "reader.scan") {
