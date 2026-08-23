@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "title": "CSV2 paired benchmark report v5",
+  "title": "CSV2 paired benchmark report v6",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -11,7 +11,7 @@
     "candidate", "datasets", "calibration", "cases", "machine_profile"
   ],
   "properties": {
-    "schema": {"const": "csv2-benchmark-report-v5"},
+    "schema": {"const": "csv2-benchmark-report-v6"},
     "artifact_mode": {"enum": ["owned", "external"]},
     "mode": {"enum": ["aa", "compare"]},
     "status": {"enum": ["running", "completed", "failed"]},
@@ -116,10 +116,15 @@
         },
         "description": {
           "type": "object",
-          "required": ["protocol", "revision", "operations", "sources", "operation_contracts"],
+          "required": [
+            "protocol", "revision", "instrumentation", "capabilities",
+            "operations", "sources", "operation_contracts"
+          ],
           "properties": {
-            "protocol": {"const": "csv2-common-v4"},
+            "protocol": {"const": "csv2-common-v5"},
             "revision": {"type": "string", "minLength": 1},
+            "instrumentation": {"const": "none"},
+            "capabilities": {"type": "string", "minLength": 1},
             "operations": {"type": "string", "minLength": 1},
             "sources": {"type": "string", "minLength": 1},
             "operation_contracts": {"type": "string", "minLength": 1}
@@ -211,11 +216,14 @@
             "protocol", "revision", "operation", "scope", "source",
             "semantic_case_id", "byte_basis", "bytes",
             "iterations", "elapsed_ns", "rows", "cells", "row_bytes", "checksum",
-            "timed_reader_steps"
+            "timed_reader_steps", "timed_checksum_mix_calls",
+            "instrumentation", "capabilities"
           ],
           "properties": {
-            "protocol": {"const": "csv2-common-v4"},
+            "protocol": {"const": "csv2-common-v5"},
             "revision": {"type": "string", "minLength": 1},
+            "instrumentation": {"const": "none"},
+            "capabilities": {"type": "string", "minLength": 1},
             "operation": {"type": "string", "minLength": 1},
             "scope": {"type": "string", "minLength": 1},
             "source": {"enum": ["buffer", "mmap"]},
@@ -228,7 +236,8 @@
             "cells": {"type": "string", "pattern": "^(0|[1-9][0-9]*)$"},
             "row_bytes": {"type": "string", "pattern": "^(0|[1-9][0-9]*)$"},
             "checksum": {"type": "string", "pattern": "^(0|[1-9][0-9]*)$"},
-            "timed_reader_steps": {"type": "string", "pattern": "^(0|[1-9][0-9]*)$"}
+            "timed_reader_steps": {"const": "0"},
+            "timed_checksum_mix_calls": {"const": "0"}
           },
           "additionalProperties": false
         }

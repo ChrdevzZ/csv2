@@ -5,12 +5,12 @@ reject unknown and older versions; there is no implicit migration path.
 
 | Contract | Version | Purpose |
 | --- | --- | --- |
-| common driver wire | `csv2-common-v4` | one self-described C++11 comparison result |
-| current verify wire | `csv2-current-v3` | exact checksum, allocation, and semantic identity |
+| common driver wire | `csv2-common-v5` | one self-described C++11 comparison result with explicit instrumentation and capabilities |
+| current verify wire | `csv2-current-v4` | exact checksum, allocation, and semantic identity |
 | build manifest | `csv2-benchmark-build-v1` | immutable source and audited build identity |
-| comparison report | `csv2-benchmark-report-v5` | paired A/A or A/B primary observations and derived results |
-| fixed-machine metrics | `csv2-fixed-machine-metrics-v5` | bound timing, PMU, RSS, size, and provenance |
-| complete evidence | `csv2-performance-evidence-bundle-v2` | cross-checked final decision gate |
+| comparison report | `csv2-benchmark-report-v6` | paired A/A or A/B primary observations and derived results |
+| fixed-machine metrics | `csv2-fixed-machine-metrics-v6` | bound timing, PMU, RSS, size, and provenance |
+| complete evidence | `csv2-performance-evidence-bundle-v3` | cross-checked final decision gate |
 | artifact manifest | `csv2-artifact-manifest-v3` | component/evidence inputs and output digests |
 | machine profile | `csv2-machine-profile-v1` | reviewed identity and operating constraints for controlled evidence |
 
@@ -56,7 +56,7 @@ decision-eligible evidence bundle.
 
 ## Reports
 
-`csv2-benchmark-report-v5` embeds both common-driver build manifests, exact
+`csv2-benchmark-report-v6` embeds both common-driver build manifests, exact
 artifacts and descriptions, operation scope/source contracts, datasets, host,
 compiler context, complete Python runner bundle, launch order, raw samples,
 and derived statistics. Its validator reparses every saved stdout wire,
@@ -69,7 +69,7 @@ hash on both sides; A/B requires distinct commits. A/B accepts only a completed
 A/A report with the same candidate build identity, runner/adapter bundle,
 datasets, affinity, flags, run count, warmups, and iterations.
 
-`csv2-fixed-machine-metrics-v5` embeds the owned current-tree build manifest
+`csv2-fixed-machine-metrics-v6` embeds the owned current-tree build manifest
 and binds semantic verification, allocation verification, Google Benchmark
 samples, PMU counters, peak RSS, code size, and clean isolated build timing.
 Its timing summaries are rederived from saved samples. A
@@ -96,7 +96,7 @@ and the generated corpus manifest. It rehashes every input and corpus member,
 then requires matching candidate revisions and source trees, compiler identity,
 machine profile and affinity, candidate build identity, calibration reference,
 and exact semantic comparison binding. The resulting
-`csv2-performance-evidence-bundle-v2` may set
+`csv2-performance-evidence-bundle-v3` may set
 `decision_eligible=true` only when all three inputs are controlled-complete;
 an exploratory bundle always sets it to false. Protocol validity proves the
 recorded artifact and measurement relationship; it does not independently
@@ -129,7 +129,9 @@ is canonical SHA-256.
 
 Repeated source operations use explicit cache semantics.
 `source/file-read-cached` does not claim cold-storage behavior, and
-`source/mmap-touch-resident` does not claim first-page-fault cost. Actual timing
+`source/mmap-touch-pretouched` touches the same 4096-byte stride addresses and
+final byte in setup and in the timed kernel. It does not claim first-page-fault
+cost or continued OS residency. Actual timing
 accepts one operation and one concrete compatible source per process; suite
 orchestration starts separate processes rather than merging unrelated Context
 preparation or peak RSS.

@@ -54,7 +54,7 @@ if(NOT csv2_result EQUAL 4)
     "failing kernel returned ${csv2_result}, expected 4: "
     "${csv2_stdout}${csv2_stderr}")
 endif()
-if(csv2_stdout MATCHES "protocol=csv2-current-v3")
+if(csv2_stdout MATCHES "protocol=csv2-current-v4")
   message(FATAL_ERROR "failing kernel emitted a success wire: ${csv2_stdout}")
 endif()
 set(csv2_failure_output "${csv2_stdout}\n${csv2_stderr}")

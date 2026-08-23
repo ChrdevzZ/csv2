@@ -16,16 +16,35 @@
 #define CSV2_BENCHMARK_REVISION "unstamped"
 #endif
 
+#ifndef CSV2_BENCHMARK_TIMER_SCOPE_AUDIT
+#define CSV2_BENCHMARK_TIMER_SCOPE_AUDIT 0
+#endif
+
+#ifndef CSV2_BENCHMARK_ENABLE_MODERN_WRITER_OPERATIONS
+#define CSV2_BENCHMARK_ENABLE_MODERN_WRITER_OPERATIONS 0
+#endif
+
+#if CSV2_BENCHMARK_TIMER_SCOPE_AUDIT != 0 && CSV2_BENCHMARK_TIMER_SCOPE_AUDIT != 1
+#error "CSV2_BENCHMARK_TIMER_SCOPE_AUDIT must be 0 or 1"
+#endif
+
+#if CSV2_BENCHMARK_ENABLE_MODERN_WRITER_OPERATIONS != 0 &&                                 \
+    CSV2_BENCHMARK_ENABLE_MODERN_WRITER_OPERATIONS != 1
+#error "CSV2_BENCHMARK_ENABLE_MODERN_WRITER_OPERATIONS must be 0 or 1"
+#endif
+
 namespace {
 
 using CommonReader = csv2::Reader<csv2::delimiter<','>, csv2::quote_character<'"'>,
                                   csv2::first_row_is_header<false>>;
 
-const char protocol[] = "csv2-common-v4";
+const char protocol[] = "csv2-common-v5";
 volatile std::uint64_t benchmark_sink = 0;
+#if CSV2_BENCHMARK_TIMER_SCOPE_AUDIT
 bool timed_phase = false;
 std::uint64_t timed_checksum_mix_calls = 0;
 std::uint64_t timed_reader_steps = 0;
+#endif
 
 struct Options {
   std::string operation;
@@ -41,9 +60,35 @@ struct Observation {
 };
 
 void mix(std::uint64_t &checksum, std::uint64_t value) noexcept {
+#if CSV2_BENCHMARK_TIMER_SCOPE_AUDIT
   if (timed_phase)
     ++timed_checksum_mix_calls;
+#endif
   checksum ^= value + 0x9e3779b97f4a7c15ull + (checksum << 6) + (checksum >> 2);
+}
+
+const char *instrumentation_name() noexcept {
+#if CSV2_BENCHMARK_TIMER_SCOPE_AUDIT
+  return "timer_scope_audit";
+#else
+  return "none";
+#endif
+}
+
+std::uint64_t reader_step_count() noexcept {
+#if CSV2_BENCHMARK_TIMER_SCOPE_AUDIT
+  return timed_reader_steps;
+#else
+  return 0;
+#endif
+}
+
+std::uint64_t checksum_mix_count() noexcept {
+#if CSV2_BENCHMARK_TIMER_SCOPE_AUDIT
+  return timed_checksum_mix_calls;
+#else
+  return 0;
+#endif
 }
 
 class FixedOutputBuffer : public std::streambuf {
@@ -172,13 +217,17 @@ std::uint64_t file_size(const std::string &path) {
 Observation traverse(const CommonReader &reader) {
   Observation result;
   for (const auto row : reader) {
+#if CSV2_BENCHMARK_TIMER_SCOPE_AUDIT
     if (timed_phase)
       ++timed_reader_steps;
+#endif
     ++result.rows;
     result.row_bytes += static_cast<std::uint64_t>(row.length());
     for (const auto cell : row) {
+#if CSV2_BENCHMARK_TIMER_SCOPE_AUDIT
       if (timed_phase)
         ++timed_reader_steps;
+#endif
       (void)cell;
       ++result.cells;
     }
@@ -215,7 +264,7 @@ void extract_raw_rows(const CommonReader &reader, StringRows &rows) {
   }
 }
 
-#if defined(CSV2_BENCHMARK_ENABLE_MODERN_WRITER_OPERATIONS)
+#if CSV2_BENCHMARK_ENABLE_MODERN_WRITER_OPERATIONS
 struct RawFieldReference {
   const char *bytes;
   std::size_t length;
@@ -365,10 +414,14 @@ bool run_prepared(const Options &options, Observation &result, std::uint64_t &ch
     return false;
   checksum = semantic_checksum(reader);
 
+#if CSV2_BENCHMARK_TIMER_SCOPE_AUDIT
   timed_checksum_mix_calls = 0;
   timed_reader_steps = 0;
+#endif
   const std::chrono::steady_clock::time_point start = std::chrono::steady_clock::now();
+#if CSV2_BENCHMARK_TIMER_SCOPE_AUDIT
   timed_phase = true;
+#endif
   for (std::size_t run = 0; run < options.iterations; ++run) {
     const Observation sample = traverse(reader);
     result.rows += sample.rows;
@@ -376,8 +429,10 @@ bool run_prepared(const Options &options, Observation &result, std::uint64_t &ch
     result.row_bytes += sample.row_bytes;
   }
   const std::chrono::steady_clock::time_point stop = std::chrono::steady_clock::now();
+#if CSV2_BENCHMARK_TIMER_SCOPE_AUDIT
   timed_phase = false;
-  if (timed_checksum_mix_calls != 0)
+#endif
+  if (checksum_mix_count() != 0)
     return false;
   elapsed_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(stop - start).count();
   return true;
@@ -396,25 +451,33 @@ bool run_legacy_mmap(const Options &options, Observation &result, std::uint64_t 
   }
 
   elapsed_ns = 0;
+#if CSV2_BENCHMARK_TIMER_SCOPE_AUDIT
   timed_checksum_mix_calls = 0;
   timed_reader_steps = 0;
+#endif
   for (std::size_t run = 0; run < options.iterations; ++run) {
     const std::chrono::steady_clock::time_point start = std::chrono::steady_clock::now();
+#if CSV2_BENCHMARK_TIMER_SCOPE_AUDIT
     timed_phase = true;
+#endif
     CommonReader reader;
     if (!reader.mmap(options.input)) {
+#if CSV2_BENCHMARK_TIMER_SCOPE_AUDIT
       timed_phase = false;
+#endif
       return false;
     }
     const Observation sample = traverse(reader);
     const std::chrono::steady_clock::time_point stop = std::chrono::steady_clock::now();
+#if CSV2_BENCHMARK_TIMER_SCOPE_AUDIT
     timed_phase = false;
+#endif
     elapsed_ns += std::chrono::duration_cast<std::chrono::nanoseconds>(stop - start).count();
     result.rows += sample.rows;
     result.cells += sample.cells;
     result.row_bytes += sample.row_bytes;
   }
-  if (timed_checksum_mix_calls != 0)
+  if (checksum_mix_count() != 0)
     return false;
   return true;
 #else
@@ -435,12 +498,12 @@ bool run_writer(const Options &options, Observation &result, std::uint64_t &chec
 
   const Observation sample = traverse(reader);
   StringRows prepared_rows;
-#if defined(CSV2_BENCHMARK_ENABLE_MODERN_WRITER_OPERATIONS)
+#if CSV2_BENCHMARK_ENABLE_MODERN_WRITER_OPERATIONS
   RawRows prepared_raw_rows;
 #endif
   if (options.operation == "legacy_writer_raw")
     extract_raw_rows(reader, prepared_rows);
-#if defined(CSV2_BENCHMARK_ENABLE_MODERN_WRITER_OPERATIONS)
+#if CSV2_BENCHMARK_ENABLE_MODERN_WRITER_OPERATIONS
   else if (is_escaped_writer_operation(options.operation))
     extract_decoded_rows(reader, prepared_rows);
   else if (options.operation == "writer_raw_direct" || options.operation == "writer_raw_streamable")
@@ -457,10 +520,14 @@ bool run_writer(const Options &options, Observation &result, std::uint64_t &chec
     return false;
   FixedOutputBuffer buffer(capacity);
   std::ostream output(&buffer);
+#if CSV2_BENCHMARK_TIMER_SCOPE_AUDIT
   timed_checksum_mix_calls = 0;
   timed_reader_steps = 0;
+#endif
   const std::chrono::steady_clock::time_point start = std::chrono::steady_clock::now();
+#if CSV2_BENCHMARK_TIMER_SCOPE_AUDIT
   timed_phase = true;
+#endif
   if (options.operation == "legacy_writer_raw") {
     csv2::Writer<csv2::delimiter<','>, std::ostream> writer(output);
     for (std::size_t run = 0; run < options.iterations; ++run) {
@@ -469,7 +536,7 @@ bool run_writer(const Options &options, Observation &result, std::uint64_t &chec
       writer.write_rows(prepared_rows);
     }
   }
-#if defined(CSV2_BENCHMARK_ENABLE_MODERN_WRITER_OPERATIONS)
+#if CSV2_BENCHMARK_ENABLE_MODERN_WRITER_OPERATIONS
   else if (options.operation == "writer_raw_direct") {
     csv2::basic_writer<csv2::delimiter<','>, std::ostream, csv2::stream_ownership::leave_open,
                        csv2::quote_policy::none>
@@ -513,13 +580,15 @@ bool run_writer(const Options &options, Observation &result, std::uint64_t &chec
   }
 #endif
   const std::chrono::steady_clock::time_point stop = std::chrono::steady_clock::now();
+#if CSV2_BENCHMARK_TIMER_SCOPE_AUDIT
   timed_phase = false;
+#endif
 
   if (!output)
     return false;
-  if (timed_checksum_mix_calls != 0)
+  if (checksum_mix_count() != 0)
     return false;
-  if (timed_reader_steps != 0)
+  if (reader_step_count() != 0)
     return false;
 
   result.rows = sample.rows * options.iterations;
@@ -553,7 +622,7 @@ const OperationContract operation_contracts[] = {
      "buffer",
 #endif
      "csv2.writer.legacy-raw.v1", "input_corpus"},
-#if defined(CSV2_BENCHMARK_ENABLE_MODERN_WRITER_OPERATIONS)
+#if CSV2_BENCHMARK_ENABLE_MODERN_WRITER_OPERATIONS
     {"writer_raw_direct", "writer_only",
 #if CSV2_HAS_MMAP
      "buffer+mmap",
@@ -617,6 +686,11 @@ bool contract_supports_source(const OperationContract &contract, const std::stri
 int main(int argc, char **argv) {
   if (argc == 2 && std::string(argv[1]) == "--describe") {
     std::cout << "protocol=" << protocol << " revision=" << CSV2_BENCHMARK_REVISION
+              << " instrumentation=" << instrumentation_name()
+              << " capabilities=legacy-reader,legacy-writer"
+#if CSV2_BENCHMARK_ENABLE_MODERN_WRITER_OPERATIONS
+              << ",modern-writer"
+#endif
               << " operations=";
     for (std::size_t index = 0;
          index < sizeof(operation_contracts) / sizeof(operation_contracts[0]); ++index) {
@@ -677,12 +751,18 @@ int main(int argc, char **argv) {
     elapsed_ns = 1;
   benchmark_sink = result.rows ^ result.cells ^ result.row_bytes ^ checksum;
   std::cout << "protocol=" << protocol << " revision=" << CSV2_BENCHMARK_REVISION
+            << " instrumentation=" << instrumentation_name()
+            << " capabilities=legacy-reader,legacy-writer"
+#if CSV2_BENCHMARK_ENABLE_MODERN_WRITER_OPERATIONS
+            << ",modern-writer"
+#endif
             << " operation=" << options.operation << " scope=" << contract->scope
             << " source=" << options.source << " semantic_case_id=" << contract->semantic_case_id
             << " byte_basis=" << contract->byte_basis << " bytes=" << bytes
             << " iterations=" << options.iterations << " elapsed_ns=" << elapsed_ns
             << " rows=" << result.rows << " cells=" << result.cells
             << " row_bytes=" << result.row_bytes << " checksum=" << checksum
-            << " timed_reader_steps=" << timed_reader_steps << '\n';
+            << " timed_reader_steps=" << reader_step_count()
+            << " timed_checksum_mix_calls=" << checksum_mix_count() << '\n';
   return EXIT_SUCCESS;
 }

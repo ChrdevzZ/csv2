@@ -111,13 +111,13 @@ def evidence_bundle() -> dict[str, object]:
         )
     }
     component = {
-        "schema": "csv2-benchmark-report-v5",
+        "schema": "csv2-benchmark-report-v6",
         "revision": "d" * 40,
         "build_digest": "a" * 64,
         "controlled_complete": False,
     }
     return {
-        "schema": "csv2-performance-evidence-bundle-v2",
+        "schema": "csv2-performance-evidence-bundle-v3",
         "status": "completed",
         "evidence_level": "exploratory",
         "decision_eligible": False,
@@ -149,7 +149,7 @@ def evidence_bundle() -> dict[str, object]:
             "comparison": json.loads(json.dumps(component)),
             "fixed_metrics": {
                 **component,
-                "schema": "csv2-fixed-machine-metrics-v5",
+                "schema": "csv2-fixed-machine-metrics-v6",
             },
         },
         "checks": checks,
@@ -178,8 +178,10 @@ def comparison_report() -> dict[str, object]:
         "artifact": artifact(revision),
         "build": None,
         "description": {
-            "protocol": "csv2-common-v4",
+            "protocol": "csv2-common-v5",
             "revision": revision,
+            "instrumentation": "none",
+            "capabilities": "legacy-reader,legacy-writer",
             "operations": "rows_cells",
             "sources": "buffer",
             "operation_contracts": (
@@ -195,8 +197,10 @@ def comparison_report() -> dict[str, object]:
 
     def launch(side_name: str, order: int) -> dict[str, object]:
         result = {
-            "protocol": "csv2-common-v4",
+            "protocol": "csv2-common-v5",
             "revision": revision,
+            "instrumentation": "none",
+            "capabilities": "legacy-reader,legacy-writer",
             "operation": "rows_cells",
             "scope": "traversal_only",
             "source": "buffer",
@@ -209,7 +213,8 @@ def comparison_report() -> dict[str, object]:
             "cells": "1",
             "row_bytes": "1",
             "checksum": "1",
-            "timed_reader_steps": "2",
+            "timed_reader_steps": "0",
+            "timed_checksum_mix_calls": "0",
         }
         return {
             "phase": "sample",
@@ -243,7 +248,7 @@ def comparison_report() -> dict[str, object]:
         "launches": [launch("baseline", 0), launch("candidate", 1)],
     }
     return {
-        "schema": "csv2-benchmark-report-v5",
+        "schema": "csv2-benchmark-report-v6",
         "artifact_mode": "external",
         "mode": "aa",
         "status": "completed",
@@ -283,7 +288,7 @@ def comparison_report() -> dict[str, object]:
 
 def fixed_metrics_report() -> dict[str, object]:
     return {
-        "schema": "csv2-fixed-machine-metrics-v5",
+        "schema": "csv2-fixed-machine-metrics-v6",
         "artifact_mode": "external",
         "build": None,
         "status": "completed",
@@ -327,7 +332,7 @@ def fixed_metrics_report() -> dict[str, object]:
         },
         "verification": {
             "result": {
-                "protocol": "csv2-current-v3",
+                "protocol": "csv2-current-v4",
                 "revision": "candidate",
                 "operation": "traversal/rows-cells",
                 "source": "buffer",
@@ -705,7 +710,7 @@ class ProtocolTests(unittest.TestCase):
             runs=2,
             warmups=0,
             iterations=1,
-            common_protocol="csv2-common-v4",
+            common_protocol="csv2-common-v5",
         )
         self.assertGreater(derived["measured_noise"], 0.6)
         controlled_comparison = controlled_comparison_report()
@@ -946,7 +951,7 @@ class ProtocolTests(unittest.TestCase):
     def test_evidence_schema_rejects_ineligible_documents(self) -> None:
         schema_root = Path(__file__).resolve().parents[2] / "protocol" / "schemas"
         evidence = json.loads(
-            (schema_root / "evidence-bundle-v2.schema.json").read_text(encoding="utf-8")
+            (schema_root / "evidence-bundle-v3.schema.json").read_text(encoding="utf-8")
         )
         validate_schema(evidence_bundle(), evidence)
         controlled_bundle = evidence_bundle()
@@ -1023,10 +1028,10 @@ class ProtocolTests(unittest.TestCase):
 
     def test_common_v4_is_accepted_and_v3_is_rejected(self) -> None:
         result = protocol.parse_common(
-            "protocol=csv2-common-v4 revision=x", {"revision"}
+            "protocol=csv2-common-v5 revision=x", {"revision"}
         )
         self.assertEqual(result["revision"], "x")
-        with self.assertRaisesRegex(RuntimeError, "expected csv2-common-v4"):
+        with self.assertRaisesRegex(RuntimeError, "expected csv2-common-v5"):
             protocol.parse_common(
                 "protocol=csv2-common-v3 revision=x", {"revision"}
             )
@@ -1052,7 +1057,7 @@ class ProtocolTests(unittest.TestCase):
 
     def test_current_v3_parses_exact_uint64_fields(self) -> None:
         output = (
-            "protocol=csv2-current-v3 revision=r operation=traversal/rows "
+            "protocol=csv2-current-v4 revision=r operation=traversal/rows "
             "source=buffer dataset=x.csv semantic_case_id=csv2.traversal.rows.v1 "
             "scope=traversal_only byte_basis=input_corpus "
             "checksum=18446744073709551615 "
@@ -1060,12 +1065,12 @@ class ProtocolTests(unittest.TestCase):
         )
         result = protocol.parse_current(output)
         self.assertEqual(result["checksum"], "18446744073709551615")
-        with self.assertRaisesRegex(RuntimeError, "expected csv2-current-v3"):
-            protocol.parse_current(output.replace("csv2-current-v3", "csv2-current-v2"))
+        with self.assertRaisesRegex(RuntimeError, "expected csv2-current-v4"):
+            protocol.parse_current(output.replace("csv2-current-v4", "csv2-current-v3"))
 
     def test_current_rejects_overflow_duplicate_and_missing_fields(self) -> None:
         valid = (
-            "protocol=csv2-current-v3 revision=r operation=o source=buffer dataset=x "
+            "protocol=csv2-current-v4 revision=r operation=o source=buffer dataset=x "
             "semantic_case_id=csv2.o.v1 scope=source_only byte_basis=input_corpus "
             "checksum=1 bytes=1 rows=1 cells=1 allocations=0 allocated_bytes=0"
         )

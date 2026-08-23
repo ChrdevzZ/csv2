@@ -6,7 +6,7 @@ set(csv2_quote_fixture
 csv2_add_benchmark_check(csv2.benchmark.current.protocol
   COMMAND csv2_benchmark --csv2-input ${csv2_check_fixture}
     --csv2-source buffer --csv2-operation traversal/rows-cells --csv2-verify
-  PASS_REGEX "protocol=csv2-current-v3.*rows=3.*cells=9")
+  PASS_REGEX "protocol=csv2-current-v4.*rows=3.*cells=9")
 
 function(csv2_add_exact_current_check name input operation checksum)
   csv2_add_benchmark_check(${name}
@@ -15,7 +15,7 @@ function(csv2_add_exact_current_check name input operation checksum)
       -DCSV2_BENCHMARK_INPUT=${input}
       -DCSV2_BENCHMARK_SOURCE=buffer
       -DCSV2_BENCHMARK_OPERATION=${operation}
-      -DCSV2_EXPECTED_PROTOCOL=csv2-current-v3
+      -DCSV2_EXPECTED_PROTOCOL=csv2-current-v4
       -DCSV2_EXPECTED_CHECKSUM=${checksum}
       -P ${CMAKE_CURRENT_SOURCE_DIR}/verify_wire.cmake)
 endfunction()
@@ -335,11 +335,19 @@ endforeach()
 
 csv2_add_benchmark_check(csv2.benchmark.common.protocol
   COMMAND csv2_common_benchmark --describe
-  PASS_REGEX "protocol=csv2-common-v4.*operation_contracts=rows_cells:traversal_only:.*csv2.traversal.rows-cells.v1:input_corpus")
+  PASS_REGEX "protocol=csv2-common-v5.*instrumentation=none.*capabilities=legacy-reader,legacy-writer,modern-writer.*operation_contracts=rows_cells:traversal_only:.*csv2.traversal.rows-cells.v1:input_corpus")
 csv2_add_benchmark_check(csv2.benchmark.common.rows_cells
   COMMAND csv2_common_benchmark --operation rows_cells
     --input ${csv2_check_fixture} --source buffer --iterations 1
-  PASS_REGEX "protocol=csv2-common-v4.*semantic_case_id=csv2.traversal.rows-cells.v1.*rows=3.*cells=9.*timed_reader_steps=[1-9][0-9]*")
+  PASS_REGEX "protocol=csv2-common-v5.*instrumentation=none.*semantic_case_id=csv2.traversal.rows-cells.v1.*rows=3.*cells=9.*timed_reader_steps=0.*timed_checksum_mix_calls=0")
+csv2_add_benchmark_check(csv2.benchmark.common.timer_scope_audit.protocol
+  COMMAND csv2_common_benchmark_timer_audit --describe
+  PASS_REGEX "protocol=csv2-common-v5.*instrumentation=timer_scope_audit.*capabilities=legacy-reader,legacy-writer.*operations=rows_cells,legacy_writer_raw,legacy_mmap_rows_cells")
+csv2_add_benchmark_check(csv2.benchmark.common.timer_scope_audit.behavior
+  COMMAND ${CMAKE_COMMAND}
+    -DCSV2_BENCHMARK_EXECUTABLE=$<TARGET_FILE:csv2_common_benchmark_timer_audit>
+    -DCSV2_BENCHMARK_INPUT=${csv2_check_fixture}
+    -P ${CMAKE_CURRENT_SOURCE_DIR}/verify_timer_scope_audit.cmake)
 
 foreach(csv2_common_writer_operation IN ITEMS
     legacy_writer_raw
@@ -361,7 +369,13 @@ if(csv2_benchmark_has_mmap)
   csv2_add_benchmark_check(csv2.benchmark.current.mmap
     COMMAND csv2_benchmark --csv2-input ${csv2_check_fixture}
       --csv2-source mmap --csv2-operation traversal/rows-cells --csv2-verify
-    PASS_REGEX "protocol=csv2-current-v3.*source=mmap")
+    PASS_REGEX "protocol=csv2-current-v4.*source=mmap")
+  csv2_add_benchmark_check(csv2.benchmark.current.preparation.mmap_pretouched
+    COMMAND csv2_benchmark --csv2-input ${csv2_check_fixture}
+      --csv2-source mmap --csv2-operation source/mmap-touch-pretouched
+      --csv2-preparation-audit
+    PASS_REGEX
+      "prepared=mapping,pretouched-mapping decoded_rows=0 streamable_rows=0 output_capacity=0")
 endif()
 
 foreach(csv2_contract IN ITEMS

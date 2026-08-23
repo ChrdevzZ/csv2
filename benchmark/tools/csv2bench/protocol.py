@@ -797,11 +797,18 @@ def validate_comparison_report(report: object) -> None:
         )
         _required(
             description,
-            {"protocol", "revision", "operations", "sources", "operation_contracts"},
+            {
+                "protocol", "revision", "instrumentation", "capabilities",
+                "operations", "sources", "operation_contracts",
+            },
             f"comparison report.{side}.description",
         )
         if description["protocol"] != COMMON_PROTOCOL:
             raise RuntimeError(f"comparison report.{side} protocol is invalid")
+        if description["instrumentation"] != "none":
+            raise RuntimeError(
+                f"comparison report.{side} must use an uninstrumented driver"
+            )
         if description["revision"] != artifact["revision"]:
             raise RuntimeError(f"comparison report.{side} revision is inconsistent")
         revisions.append(str(artifact["revision"]))
@@ -1010,11 +1017,14 @@ def validate_comparison_report(report: object) -> None:
                 "protocol", "revision", "operation", "scope", "source",
                 "semantic_case_id", "byte_basis", "bytes",
                 "iterations", "elapsed_ns", "rows", "cells", "row_bytes", "checksum",
-                "timed_reader_steps",
+                "timed_reader_steps", "timed_checksum_mix_calls",
+                "instrumentation", "capabilities",
             }
             _required(result, result_fields, f"{launch_label}.result")
             if result["protocol"] != COMMON_PROTOCOL:
                 raise RuntimeError(f"{launch_label}.result protocol is invalid")
+            if result["instrumentation"] != "none":
+                raise RuntimeError(f"{launch_label}.result is instrumented")
             expected_revision = revisions[0 if side == "baseline" else 1]
             if result["revision"] != expected_revision:
                 raise RuntimeError(f"{launch_label}.result revision is inconsistent")
@@ -1030,12 +1040,15 @@ def validate_comparison_report(report: object) -> None:
                 raise RuntimeError(f"{launch_label}.result byte basis is inconsistent")
             for field in (
                 "bytes", "iterations", "rows", "cells", "row_bytes", "checksum",
-                "timed_reader_steps",
+                "timed_reader_steps", "timed_checksum_mix_calls",
             ):
                 _uint64_string(result[field], f"{launch_label}.result.{field}")
-            if expected_scope == "writer_only" and result["timed_reader_steps"] != "0":
+            if (
+                result["timed_reader_steps"] != "0"
+                or result["timed_checksum_mix_calls"] != "0"
+            ):
                 raise RuntimeError(
-                    f"{launch_label}.result performed Reader work in writer-only scope"
+                    f"{launch_label}.result contains timer-scope audit work"
                 )
             result_signature = tuple(
                 result[field]
