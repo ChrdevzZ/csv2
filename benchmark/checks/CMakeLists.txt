@@ -3,6 +3,12 @@ set(csv2_check_fixture
 set(csv2_quote_fixture
   "${csv2_SOURCE_DIR}/benchmark/datasets/fixtures/quote_heavy.csv")
 
+csv2_add_benchmark_check(csv2.benchmark.reject.failure_check_missing_source
+  COMMAND ${CMAKE_COMMAND}
+    -DCSV2_FAILURE_CHECK_SCRIPT=${CMAKE_CURRENT_SOURCE_DIR}/verify_current_failure.cmake
+    -P ${CMAKE_CURRENT_SOURCE_DIR}/verify_current_failure_contract.cmake
+  TIMEOUT 5)
+
 csv2_add_benchmark_check(csv2.benchmark.current.protocol
   COMMAND csv2_benchmark --csv2-input ${csv2_check_fixture}
     --csv2-source buffer --csv2-operation traversal/rows-cells --csv2-verify

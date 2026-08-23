@@ -1,8 +1,21 @@
-if(NOT DEFINED CSV2_BENCHMARK_EXECUTABLE OR
-   NOT DEFINED CSV2_BENCHMARK_INPUT OR
-   NOT DEFINED CSV2_BENCHMARK_OPERATION OR
-   NOT DEFINED CSV2_EXPECTED_STATUS)
-  message(FATAL_ERROR "current failure check is missing required inputs")
+set(csv2_required_inputs
+  CSV2_BENCHMARK_EXECUTABLE
+  CSV2_BENCHMARK_INPUT
+  CSV2_BENCHMARK_SOURCE
+  CSV2_BENCHMARK_OPERATION
+  CSV2_EXPECTED_STATUS)
+set(csv2_missing_inputs)
+foreach(csv2_required_input IN LISTS csv2_required_inputs)
+  if(NOT DEFINED ${csv2_required_input} OR
+     "${${csv2_required_input}}" STREQUAL "")
+    list(APPEND csv2_missing_inputs "${csv2_required_input}")
+  endif()
+endforeach()
+if(csv2_missing_inputs)
+  string(REPLACE ";" ", " csv2_missing_inputs_text
+    "${csv2_missing_inputs}")
+  message(FATAL_ERROR
+    "current failure check is missing required inputs: ${csv2_missing_inputs_text}")
 endif()
 
 set(csv2_command
