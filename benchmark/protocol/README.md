@@ -93,7 +93,7 @@ traversal-only comparison.
 
 Component report lifecycle is `running` to `completed` or `failed`. A completed,
 owned, controlled component satisfying its semantic gates sets
-`controlled_complete=true`, but every v5 comparison or metrics report keeps
+`controlled_complete=true`, but every v6 comparison or metrics report keeps
 `decision_eligible=false`. This prevents an A/A, A/B, or fixed-metrics file from
 claiming a final verdict in isolation.
 

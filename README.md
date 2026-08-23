@@ -317,7 +317,11 @@ not produce successful measurements. Each timing process measures one operation 
 preparation and peak RSS do not share a `Context`.
 
 Exact checksums and allocation contracts remain outside timing. Hosted CI gates their protocols and observers, but
-hosted throughput is exploratory. A stable case manifest verifies and dry-runs every registered operation.
+hosted throughput is exploratory. The formal comparison driver is uninstrumented;
+a separate timer-scope audit build proves Reader/checksum boundaries and is
+rejected by report generation. `source/mmap-touch-pretouched` explicitly touches
+the same page-stride addresses during setup and timing without claiming OS
+residency. A stable case manifest verifies and dry-runs every registered operation.
 
 ```bash
 cmake -S . -B build-benchmark -G Ninja \
@@ -399,6 +403,13 @@ Quick covers representative C++11, C++20, and C++23 slices and no-mmap/no-except
 C++11–23, modular/single-header, and variant matrix; C++26 is compile-only. Details live in
 [`test/README.md`](test/README.md), [`CONTRIBUTING.md`](CONTRIBUTING.md), and
 [`third_party/verification/README.md`](third_party/verification/README.md).
+
+Pull requests run the cross-platform quick workflows. Verification-related
+changes also run one exact-head Linux GCC 14 full job and a small end-to-end
+exploratory evidence smoke covering current metrics, candidate A/A, base/head
+A/B, all four modern Writer comparison paths, and a legacy-only `9504e0b`
+owned build. Manual full and performance workflows retain the broader platform
+matrix and controlled self-hosted path.
 
 ## Installing and Consuming with CMake
 

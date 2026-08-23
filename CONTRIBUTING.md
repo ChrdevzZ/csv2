@@ -76,6 +76,9 @@ Runtime sources use the backend-independent macros from
 `csv2_test/assertions.hpp`. C++14–23 normal variants use Catch2; C++11 and all
 no-exceptions variants use the non-throwing CSV2 runner. Keep one semantic
 source unless a language feature genuinely requires a compile-only contract.
+Each scenario must be an independent `CSV2_TEST_CASE`; do not use Catch2
+sections or emulate them in minitest, because their setup and failure schedules
+are not equivalent.
 
 When adding a source or capability, update the declaration in
 `test/runtime/CMakeLists.txt`. CMake validates declaration semantics such as
@@ -188,7 +191,11 @@ audits are maintainer-side review tools, not tracked CI gates. See
 ## CI and documentation
 
 The existing Linux, Windows, macOS, and fuzz/benchmark workflow identities are
-the automatic quick checks. `full.yml` and `perf.yml` are manually dispatched.
+the automatic quick checks. Verification-related pull requests additionally
+run the exact-head GCC 14 full profile and an exploratory end-to-end protocol
+smoke. Manual `full.yml` dispatches add Clang/libc++, Windows, macOS, coverage,
+and extended fuzzing; manual `perf.yml` dispatches retain exploratory and
+controlled machine-profile runs.
 Keep matrices `fail-fast: false`, upload JUnit/evidence artifacts, and select
 CTest by stable names or labels rather than hard-coded totals.
 
