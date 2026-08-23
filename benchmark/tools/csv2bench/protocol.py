@@ -10,6 +10,16 @@ from . import COMMON_PROTOCOL
 from . import derivation
 
 UINT64_MAX = (1 << 64) - 1
+COMMON_OPERATION_CAPABILITIES = {
+    "rows_cells": "legacy-reader",
+    "legacy_mmap_rows_cells": "legacy-reader",
+    "legacy_writer_raw": "legacy-writer",
+    "writer_raw_direct": "modern-writer",
+    "writer_raw_streamable": "modern-writer",
+    "writer_escaped_direct": "modern-writer",
+    "writer_escaped_streamable": "modern-writer",
+}
+COMMON_CAPABILITY_ORDER = ("legacy-reader", "legacy-writer", "modern-writer")
 
 
 def parse_key_value_line(output: str, required: Iterable[str]) -> dict[str, str]:
@@ -76,6 +86,32 @@ def parse_operation_contracts(
             byte_basis,
         )
     return contracts
+
+
+def parse_common_capabilities(encoded: str) -> tuple[str, ...]:
+    entries = tuple(encoded.split(","))
+    if (
+        entries
+        not in {
+            COMMON_CAPABILITY_ORDER[:2],
+            COMMON_CAPABILITY_ORDER,
+        }
+    ):
+        raise RuntimeError("common-driver capabilities are malformed")
+    return entries
+
+
+def capabilities_for_operations(operations: Iterable[str]) -> tuple[str, ...]:
+    operation_set = set(operations)
+    unknown = operation_set - COMMON_OPERATION_CAPABILITIES.keys()
+    if unknown:
+        raise RuntimeError("common-driver operation has no declared capability")
+    required = {
+        COMMON_OPERATION_CAPABILITIES[operation] for operation in operation_set
+    }
+    return tuple(
+        capability for capability in COMMON_CAPABILITY_ORDER if capability in required
+    )
 
 
 def parse_current(output: str) -> dict[str, str]:
@@ -515,13 +551,20 @@ def _common_build(value: object, label: str) -> dict[str, object]:
     build = _object(value, label)
     fields = {
         "schema", "kind", "generated_at_utc", "revision", "header_export",
-        "adapter_export", "compiler", "compiler_flags", "argv", "normalized_argv",
-        "build_log", "output", "identity_digest", "digest",
+        "adapter_export", "instrumentation", "capabilities", "compiler",
+        "compiler_flags", "argv", "normalized_argv", "build_log", "output",
+        "identity_digest", "digest",
     }
     _required(build, fields, label)
     _closed(build, fields, label)
     if build["schema"] != BUILD_SCHEMA or build["kind"] != "common-driver":
         raise RuntimeError(f"{label} has the wrong schema or kind")
+    if build["instrumentation"] != "none":
+        raise RuntimeError(f"{label} is instrumented")
+    encoded_capabilities = _array(build["capabilities"], f"{label}.capabilities")
+    parse_common_capabilities(
+        ",".join(_string(value, f"{label}.capabilities") for value in encoded_capabilities)
+    )
     _string(build["generated_at_utc"], f"{label}.generated_at_utc")
     revision = _hex_digest(build["revision"], f"{label}.revision", (40, 64))
     headers = _git_export(build["header_export"], f"{label}.header_export")
@@ -766,6 +809,7 @@ def validate_comparison_report(report: object) -> None:
     capabilities: list[
         dict[str, tuple[str, frozenset[str], str, str]]
     ] = []
+    driver_capabilities: list[tuple[str, ...]] = []
     build_documents: list[dict[str, object]] = []
     for side in ("baseline", "candidate"):
         side_document = _object(document[side], f"comparison report.{side}")
@@ -830,11 +874,34 @@ def validate_comparison_report(report: object) -> None:
             raise RuntimeError(
                 f"comparison report.{side} source list and contracts differ"
             )
+        described_capabilities = parse_common_capabilities(
+            str(description["capabilities"])
+        )
+        required_capabilities = set(capabilities_for_operations(operations))
+        if (
+            not required_capabilities <= set(described_capabilities)
+            or (("modern-writer" in described_capabilities) !=
+                ("modern-writer" in required_capabilities))
+        ):
+            raise RuntimeError(
+                f"comparison report.{side} capabilities and operations differ"
+            )
+        if artifact_mode == "owned" and (
+            build["instrumentation"] != description["instrumentation"]
+            or tuple(build["capabilities"]) != described_capabilities
+        ):
+            raise RuntimeError(
+                f"comparison report.{side} runtime contract differs from its build"
+            )
+        driver_capabilities.append(described_capabilities)
         capabilities.append(contracts)
         _invocation(
             side_document["description_invocation"],
             f"comparison report.{side}.description_invocation",
         )
+
+    if driver_capabilities[0] != driver_capabilities[1]:
+        raise RuntimeError("comparison driver capabilities differ")
 
     if artifact_mode == "owned":
         baseline_build, candidate_build = build_documents
@@ -1025,6 +1092,16 @@ def validate_comparison_report(report: object) -> None:
                 raise RuntimeError(f"{launch_label}.result protocol is invalid")
             if result["instrumentation"] != "none":
                 raise RuntimeError(f"{launch_label}.result is instrumented")
+            expected_driver_capabilities = driver_capabilities[
+                0 if side == "baseline" else 1
+            ]
+            if (
+                parse_common_capabilities(str(result["capabilities"]))
+                != expected_driver_capabilities
+            ):
+                raise RuntimeError(
+                    f"{launch_label}.result capabilities differ from its description"
+                )
             expected_revision = revisions[0 if side == "baseline" else 1]
             if result["revision"] != expected_revision:
                 raise RuntimeError(f"{launch_label}.result revision is inconsistent")

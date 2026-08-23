@@ -453,6 +453,8 @@ def controlled_comparison_report() -> dict[str, object]:
             "kind": "common-driver",
             "generated_at_utc": "now",
             "revision": revision,
+            "instrumentation": "none",
+            "capabilities": ["legacy-reader", "legacy-writer"],
             "header_export": git_export(
                 f"/{side_name}-headers",
                 revision,

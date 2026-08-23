@@ -204,12 +204,19 @@ row views prepared before timing; `legacy_mmap_rows_cells` is explicitly
 checksum, rows, and cells. Each operation performs an untimed semantic
 checksum; a mismatch prevents a performance decision.
 
+Both description and result wires declare `legacy-reader`, `legacy-writer`, and
+the conditional `modern-writer` capability. Owned mode validates operation,
+source, and dataset selections before exporting Git objects. It omits the modern
+Writer definition unless one of the four modern Writer operations is requested,
+so legacy-only comparisons can compile against historical header revisions that
+predate those APIs.
+
 ## Comparison pipeline
 
 `run_suite.py` is a compatibility wrapper around `tools/csv2bench/runner.py`.
 Owned mode is the default: the tool resolves commits, exports and builds both
 drivers, embeds `csv2-benchmark-build-v1` manifests, revalidates all Git/build/
-dataset/tool inputs, rejects output aliases, and atomically publishes a v5
+dataset/tool inputs, rejects output aliases, and atomically publishes a v6
 report plus its v3 artifact manifest. External executables require
 `--external-artifacts` and are restricted to exploratory evidence.
 

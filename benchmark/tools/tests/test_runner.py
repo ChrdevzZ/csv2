@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import json
+import contextlib
+import io
+import sys
 import tempfile
 import unittest
 import unittest.mock
@@ -66,6 +69,13 @@ class RunnerTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "unsupported benchmark protocol"):
             runner.parse_output(line.replace("csv2-common-v5", "csv2-common-v4"))
 
+    def test_parser_rejects_timer_scope_audit_driver(self) -> None:
+        value = result("x")
+        value["instrumentation"] = "timer_scope_audit"
+        line = " ".join(f"{key}={field}" for key, field in value.items())
+        with self.assertRaisesRegex(RuntimeError, "instrumentation=none"):
+            runner.parse_output(line)
+
     def test_selection_rejects_unknown_duplicate_and_empty_entries(self) -> None:
         with self.assertRaisesRegex(ValueError, "unknown"):
             runner.selected("missing", ("one", "two"))
@@ -73,6 +83,73 @@ class RunnerTests(unittest.TestCase):
             runner.selected("one,one", ("one", "two"))
         with self.assertRaisesRegex(ValueError, "empty"):
             runner.selected("one,", ("one", "two"))
+
+    def test_invalid_selection_fails_before_owned_build(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            datasets = root / "datasets"
+            datasets.mkdir()
+            (datasets / "input.csv").write_text("a,b\n", encoding="utf-8")
+            arguments = [
+                "run_suite.py",
+                "--repository", str(Path.cwd()),
+                "--baseline-ref", "HEAD",
+                "--candidate-ref", "HEAD",
+                "--compiler-executable", sys.executable,
+                "--compiler-flags", "-O3",
+                "--datasets", str(datasets),
+                "--operations", "missing",
+                "--allow-uncalibrated",
+                "--output", str(root / "report.json"),
+            ]
+            with (
+                unittest.mock.patch.object(sys, "argv", arguments),
+                unittest.mock.patch.object(runner.builds, "build_common_pair") as build_pair,
+                contextlib.redirect_stderr(io.StringIO()),
+                self.assertRaises(SystemExit) as raised,
+            ):
+                runner.main()
+        self.assertEqual(raised.exception.code, 2)
+        build_pair.assert_not_called()
+
+    def test_incompatible_source_fails_before_owned_build(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            datasets = root / "datasets"
+            datasets.mkdir()
+            (datasets / "input.csv").write_text("a,b\n", encoding="utf-8")
+            arguments = [
+                "run_suite.py",
+                "--repository", str(Path.cwd()),
+                "--baseline-ref", "HEAD",
+                "--candidate-ref", "HEAD",
+                "--compiler-executable", sys.executable,
+                "--compiler-flags", "-O3",
+                "--datasets", str(datasets),
+                "--operations", "legacy_mmap_rows_cells",
+                "--sources", "buffer",
+                "--allow-uncalibrated",
+                "--output", str(root / "report.json"),
+            ]
+            with (
+                unittest.mock.patch.object(sys, "argv", arguments),
+                unittest.mock.patch.object(runner.builds, "build_common_pair") as build_pair,
+                contextlib.redirect_stderr(io.StringIO()),
+                self.assertRaises(SystemExit) as raised,
+            ):
+                runner.main()
+        self.assertEqual(raised.exception.code, 2)
+        build_pair.assert_not_called()
+
+    def test_operation_selection_maps_to_required_capabilities(self) -> None:
+        self.assertEqual(
+            runner.required_capabilities(("rows_cells", "legacy_writer_raw")),
+            {"legacy-reader", "legacy-writer"},
+        )
+        self.assertEqual(
+            runner.required_capabilities(("writer_raw_direct",)),
+            {"modern-writer"},
+        )
 
     def test_measurement_alternates_launch_order_and_preserves_semantics(self) -> None:
         launches: list[str] = []

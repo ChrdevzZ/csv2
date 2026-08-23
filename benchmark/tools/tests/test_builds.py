@@ -282,6 +282,49 @@ class BuildTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "normalized build commands"):
                 builds.assert_compatible_builds(manifest, compatible)
 
+    def test_common_driver_capabilities_are_explicit_and_legacy_by_default(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            headers = builds.export_git_tree(
+                REPOSITORY, "HEAD", root / "headers", ("include",)
+            )
+            adapter = builds.export_git_tree(
+                REPOSITORY,
+                "HEAD",
+                root / "adapter",
+                ("benchmark/compare/common_driver.cpp",),
+            )
+
+            def fake_run(command, **kwargs):
+                del kwargs
+                if command[-1] == "--version":
+                    return subprocess.CompletedProcess(command, 0, "fake compiler 1\n", "")
+                output_index = command.index("-o") + 1
+                Path(command[output_index]).write_bytes(b"owned-driver")
+                return subprocess.CompletedProcess(command, 0, "", "")
+
+            legacy = builds.compile_common_driver(
+                header_export=headers,
+                adapter_export=adapter,
+                compiler=Path(sys.executable),
+                compiler_flags=("-std=c++11", "-O3", "-DNDEBUG"),
+                output=root / "legacy-driver",
+                run_fn=fake_run,
+            )
+            modern = builds.compile_common_driver(
+                header_export=headers,
+                adapter_export=adapter,
+                compiler=Path(sys.executable),
+                compiler_flags=("-std=c++11", "-O3", "-DNDEBUG"),
+                output=root / "modern-driver",
+                enable_modern_writer_operations=True,
+                run_fn=fake_run,
+            )
+
+        definition = "CSV2_BENCHMARK_ENABLE_MODERN_WRITER_OPERATIONS=1"
+        self.assertFalse(any(definition in argument for argument in legacy["argv"]))
+        self.assertTrue(any(definition in argument for argument in modern["argv"]))
+
 
 if __name__ == "__main__":
     unittest.main()
