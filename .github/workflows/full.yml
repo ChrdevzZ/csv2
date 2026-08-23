@@ -1,14 +1,25 @@
 name: Full verification
 
 on:
+  pull_request:
+    paths:
+      - .github/workflows/full.yml
+      - benchmark/**
+      - cmake/**
+      - include/**
+      - single_include/**
+      - test/**
+      - third_party/verification/**
+      - tools/**
+      - CMakeLists.txt
   workflow_dispatch:
 
 permissions:
   contents: read
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: false
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   linux:
@@ -18,23 +29,13 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - name: GCC 14
-            compiler: g++-14
-            expected_id: GNU
-            expected_version: "14"
-            cxx_flags: ""
-            fuzzers: "OFF"
-          - name: Clang 18 + libc++
-            compiler: clang++-18
-            expected_id: Clang
-            expected_version: "18"
-            cxx_flags: -stdlib=libc++
-            fuzzers: "ON"
+        include: ${{ fromJSON(github.event_name == 'pull_request' && '[{"name":"GCC 14","compiler":"g++-14","expected_id":"GNU","expected_version":"14","cxx_flags":"","fuzzers":"OFF"}]' || '[{"name":"GCC 14","compiler":"g++-14","expected_id":"GNU","expected_version":"14","cxx_flags":"","fuzzers":"OFF"},{"name":"Clang 18 + libc++","compiler":"clang++-18","expected_id":"Clang","expected_version":"18","cxx_flags":"-stdlib=libc++","fuzzers":"ON"}]') }}
     steps:
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 0
           persist-credentials: false
 
       - name: Install Clang libc++
@@ -105,6 +106,7 @@ jobs:
           if-no-files-found: error
 
   windows:
+    if: github.event_name == 'workflow_dispatch'
     name: Full / Windows / MSVC 19.51
     runs-on: windows-2025-vs2026
     timeout-minutes: 60
@@ -161,6 +163,7 @@ jobs:
           if-no-files-found: error
 
   macos:
+    if: github.event_name == 'workflow_dispatch'
     name: Full / macOS / AppleClang 21
     runs-on: macos-26
     timeout-minutes: 60
@@ -214,6 +217,7 @@ jobs:
           if-no-files-found: error
 
   coverage:
+    if: github.event_name == 'workflow_dispatch'
     name: Full / Linux / Clang 18 coverage (non-blocking)
     runs-on: ubuntu-24.04
     timeout-minutes: 30
