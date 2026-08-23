@@ -347,7 +347,8 @@ resulting `csv2-performance-evidence-bundle-v2` can be decision-eligible.
   affinity, kernel, governor, and turbo/boost observations must match the
   profile, whose digest is shared by A/A, A/B, and fixed metrics. Only a
   finalized bundle containing all controlled-complete components is
-  decision-eligible.
+  decision-eligible. Finalization reparses the profile artifact and compares its
+  content with all embedded bindings.
 
 The fixed contracts are `csv2-common-v4`, `csv2-current-v3`,
 `csv2-benchmark-build-v1`, `csv2-benchmark-report-v5`,

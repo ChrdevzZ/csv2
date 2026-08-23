@@ -9,7 +9,7 @@ from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
 
 from . import ARTIFACT_MANIFEST_SCHEMA, EVIDENCE_SCHEMA
-from . import artifacts, atomic, builds, protocol
+from . import artifacts, atomic, builds, machine as machine_profile_tool, protocol
 
 
 Document = dict[str, object]
@@ -55,6 +55,7 @@ def finalizer_source_paths() -> list[Path]:
         package_root / "builds.py",
         package_root / "derivation.py",
         package_root / "evidence.py",
+        package_root / "machine.py",
         package_root / "protocol.py",
     ]
 
@@ -208,6 +209,14 @@ def _corpus_index(
         "name", "path", "parameters", "size", "sha256", "rows", "cells",
         "raw_checksum", "content_checksum", "strict_valid", "strict_error",
     }
+    error_codes = {
+        "none",
+        "unexpected_quote",
+        "unclosed_quote",
+        "invalid_doubled_quote",
+        "characters_after_closing_quote",
+        "bare_carriage_return",
+    }
     for value in datasets:
         if not isinstance(value, dict) or set(value) != required_dataset:
             raise RuntimeError("corpus manifest contains an incomplete dataset")
@@ -231,6 +240,31 @@ def _corpus_index(
             verify_contents and artifacts.sha256_file(path) != digest
         ):
             raise RuntimeError(f"corpus dataset {name} differs from its manifest")
+        strict_valid = value["strict_valid"]
+        if type(strict_valid) is not bool:
+            raise RuntimeError(f"corpus dataset {name} has an invalid strict-valid flag")
+        strict_error = value["strict_error"]
+        error_fields = {"code", "byte_offset", "row", "column"}
+        if not isinstance(strict_error, dict) or set(strict_error) != error_fields:
+            raise RuntimeError(f"corpus dataset {name} has an invalid strict diagnostic")
+        code = strict_error["code"]
+        locations = tuple(strict_error[field] for field in ("byte_offset", "row", "column"))
+        if code not in error_codes or any(
+            isinstance(location, bool) or not isinstance(location, int) or location < 0
+            for location in locations
+        ):
+            raise RuntimeError(f"corpus dataset {name} has an invalid strict diagnostic")
+        if strict_valid:
+            if code != "none" or locations != (0, 0, 0) or value["content_checksum"] is None:
+                raise RuntimeError(f"corpus dataset {name} has inconsistent valid diagnostics")
+        elif (
+            code == "none"
+            or locations[0] >= size
+            or locations[1] == 0
+            or locations[2] == 0
+            or value["content_checksum"] is not None
+        ):
+            raise RuntimeError(f"corpus dataset {name} has inconsistent invalid diagnostics")
         result[name] = value
     return result
 
@@ -313,6 +347,7 @@ def assemble_evidence(
         if any(profile != profiles[0] for profile in profiles[1:]):
             raise RuntimeError("machine profile observations differ across components")
         machine_profile = profiles[0]
+        machine_profile_tool.verify_binding(machine_profile, "controlled machine profile")
     else:
         if any(profile is not None for profile in profiles):
             raise RuntimeError("exploratory evidence must not bind a machine profile")

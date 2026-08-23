@@ -41,8 +41,21 @@ class MachineProfileTests(unittest.TestCase):
             path.write_text(json.dumps(profile()), encoding="utf-8")
             with mock.patch.object(machine, "observe", return_value=observation()):
                 binding = machine.load(path)
+            machine.verify_binding(binding)
         self.assertEqual(binding["profile"]["id"], "fixed-test-host")
         self.assertEqual(binding["digest"], binding["artifact"]["sha256"])
+
+    def test_binding_rejects_embedded_profile_not_backed_by_the_artifact(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "machine.json"
+            path.write_text(json.dumps(profile()), encoding="utf-8")
+            with mock.patch.object(machine, "observe", return_value=observation()):
+                binding = machine.load(path)
+            changed = json.loads(json.dumps(binding))
+            changed["profile"]["governor"] = "powersave"
+            changed["observation"]["governor"] = "powersave"
+            with self.assertRaisesRegex(RuntimeError, "content differs"):
+                machine.verify_binding(changed)
 
     def test_profile_rejects_runtime_or_affinity_drift(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

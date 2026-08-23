@@ -107,7 +107,10 @@ Controlled A/A, A/B, and fixed metrics carry the same resolved
 match the profile's CPU model, architecture, logical CPU count, allowed
 affinity, kernel release, governor, and turbo/boost state. A generic Linux host
 or affinity setting cannot self-declare controlled status. Exploratory evidence
-does not require a profile and is never decision-eligible.
+does not require a profile and is never decision-eligible. The finalizer
+reparses the bound profile artifact and requires its JSON content to equal the
+profile embedded in all three component reports; a matching filename or digest
+field alone is insufficient.
 
 Every completed component and final evidence bundle is accompanied by
 `csv2-artifact-manifest-v3`. Writers reject direct, symlink, and hardlink
@@ -130,3 +133,8 @@ Repeated source operations use explicit cache semantics.
 accepts one operation and one concrete compatible source per process; suite
 orchestration starts separate processes rather than merging unrelated Context
 preparation or peak RSS.
+
+Corpus validation closes each strict diagnostic to `code`, `byte_offset`,
+`row`, and `column` and checks it against the dataset's valid/invalid state.
+Malformed or internally inconsistent diagnostics cannot enter a finalized
+bundle even when the corpus file hashes themselves are correct.
