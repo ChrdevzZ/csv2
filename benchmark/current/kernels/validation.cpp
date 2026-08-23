@@ -14,28 +14,29 @@ bool validation_preflight(const Context &context, Source source, std::string &me
       return true;
     message = "input does not satisfy the valid CSV contract";
     return false;
-  }
-  if (valid || error.code == csv2::parse_errc::none || error.row == 0 || error.column == 0) {
-    message = "input does not satisfy an invalid CSV contract";
+  } else {
+    if (valid || error.code == csv2::parse_errc::none || error.row == 0 || error.column == 0) {
+      message = "input does not satisfy an invalid CSV contract";
+      return false;
+    }
+    const std::size_t quarter = context.input_size() / 4 + (context.input_size() % 4 == 0 ? 0 : 1);
+    const bool early = error.byte_offset < quarter;
+    const bool late = error.byte_offset >= context.input_size() - quarter;
+    if constexpr (Scenario == ValidationScenario::invalid_early) {
+      if (early && error.code == csv2::parse_errc::unexpected_quote)
+        return true;
+      message = "input does not contain the expected early unexpected_quote error";
+    } else if constexpr (Scenario == ValidationScenario::invalid_middle) {
+      if (!early && !late && error.code == csv2::parse_errc::unclosed_quote)
+        return true;
+      message = "input does not contain the expected middle unclosed_quote error";
+    } else {
+      if (late && error.code == csv2::parse_errc::characters_after_closing_quote)
+        return true;
+      message = "input does not contain the expected late characters_after_closing_quote error";
+    }
     return false;
   }
-  const std::size_t quarter = context.input_size() / 4 + (context.input_size() % 4 == 0 ? 0 : 1);
-  const bool early = error.byte_offset < quarter;
-  const bool late = error.byte_offset >= context.input_size() - quarter;
-  if constexpr (Scenario == ValidationScenario::invalid_early) {
-    if (early && error.code == csv2::parse_errc::unexpected_quote)
-      return true;
-    message = "input does not contain the expected early unexpected_quote error";
-  } else if constexpr (Scenario == ValidationScenario::invalid_middle) {
-    if (!early && !late && error.code == csv2::parse_errc::unclosed_quote)
-      return true;
-    message = "input does not contain the expected middle unclosed_quote error";
-  } else {
-    if (late && error.code == csv2::parse_errc::characters_after_closing_quote)
-      return true;
-    message = "input does not contain the expected late characters_after_closing_quote error";
-  }
-  return false;
 }
 
 template <bool Verify> Result validate(Context &context, Source source, TimedObserver &observer) {
