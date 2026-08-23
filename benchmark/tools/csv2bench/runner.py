@@ -76,10 +76,6 @@ def reject_output_alias(
     artifacts.reject_output_alias(output, protected_paths)
 
 
-def replace_report(temporary: Path, output: Path) -> None:
-    atomic.replace(temporary, output)
-
-
 def cpu_identity() -> tuple[str, str]:
     if platform.system() == "Linux":
         try:

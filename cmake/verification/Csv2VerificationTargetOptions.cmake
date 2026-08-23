@@ -1,16 +1,8 @@
 include_guard(GLOBAL)
 
-include(CheckCXXCompilerFlag)
-
 if(MSVC OR CMAKE_CXX_COMPILER_FRONTEND_VARIANT STREQUAL "MSVC")
   string(REGEX REPLACE "(^| )[/-]EHsc( |$)" " "
     CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS}")
-endif()
-
-if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|AppleClang" AND
-   NOT CMAKE_CXX_COMPILER_FRONTEND_VARIANT STREQUAL "MSVC")
-  check_cxx_compiler_flag("-Wno-c2y-extensions"
-    CSV2_HAS_NO_C2Y_EXTENSIONS_WARNING)
 endif()
 
 if(CSV2_ENABLE_SANITIZERS AND
@@ -64,12 +56,9 @@ function(csv2_set_test_standard target standard)
 endfunction()
 
 function(csv2_enable_test_options target)
-  set(csv2_uses_doctest FALSE)
   set(csv2_disables_exceptions FALSE)
   foreach(option IN LISTS ARGN)
-    if(option STREQUAL "DOCTEST")
-      set(csv2_uses_doctest TRUE)
-    elseif(option STREQUAL "NO_EXCEPTIONS")
+    if(option STREQUAL "NO_EXCEPTIONS")
       set(csv2_disables_exceptions TRUE)
     else()
       message(FATAL_ERROR "Unknown csv2 verification option: ${option}")
@@ -78,9 +67,6 @@ function(csv2_enable_test_options target)
 
   if(MSVC OR CMAKE_CXX_COMPILER_FRONTEND_VARIANT STREQUAL "MSVC")
     target_compile_options(${target} PRIVATE /W4)
-    if(CMAKE_CXX_COMPILER_ID STREQUAL "MSVC" AND csv2_uses_doctest)
-      target_compile_options(${target} PRIVATE /wd5285)
-    endif()
     if(csv2_disables_exceptions)
       target_compile_options(${target} PRIVATE /EHs-c-)
     else()
@@ -88,9 +74,6 @@ function(csv2_enable_test_options target)
     endif()
   else()
     target_compile_options(${target} PRIVATE -Wall -Wextra -Wpedantic)
-    if(csv2_uses_doctest AND CSV2_HAS_NO_C2Y_EXTENSIONS_WARNING)
-      target_compile_options(${target} PRIVATE -Wno-c2y-extensions)
-    endif()
     if(csv2_disables_exceptions)
       target_compile_options(${target} PRIVATE -fno-exceptions)
     endif()
