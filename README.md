@@ -313,10 +313,11 @@ retain the ordinary interface.
 
 The benchmark registry covers sources, traversal, extraction, validation, conversion, ranges, indexing, and Writer
 dispatch. Setup, timing, and semantic verification are separate; optimized builds observe live results and failures do
-not produce successful measurements.
+not produce successful measurements. Each timing process measures one operation and one concrete source, so unrelated
+preparation and peak RSS do not share a `Context`.
 
 Exact checksums and allocation contracts remain outside timing. Hosted CI gates their protocols and observers, but
-hosted throughput is exploratory.
+hosted throughput is exploratory. A stable case manifest verifies and dry-runs every registered operation.
 
 ```bash
 cmake -S . -B build-benchmark -G Ninja \
@@ -331,8 +332,10 @@ ctest --test-dir build-benchmark -L benchmark-checksum \
 ```
 
 Cross-revision runs export one C++11 driver and both header trees from immutable Git objects. Controlled evidence also
-requires a fixed Linux machine, affinity, A/A calibration, matching checksums, three warmups, 20 paired runs, machine
-metrics, and a finalized evidence bundle. See [`benchmark/README.md`](benchmark/README.md) and
+requires a reviewed machine profile, fixed Linux machine, affinity, A/A calibration, matching checksums, three warmups,
+20 paired runs, machine metrics, and a finalized evidence bundle. Reports are validated by reparsing primary wires and
+recomputing statistics; fixed metrics must match one cross-revision semantic case exactly. See
+[`benchmark/README.md`](benchmark/README.md) and
 [`benchmark/protocol/README.md`](benchmark/protocol/README.md).
 
 <details>
