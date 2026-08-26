@@ -22,13 +22,13 @@ if(CSV2_BUILD_TESTS)
   csv2_configure_fuzz_target(csv2_fuzz_smoke reader.cpp TRUE)
   add_test(NAME csv2.fuzz.reader.smoke.cxx11 COMMAND csv2_fuzz_smoke)
   set_tests_properties(csv2.fuzz.reader.smoke.cxx11 PROPERTIES
-    LABELS "fuzz-smoke;reader;sanitizer-runtime" TIMEOUT 30
+    LABELS "fuzz-smoke;reader;sanitizer-runtime;sanitizer-smoke" TIMEOUT 30
     WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
 
   csv2_configure_fuzz_target(csv2_fuzz_writer_smoke writer_roundtrip.cpp TRUE)
   add_test(NAME csv2.fuzz.writer.smoke.cxx11 COMMAND csv2_fuzz_writer_smoke)
   set_tests_properties(csv2.fuzz.writer.smoke.cxx11 PROPERTIES
-    LABELS "fuzz-smoke;writer;sanitizer-runtime" TIMEOUT 30
+    LABELS "fuzz-smoke;writer;sanitizer-runtime;sanitizer-smoke" TIMEOUT 30
     WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
 endif()
 

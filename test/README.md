@@ -76,8 +76,11 @@ timeout, and writes JUnit. It never adds Catch2-only or minitest-only arguments.
 The runtime sources use `CSV2_TEST_CASE`, `CSV2_CHECK`, `CSV2_REQUIRE`, and the
 other macros in `assertions.hpp`:
 
-- C++14–23 normal variants use the vendored Catch2 3.15.3 split library.
-- C++11 and every no-exceptions variant use CSV2's small non-throwing runner.
+- `-DCSV2_TEST_ASSERTION_BACKEND=auto` (the default) uses the vendored Catch2
+  3.15.3 split library for C++14–23 normal variants, while C++11 and every
+  non-normal variant use CSV2's small non-throwing runner.
+- `-DCSV2_TEST_ASSERTION_BACKEND=minitest` forces every runtime target to use
+  the small non-throwing runner and leaves the Catch2 project unloaded.
 
 The minitest `REQUIRE` path records the failure and returns from the current
 test function; it never uses an exception for control flow. Exception-only
@@ -88,6 +91,35 @@ failure boundaries have the same granularity in both backends. Each static
 registrar owns its intrusive list node, so registration
 has no fixed capacity and performs no dynamic allocation. A separate contract
 registers and executes 600 cases to prevent a silent capacity regression.
+
+## Sanitizer smoke slice
+
+`csv2_sanitizer_smoke` is an opt-in build target for the canonical sanitizer
+CI slice. It depends on these runtime executables:
+
+```text
+csv2_runtime_modular_cxx20_normal
+csv2_runtime_single_cxx23_normal
+csv2_runtime_modular_cxx11_no_mmap
+csv2_runtime_single_cxx11_no_exceptions
+```
+
+It also builds both minitest registry executables, both standalone fuzz-smoke
+executables, and the two Linux WinAPI injection executables. The target is not
+part of `ALL`; build it explicitly with:
+
+```bash
+cmake -S . -B build -DCSV2_BUILD_TESTS=ON -DCSV2_ENABLE_SANITIZERS=ON \
+  -DCSV2_TEST_ASSERTION_BACKEND=minitest
+cmake --build build --target csv2_sanitizer_smoke
+ctest --test-dir build -L sanitizer-smoke --output-on-failure
+```
+
+An explicit build fails if the configured toolchain cannot provide a required
+canonical runtime dimension. Compile-only contracts and Catch2 are intentionally
+outside this slice. `sanitizer-smoke` is the focused CI label; the existing
+`sanitizer-runtime` label remains the preserved full cross-platform sanitizer
+suite.
 
 ## Profiles
 

@@ -10,7 +10,9 @@ if(CSV2_BUILD_TESTS)
   csv2_configure_python_audits("vendor maintenance safety")
 endif()
 
-if(CSV2_BUILD_TESTS AND 14 IN_LIST csv2_supported_standards)
+if(CSV2_BUILD_TESTS AND
+   CSV2_TEST_ASSERTION_BACKEND STREQUAL "auto" AND
+   14 IN_LIST csv2_supported_standards)
   csv2_load_catch2()
 endif()
 
@@ -38,6 +40,43 @@ add_subdirectory(platform)
 add_subdirectory(fuzz)
 
 csv2_add_runtime_matrix()
+
+set(csv2_sanitizer_smoke_runtime_targets
+  csv2_runtime_modular_cxx20_normal
+  csv2_runtime_single_cxx23_normal
+  csv2_runtime_modular_cxx11_no_mmap
+  csv2_runtime_single_cxx11_no_exceptions)
+set(csv2_sanitizer_smoke_dependencies
+  csv2_minitest_registry_capacity
+  csv2_minitest_registry_duplicate
+  csv2_fuzz_smoke
+  csv2_fuzz_writer_smoke)
+set(csv2_sanitizer_smoke_missing_runtime_targets)
+foreach(target IN LISTS csv2_sanitizer_smoke_runtime_targets)
+  if(TARGET ${target})
+    list(APPEND csv2_sanitizer_smoke_dependencies ${target})
+  else()
+    list(APPEND csv2_sanitizer_smoke_missing_runtime_targets ${target})
+  endif()
+endforeach()
+
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+  list(APPEND csv2_sanitizer_smoke_dependencies
+    csv2_mio_windows_api
+    csv2_single_header_mio_windows_api)
+endif()
+
+if(csv2_sanitizer_smoke_missing_runtime_targets)
+  string(JOIN ", " csv2_sanitizer_smoke_missing_message
+    ${csv2_sanitizer_smoke_missing_runtime_targets})
+  add_custom_target(csv2_sanitizer_smoke
+    COMMAND ${CMAKE_COMMAND} -E echo
+      "csv2_sanitizer_smoke requires unavailable runtime target(s): ${csv2_sanitizer_smoke_missing_message}"
+    COMMAND ${CMAKE_COMMAND} -E false)
+else()
+  add_custom_target(csv2_sanitizer_smoke
+    DEPENDS ${csv2_sanitizer_smoke_dependencies})
+endif()
 
 # Preserve the two historical build target names used by downstream CI while
 # the executable and CTest identities follow the new matrix naming contract.
