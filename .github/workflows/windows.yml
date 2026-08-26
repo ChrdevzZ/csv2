@@ -36,6 +36,7 @@ jobs:
             toolset: ""
             benchmarks: "ON"
             sanitizers: "OFF"
+            assertion_backend: auto
             sanitizer_runtime: none
             expected_id: MSVC
             expected_version: "19.51"
@@ -46,6 +47,7 @@ jobs:
             toolset: ""
             benchmarks: "OFF"
             sanitizers: "ON"
+            assertion_backend: minitest
             sanitizer_runtime: msvc
             expected_id: MSVC
             expected_version: "19.51"
@@ -56,6 +58,7 @@ jobs:
             toolset: -T ClangCL
             benchmarks: "OFF"
             sanitizers: "OFF"
+            assertion_backend: auto
             sanitizer_runtime: none
             expected_id: Clang
             expected_version: "22.1"
@@ -66,6 +69,7 @@ jobs:
             toolset: -T ClangCL
             benchmarks: "OFF"
             sanitizers: "ON"
+            assertion_backend: minitest
             sanitizer_runtime: clang
             expected_id: Clang
             expected_version: "22.1"
@@ -84,6 +88,7 @@ jobs:
           ${{ matrix.toolset }}
           -DCMAKE_COMPILE_WARNING_AS_ERROR=ON
           -DCSV2_BUILD_TESTS=ON
+          -DCSV2_TEST_ASSERTION_BACKEND=${{ matrix.assertion_backend }}
           -DCSV2_BUILD_BENCHMARKS=${{ matrix.benchmarks }}
           -DCSV2_BUILD_BENCHMARK_CHECKS=${{ matrix.benchmarks }}
           -DCSV2_VERIFICATION_PROFILE=quick
@@ -93,13 +98,21 @@ jobs:
           "-DCSV2_CI_EXPECTED_COMPILER_VERSION_PREFIX=${{ matrix.expected_version }}"
 
       - name: Build
+        if: matrix.sanitizers == 'OFF'
         run: cmake --build build --config ${{ matrix.configuration }} --parallel
+
+      - name: Build sanitizer smoke
+        if: matrix.sanitizers == 'ON'
+        run: >-
+          cmake --build build --config ${{ matrix.configuration }} --parallel
+          --target csv2_sanitizer_smoke
 
       - name: Test
         if: matrix.sanitizers == 'OFF'
         run: >-
           ctest --test-dir build
           -C ${{ matrix.configuration }}
+          --parallel 2
           --output-junit ctest.xml
           --output-on-failure
 
@@ -152,7 +165,8 @@ jobs:
             "pwsh.exe -NoLogo -NoProfile -File `"$runner`" " +
             "-BuildDirectory `"$buildDirectory`" " +
             "-Configuration ${{ matrix.configuration }} " +
-            "-OutputJunit `"$junit`""
+            "-OutputJunit `"$junit`" " +
+            "-Label `"sanitizer-smoke`""
 
           cmd.exe /d /s /c ($commands -join " && ")
           if ($LASTEXITCODE -ne 0) {

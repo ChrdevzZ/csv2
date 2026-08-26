@@ -191,11 +191,32 @@ audits are maintainer-side review tools, not tracked CI gates. See
 ## CI and documentation
 
 The existing Linux, Windows, macOS, and fuzz/benchmark workflow identities are
-the automatic quick checks. Verification-related pull requests additionally
-run the exact-head GCC 14 full profile and an exploratory end-to-end protocol
-smoke. Manual `full.yml` dispatches add Clang/libc++, Windows, macOS, coverage,
-and extended fuzzing; manual `perf.yml` dispatches retain exploratory and
-controlled machine-profile runs.
+the automatic quick checks. On pull requests with at most 3,000 changed files,
+the Linux GCC quick job uses minitest and leaves benchmark/checksum ownership to
+the path-filtered exact-head full and performance workflows. Larger pull
+requests, and every push, merge-queue, or manual Linux run, conservatively use
+the default assertion backend and keep benchmark checks enabled. Changes to
+`linux.yml` itself trigger the exact-head full workflow so that this ownership
+boundary is tested with the proposed workflow revision.
+The performance pull-request trigger is limited to benchmark and verification
+infrastructure, public headers, performance fixtures, the Google Benchmark
+snapshot/provenance files, and the shared verification manifest; unrelated
+test and Catch2 changes remain owned by the foundational/full checks.
+
+Linux and Windows sanitizer entries force minitest, build only
+`csv2_sanitizer_smoke`, and execute only the `sanitizer-smoke` label. Ordinary
+non-sanitizer quick CTest runs are bounded to two concurrent tests; full and
+sanitizer CTest runs remain sequential. Pull-request and manual
+`fuzz-benchmark.yml` runs retain the combined deterministic fuzz and benchmark
+checksum smoke. Its weekly schedule is a separate fuzz-only build: tests and
+benchmarks are disabled, only the Reader and Writer libFuzzer targets are
+built, and each committed corpus runs for 50,000 iterations.
+
+Verification-related pull requests additionally run the exact-head GCC 14 full
+profile and an exploratory end-to-end protocol smoke. Manual `full.yml`
+dispatches add Clang/libc++, Windows, macOS, coverage, and extended fuzzing;
+manual `perf.yml` dispatches retain exploratory and controlled machine-profile
+runs.
 Keep matrices `fail-fast: false`, upload JUnit/evidence artifacts, and select
 CTest by stable names or labels rather than hard-coded totals.
 
