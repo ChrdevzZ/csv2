@@ -66,10 +66,11 @@ ctest --test-dir build -L no_exceptions --output-on-failure
 ```
 
 On Windows sanitizer builds, use
-`platform/run_windows_sanitizer_tests.ps1`. It validates the
-`sanitizer-runtime` CTest JSON manifest, invokes each unmodified test command
-without CTest's incompatible sanitizer output capture, enforces the registered
-timeout, and writes JUnit. It never adds Catch2-only or minitest-only arguments.
+`platform/run_windows_sanitizer_tests.ps1`. It validates the CTest JSON
+manifest for its selected `-Label` (`sanitizer-runtime` by default and
+`sanitizer-smoke` in quick CI), invokes each unmodified test command without
+CTest's incompatible sanitizer output capture, enforces the registered timeout,
+and writes JUnit. It never adds Catch2-only or minitest-only arguments.
 
 ## Dual assertion backends
 

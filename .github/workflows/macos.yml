@@ -50,7 +50,9 @@ jobs:
         run: cmake --build build --parallel
 
       - name: Test
-        run: ctest --test-dir build --output-on-failure --output-junit ctest.xml
+        run: >-
+          ctest --test-dir build --parallel 2
+          --output-on-failure --output-junit ctest.xml
 
       - name: Install package
         run: cmake --install build --prefix build/install

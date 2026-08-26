@@ -8,8 +8,11 @@ on:
       - cmake/verification/**
       - include/**
       - single_include/**
-      - test/**
-      - third_party/verification/**
+      - test/fixtures/**
+      - third_party/verification/google_benchmark/**
+      - third_party/verification/google_benchmark.files
+      - third_party/verification/google_benchmark.sha256
+      - third_party/verification/manifest.json
       - CMakeLists.txt
   workflow_dispatch:
     inputs:
