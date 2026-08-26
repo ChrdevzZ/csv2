@@ -10,6 +10,19 @@ option(CSV2_ENABLE_SANITIZERS
 option(CSV2_REQUIRE_PYTHON_AUDITS
   "Fail configuration when Python 3.10 audit tooling is unavailable" OFF)
 
+set(CSV2_TEST_ASSERTION_BACKEND "auto" CACHE STRING
+  "Runtime assertion backend: auto or minitest")
+set_property(CACHE CSV2_TEST_ASSERTION_BACKEND PROPERTY STRINGS auto minitest)
+
+set(csv2_test_assertion_backends auto minitest)
+list(FIND csv2_test_assertion_backends "${CSV2_TEST_ASSERTION_BACKEND}"
+  csv2_test_assertion_backend_index)
+if(csv2_test_assertion_backend_index EQUAL -1)
+  message(FATAL_ERROR
+    "CSV2_TEST_ASSERTION_BACKEND must be auto or minitest; got "
+    "'${CSV2_TEST_ASSERTION_BACKEND}'")
+endif()
+
 set(CSV2_VERIFICATION_PROFILE "quick" CACHE STRING
   "Verification depth: quick, full, or perf")
 set_property(CACHE CSV2_VERIFICATION_PROFILE PROPERTY STRINGS quick full perf)

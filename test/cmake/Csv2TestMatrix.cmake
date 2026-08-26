@@ -41,7 +41,8 @@ function(csv2_add_runtime_variant standard header_mode variant)
 
   set(target "csv2_runtime_${header_mode}_cxx${standard}_${variant}")
   set(backend minitest)
-  if(variant STREQUAL "normal" AND standard GREATER_EQUAL 14)
+  if(CSV2_TEST_ASSERTION_BACKEND STREQUAL "auto" AND
+     variant STREQUAL "normal" AND standard GREATER_EQUAL 14)
     set(backend catch2)
   endif()
 
