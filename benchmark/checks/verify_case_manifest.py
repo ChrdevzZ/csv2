@@ -144,13 +144,7 @@ def main() -> None:
         ]
         verification = run([*common, "--csv2-verify"])
         verify_wire(verification.stdout, operation, source)
-        run(
-            [
-                *common,
-                "--benchmark_min_time=0.001s",
-                "--benchmark_repetitions=1",
-            ]
-        )
+        run([*common, "--benchmark_dry_run"])
 
 
 if __name__ == "__main__":

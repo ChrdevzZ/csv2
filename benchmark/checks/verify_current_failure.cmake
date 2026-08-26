@@ -24,9 +24,7 @@ set(csv2_command
   --csv2-source "${CSV2_BENCHMARK_SOURCE}"
   --csv2-operation "${CSV2_BENCHMARK_OPERATION}")
 if(DEFINED CSV2_BENCHMARK_MODE AND CSV2_BENCHMARK_MODE STREQUAL "timing")
-  list(APPEND csv2_command
-    --benchmark_min_time=0.001s
-    --benchmark_repetitions=1)
+  list(APPEND csv2_command --benchmark_dry_run)
 else()
   list(APPEND csv2_command --csv2-verify)
 endif()

@@ -24,7 +24,7 @@ class CurrentSuiteTests(unittest.TestCase):
                 ("source/file-read-cached", "file", "one.csv"),
                 ("traversal/rows", "buffer", "two.csv"),
             ),
-            ("--benchmark_min_time=0.001s",),
+            ("--benchmark_dry_run",),
             verify=False,
             run_fn=run,
         )
@@ -34,6 +34,8 @@ class CurrentSuiteTests(unittest.TestCase):
             self.assertEqual(command.count("--csv2-operation"), 1)
             self.assertEqual(command.count("--csv2-source"), 1)
             self.assertNotIn("all", command)
+            self.assertIn("--benchmark_dry_run", command)
+            self.assertNotIn("--benchmark_min_time=0.001s", command)
 
     def test_case_parser_rejects_aggregate_or_malformed_sources(self) -> None:
         self.assertEqual(

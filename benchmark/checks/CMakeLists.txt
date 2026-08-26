@@ -44,7 +44,7 @@ csv2_add_exact_current_check(csv2.benchmark.current.checksum.validation_invalid_
 csv2_add_benchmark_check(csv2.benchmark.current.dry_run
   COMMAND csv2_benchmark --csv2-input ${csv2_check_fixture}
     --csv2-source buffer --csv2-operation traversal/rows-cells
-    --benchmark_min_time=0.001s --benchmark_repetitions=1)
+    --benchmark_dry_run)
 
 foreach(csv2_unsupported_mode IN ITEMS list timing)
   csv2_add_benchmark_check(csv2.benchmark.reject.unsupported_${csv2_unsupported_mode}
@@ -215,7 +215,7 @@ foreach(csv2_group_check IN LISTS csv2_group_checks)
     COMMAND csv2_benchmark --csv2-input ${csv2_group_fixture}
       --csv2-source ${csv2_group_source}
       --csv2-operation ${csv2_group_operation}
-      --benchmark_min_time=0.001s --benchmark_repetitions=1)
+      --benchmark_dry_run)
 endforeach()
 
 set(csv2_validation_cases
@@ -231,8 +231,7 @@ foreach(csv2_validation_case IN LISTS csv2_validation_cases)
     if(csv2_validation_mode STREQUAL "verify")
       set(csv2_validation_arguments --csv2-verify)
     else()
-      set(csv2_validation_arguments
-        --benchmark_min_time=0.001s --benchmark_repetitions=1)
+      set(csv2_validation_arguments --benchmark_dry_run)
     endif()
     csv2_add_benchmark_check(
       csv2.benchmark.validation.${csv2_validation_scenario}.${csv2_validation_mode}
