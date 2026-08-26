@@ -115,11 +115,12 @@ cmake --build build --target csv2_sanitizer_smoke
 ctest --test-dir build -L sanitizer-smoke --output-on-failure
 ```
 
-An explicit build fails if the configured toolchain cannot provide a required
-canonical runtime dimension. Compile-only contracts and Catch2 are intentionally
-outside this slice. `sanitizer-smoke` is the focused CI label; the existing
-`sanitizer-runtime` label remains the preserved full cross-platform sanitizer
-suite.
+An explicit build requires `CSV2_TEST_ASSERTION_BACKEND=minitest`; it fails
+closed for every other backend and if the configured toolchain cannot provide
+a required canonical runtime dimension. Compile-only contracts and Catch2 are
+intentionally outside this slice. `sanitizer-smoke` is the focused CI label;
+the existing `sanitizer-runtime` label remains the preserved full
+cross-platform sanitizer suite.
 
 ## Profiles
 
