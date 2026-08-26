@@ -66,7 +66,12 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
     csv2_single_header_mio_windows_api)
 endif()
 
-if(csv2_sanitizer_smoke_missing_runtime_targets)
+if(NOT CSV2_TEST_ASSERTION_BACKEND STREQUAL "minitest")
+  add_custom_target(csv2_sanitizer_smoke
+    COMMAND ${CMAKE_COMMAND} -E echo
+      "csv2_sanitizer_smoke requires CSV2_TEST_ASSERTION_BACKEND=minitest"
+    COMMAND ${CMAKE_COMMAND} -E false)
+elseif(csv2_sanitizer_smoke_missing_runtime_targets)
   string(JOIN ", " csv2_sanitizer_smoke_missing_message
     ${csv2_sanitizer_smoke_missing_runtime_targets})
   add_custom_target(csv2_sanitizer_smoke
