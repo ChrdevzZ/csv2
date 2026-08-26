@@ -138,6 +138,9 @@ After a successful verify call, pass ordinary Google Benchmark options. A
 timing process accepts exactly one operation and one concrete compatible
 source; `all` is available only to list, verify, and audit modes. The suite
 runner starts one process for each requested operation/source/dataset case.
+Correctness and checksum smoke checks use Google Benchmark's native
+`--benchmark_dry_run`, which runs one benchmark iteration without timer
+calibration or warmup.
 
 ```bash
 ./build-benchmark/benchmark/current/csv2_benchmark \

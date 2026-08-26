@@ -25,7 +25,7 @@ elseif(CSV2_BENCHMARK_KIND STREQUAL "current-timing-no-operation")
     COMMAND "${CSV2_BENCHMARK_EXECUTABLE}"
       --csv2-input "${CSV2_BENCHMARK_INPUT}"
       --csv2-source buffer
-      --benchmark_min_time=0.001s
+      --benchmark_dry_run
     RESULT_VARIABLE csv2_result
     TIMEOUT 5)
   set(csv2_expected_result 2)
@@ -35,7 +35,7 @@ elseif(CSV2_BENCHMARK_KIND STREQUAL "current-timing-all-sources")
       --csv2-input "${CSV2_BENCHMARK_INPUT}"
       --csv2-operation traversal/rows-cells
       --csv2-source all
-      --benchmark_min_time=0.001s
+      --benchmark_dry_run
     RESULT_VARIABLE csv2_result
     TIMEOUT 5)
   set(csv2_expected_result 2)
@@ -52,7 +52,7 @@ elseif(CSV2_BENCHMARK_KIND STREQUAL "current-unsupported-timing")
     COMMAND "${CSV2_BENCHMARK_EXECUTABLE}"
       --csv2-input "${CSV2_BENCHMARK_INPUT}"
       --csv2-source file --csv2-operation writer/raw-direct
-      --benchmark_min_time=0.001s --benchmark_repetitions=1
+      --benchmark_dry_run
     RESULT_VARIABLE csv2_result
     TIMEOUT 5)
   set(csv2_expected_result 2)
