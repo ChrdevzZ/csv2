@@ -1,0 +1,335 @@
+name: Full verification
+
+on:
+  workflow_call:
+    inputs:
+      benchmarks:
+        type: boolean
+        default: true
+      extended:
+        type: boolean
+        default: false
+  workflow_dispatch:
+    inputs:
+      benchmarks:
+        description: Build and run exhaustive benchmark contracts
+        type: boolean
+        default: true
+      extended:
+        description: Add Clang, Windows, macOS, fuzz, and coverage jobs
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: full-${{ github.workflow }}-${{ github.event_name }}-${{ github.event_name == 'workflow_dispatch' && github.run_id || github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  linux:
+    name: Full / Linux / ${{ matrix.name }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    env:
+      CCACHE_BASEDIR: ${{ github.workspace }}
+      CCACHE_COMPILERCHECK: content
+      CCACHE_DIR: ${{ github.workspace }}/.ccache
+      CCACHE_MAXSIZE: 1G
+      CSV2_CACHE_PROFILE: ${{ inputs.benchmarks && 'bench' || 'core' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(inputs.extended && '[{"name":"GCC 14","compiler":"g++-14","expected_id":"GNU","expected_version":"14","cxx_flags":"","fuzzers":"OFF"},{"name":"Clang 18 + libc++","compiler":"clang++-18","expected_id":"Clang","expected_version":"18","cxx_flags":"-stdlib=libc++","fuzzers":"ON"}]' || '[{"name":"GCC 14","compiler":"g++-14","expected_id":"GNU","expected_version":"14","cxx_flags":"","fuzzers":"OFF"}]') }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Install compiler cache and Clang libc++ dependencies
+        run: |
+          set -euo pipefail
+          packages=(ccache)
+          if [[ '${{ matrix.expected_id }}' == 'Clang' ]]; then
+            packages+=(libc++-18-dev libc++abi-18-dev)
+          fi
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends "${packages[@]}"
+
+      - name: Restore compiler cache
+        id: ccache-restore
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .ccache
+          key: csv2-ccache-v2-linux-${{ matrix.expected_id }}-full-${{ env.CSV2_CACHE_PROFILE }}-${{ github.sha }}
+          restore-keys: |
+            csv2-ccache-v2-linux-${{ matrix.expected_id }}-full-${{ env.CSV2_CACHE_PROFILE }}-
+            csv2-ccache-v2-linux-${{ matrix.expected_id }}-full-
+
+      - name: Reset compiler cache statistics
+        run: ccache --zero-stats
+
+      - name: Configure full profile
+        run: >-
+          cmake -S . -B build -G Ninja
+          -DCMAKE_BUILD_TYPE=Release
+          -DCMAKE_CXX_COMPILER=${{ matrix.compiler }}
+          -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
+          -DCMAKE_CXX_FLAGS="${{ matrix.cxx_flags }}"
+          -DCMAKE_COMPILE_WARNING_AS_ERROR=ON
+          -DCSV2_BUILD_TESTS=ON
+          -DCSV2_BUILD_BENCHMARKS=${{ inputs.benchmarks && 'ON' || 'OFF' }}
+          -DCSV2_BUILD_BENCHMARK_CHECKS=${{ inputs.benchmarks && 'ON' || 'OFF' }}
+          -DCSV2_BUILD_FUZZERS=${{ matrix.fuzzers }}
+          -DCSV2_VERIFICATION_PROFILE=full
+          -DCSV2_REQUIRE_PYTHON_AUDITS=ON
+          -DCSV2_CI_EXPECTED_COMPILER_ID=${{ matrix.expected_id }}
+          -DCSV2_CI_EXPECTED_COMPILER_VERSION_PREFIX=${{ matrix.expected_version }}
+
+      - name: Build
+        run: cmake --build build --parallel
+
+      - name: Run full CTest matrix
+        run: >-
+          ctest --test-dir build --output-on-failure
+          --no-tests=error
+          --output-junit full-ctest.xml
+
+      - name: Run extended libFuzzer corpus
+        if: matrix.fuzzers == 'ON'
+        env:
+          ASAN_OPTIONS: detect_leaks=1:halt_on_error=1
+          UBSAN_OPTIONS: halt_on_error=1:print_stacktrace=1
+        run: >-
+          python3 tools/ci/run_fuzz_targets.py
+          --reader build/test/fuzz/csv2_fuzz
+          --writer build/test/fuzz/csv2_fuzz_writer
+          --reader-corpus test/fuzz/corpus/reader
+          --writer-corpus test/fuzz/corpus/writer
+          --runs 50000
+          --artifact-root build/fuzz-artifacts
+
+      - name: Install package
+        run: cmake --install build --prefix build/install
+
+      - name: Verify CMake and pkg-config consumers
+        run: |
+          cmake -S test/contracts/consumer -B build/consumer -G Ninja \
+            -DCMAKE_PREFIX_PATH="$PWD/build/install"
+          cmake --build build/consumer --parallel
+          ./build/consumer/csv2_consumer
+          ./build/consumer/csv2_no_mmap_consumer
+          csv2_pc_dir="$PWD/build/install/lib/pkgconfig"
+          compiler="${{ matrix.compiler }}"
+          compiler_flags=()
+          if [[ -n "${{ matrix.cxx_flags }}" ]]; then
+            read -r -a compiler_flags <<< "${{ matrix.cxx_flags }}"
+          fi
+          read -r -a csv2_cflags <<< \
+            "$(PKG_CONFIG_LIBDIR="$csv2_pc_dir" pkg-config --cflags csv2)"
+          "$compiler" -std=c++11 "${compiler_flags[@]}" \
+            -Wall -Wextra -Wpedantic -Werror \
+            "${csv2_cflags[@]}" \
+            test/contracts/consumer/pkg_config.cpp -o build/pkg-config-consumer
+          ./build/pkg-config-consumer
+
+      - name: Upload full verification artifacts
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: full-linux-${{ matrix.expected_id }}
+          path: |
+            build/full-ctest.xml
+            benchmark/datasets/manifest.json
+            build/fuzz-artifacts
+          if-no-files-found: error
+
+      - name: Show compiler cache statistics
+        if: always()
+        run: ccache --show-stats
+
+      - name: Save compiler cache
+        if: >-
+          success() &&
+          steps.ccache-restore.outputs.cache-hit != 'true' &&
+          (
+            github.event_name == 'push' ||
+            github.event_name == 'workflow_dispatch' ||
+            (
+              github.event_name == 'pull_request' &&
+              github.event.pull_request.head.repo.full_name == github.repository
+            )
+          )
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .ccache
+          key: csv2-ccache-v2-linux-${{ matrix.expected_id }}-full-${{ env.CSV2_CACHE_PROFILE }}-${{ github.sha }}
+
+  windows:
+    if: inputs.extended
+    name: Full / Windows / MSVC 19.51
+    runs-on: windows-2025-vs2026
+    timeout-minutes: 60
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Configure full profile
+        run: >-
+          cmake -S . -B build -G "Visual Studio 18 2026" -A x64
+          -DCMAKE_COMPILE_WARNING_AS_ERROR=ON
+          -DCSV2_BUILD_TESTS=ON
+          -DCSV2_BUILD_BENCHMARKS=${{ inputs.benchmarks && 'ON' || 'OFF' }}
+          -DCSV2_BUILD_BENCHMARK_CHECKS=${{ inputs.benchmarks && 'ON' || 'OFF' }}
+          -DCSV2_BUILD_FUZZERS=OFF
+          -DCSV2_VERIFICATION_PROFILE=full
+          -DCSV2_REQUIRE_PYTHON_AUDITS=ON
+          -DCSV2_CI_EXPECTED_COMPILER_ID=MSVC
+          -DCSV2_CI_EXPECTED_COMPILER_VERSION_PREFIX=19.51
+
+      - name: Build
+        run: cmake --build build --config Release --parallel
+
+      - name: Run full CTest matrix
+        run: >-
+          ctest --test-dir build -C Release --output-on-failure
+          --no-tests=error
+          --output-junit full-ctest.xml
+
+      - name: Install package
+        run: cmake --install build --config Release --prefix build/install
+
+      - name: Verify installed CMake consumer
+        run: |
+          cmake -S test/contracts/consumer -B build/consumer `
+            -G "Visual Studio 18 2026" -A x64 `
+            -DCMAKE_PREFIX_PATH="$PWD/build/install"
+          cmake --build build/consumer --config Release --parallel
+          & build/consumer/Release/csv2_consumer.exe
+          if ($LASTEXITCODE -ne 0) { throw "Installed package consumer failed" }
+          & build/consumer/Release/csv2_no_mmap_consumer.exe
+          if ($LASTEXITCODE -ne 0) { throw "Installed no-mmap consumer failed" }
+
+      - name: Upload full verification artifacts
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: full-windows-msvc1951
+          path: |
+            build/full-ctest.xml
+            benchmark/datasets/manifest.json
+          if-no-files-found: error
+
+  macos:
+    if: inputs.extended
+    name: Full / macOS / AppleClang 21
+    runs-on: macos-26
+    timeout-minutes: 60
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Configure full profile
+        run: >-
+          cmake -S . -B build -G Ninja
+          -DCMAKE_BUILD_TYPE=Release
+          -DCMAKE_CXX_COMPILER=clang++
+          -DCMAKE_COMPILE_WARNING_AS_ERROR=ON
+          -DCSV2_BUILD_TESTS=ON
+          -DCSV2_BUILD_BENCHMARKS=${{ inputs.benchmarks && 'ON' || 'OFF' }}
+          -DCSV2_BUILD_BENCHMARK_CHECKS=${{ inputs.benchmarks && 'ON' || 'OFF' }}
+          -DCSV2_BUILD_FUZZERS=OFF
+          -DCSV2_VERIFICATION_PROFILE=full
+          -DCSV2_REQUIRE_PYTHON_AUDITS=ON
+          -DCSV2_CI_EXPECTED_COMPILER_ID=AppleClang
+          -DCSV2_CI_EXPECTED_COMPILER_VERSION_PREFIX=21
+
+      - name: Build and test
+        run: |
+          cmake --build build --parallel
+          ctest --test-dir build --output-on-failure \
+            --no-tests=error \
+            --output-junit full-ctest.xml
+
+      - name: Install package
+        run: cmake --install build --prefix build/install
+
+      - name: Verify installed CMake consumer
+        run: |
+          cmake -S test/contracts/consumer -B build/consumer -G Ninja \
+            -DCMAKE_PREFIX_PATH="$PWD/build/install"
+          cmake --build build/consumer --parallel
+          ./build/consumer/csv2_consumer
+          ./build/consumer/csv2_no_mmap_consumer
+
+      - name: Upload full verification artifacts
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: full-macos-appleclang21
+          path: |
+            build/full-ctest.xml
+            benchmark/datasets/manifest.json
+          if-no-files-found: error
+
+  coverage:
+    if: inputs.extended
+    name: Full / Linux / Clang 18 coverage (non-blocking)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    continue-on-error: true
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Configure coverage slice
+        run: >-
+          cmake -S . -B build -G Ninja
+          -DCMAKE_BUILD_TYPE=Debug
+          -DCMAKE_CXX_COMPILER=clang++-18
+          -DCMAKE_CXX_FLAGS="-fprofile-instr-generate -fcoverage-mapping"
+          -DCMAKE_EXE_LINKER_FLAGS="-fprofile-instr-generate"
+          -DCSV2_BUILD_TESTS=ON
+          -DCSV2_VERIFICATION_PROFILE=quick
+          -DCSV2_REQUIRE_PYTHON_AUDITS=ON
+
+      - name: Build and run C++20 modular runtime coverage
+        env:
+          LLVM_PROFILE_FILE: build/profiles/%p-%m.profraw
+        run: |
+          mkdir -p build/profiles
+          cmake --build build --target csv2_runtime_modular_cxx20_normal --parallel
+          ctest --test-dir build -R '^csv2\.runtime\..*\.modular\.cxx20\.normal$' \
+            --output-on-failure
+          llvm-profdata-18 merge -sparse build/profiles/*.profraw \
+            -o build/coverage.profdata
+          llvm-cov-18 export --format=lcov \
+            build/test/csv2_runtime_modular_cxx20_normal \
+            -instr-profile=build/coverage.profdata \
+            -ignore-filename-regex='(third_party|/test/|/benchmark/|single_include)' \
+            -o build/coverage.lcov
+          llvm-cov-18 show \
+            build/test/csv2_runtime_modular_cxx20_normal \
+            -instr-profile=build/coverage.profdata \
+            -format=html -output-dir=build/coverage-html \
+            -ignore-filename-regex='(third_party|/test/|/benchmark/|single_include)'
+
+      - name: Upload coverage
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: full-linux-clang18-coverage
+          path: |
+            build/coverage.lcov
+            build/coverage-html
+          if-no-files-found: warn

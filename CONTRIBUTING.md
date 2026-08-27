@@ -1,71 +1,271 @@
 # Contributing
-Contributions are welcomed. Open a pull-request or an issue.
 
-## Repository workflow
+Contributions are welcome through issues and pull requests. Keep generated and
+temporary output in an out-of-source directory (`build/`, `build-*`,
+`cmake-build-*`, or `out/` are ignored).
 
-Use an out-of-source build directory. Common local build trees such as
-`build/`, `build-*`, `cmake-build-*`, and `out/` are ignored, while the source
-directories `test/` and `benchmark/` remain tracked.
+## Public source and generated header
 
-```bash
-cmake -S . -B build -DCSV2_BUILD_TESTS=ON \
-  -DCMAKE_COMPILE_WARNING_AS_ERROR=ON
-cmake --build build --config Debug
-ctest --test-dir build -C Debug --output-on-failure
-```
-
-The behavioral suite is compiled against both the modular headers and the
-single-header distribution in C++11, C++14, C++17, C++20, and C++23 whenever
-CMake and the compiler advertise those modes. C++26 coverage is compile-only;
-it requires CMake 3.30 or newer and is a forward-compatibility check, not a
-behavioral or complete conformance claim. Public-header self-containment is
-checked in C++11, C++17, C++20, and C++23. To reproduce the CI standard gates
-on a current toolchain, configure with
-`-DCSV2_REQUIRE_MODERN_STANDARD_TESTS=ON`; add
-`-DCSV2_REQUIRE_CXX26_TESTS=ON` only when CMake reports `cxx_std_26` for the
-selected compiler.
-
-Sanitizer behavior is compiler-specific. `CSV2_ENABLE_SANITIZERS=ON` selects
-ASan and UBSan for GCC, GNU-style Clang, and AppleClang, AddressSanitizer for
-MSVC, and ASan plus UBSan for x64 Clang-CL. Clang-CL sanitizer builds require a
-non-Debug CRT configuration and the compiler-rt libraries distributed with the
-selected compiler; CI uses Release. Its UBSan configuration excludes only the
-`object-size` check because that check diagnoses the MSVC standard library's
-`forward_list` pseudo-node implementation. Linux enables leak detection through
-ASan, while Windows disables it because LeakSanitizer is not supported there.
-See the root README for the current CI matrix.
-
-CI uses stable hosted images and stable runner/distribution toolchains. The
-current enforced lines are GCC 14 and Clang/libc++ 18 on Linux, MSVC 19.51 and
-Clang-CL 22.1 on Windows, and AppleClang 21 on macOS. CI verifies compiler ID
-and version during CMake configuration. Do not replace these with preview
-runners, compiler snapshots, PPAs, or nightly repositories merely to obtain a
-newer version. Linux Clang has separate Release/no-sanitizer and
-Debug/ASan+UBSan jobs; both must remain present when changing the matrix.
-
-## Source and generated header
-
-Make implementation changes in `include/csv2/`. The single-header file is a
-generated distribution artifact and must be regenerated after a modular-header
-change:
+The modular headers in `include/csv2/` are the source of truth. The public
+target must continue to require only `cxx_std_11`. Regenerate the distribution
+header after every public-header change:
 
 ```bash
 python3 utils/amalgamate/amalgamate.py -c single_include.json -s .
-git diff --exit-code -- single_include/csv2/csv2.hpp
 ```
 
-Add behavioral coverage to the existing `test/main.cpp` suite unless a test
-genuinely requires a different translation unit. Keep public behavior and
-lifetime requirements synchronized in `README.md` and any relevant tracked
-component README.
+Commit modular and generated forms together. A test/benchmark-only change must
+leave both trees untouched.
 
-## Local working notes
+## Verification components
 
-Temporary, draft, planning, and research notes are intentionally local and
-excluded from version control. Keep durable user-facing or contributor-facing
-documentation in tracked top-level or component README files instead.
+All components are disabled by default and may be selected independently:
+
+```text
+CSV2_BUILD_TESTS
+CSV2_BUILD_BENCHMARKS
+CSV2_BUILD_BENCHMARK_CHECKS  # requires benchmarks
+CSV2_BUILD_FUZZERS
+```
+
+The real libFuzzer targets require Clang's GNU frontend on a non-Windows
+platform. Windows verification uses the deterministic reader and writer fuzz
+smoke executables built with `CSV2_BUILD_TESTS=ON`.
+
+`CSV2_VERIFICATION_PROFILE=quick|full|perf` chooses depth but never enables a
+component. A normal pre-push run is:
+
+```bash
+cmake -S . -B build -G Ninja \
+  -DCMAKE_BUILD_TYPE=Release \
+  -DCMAKE_COMPILE_WARNING_AS_ERROR=ON \
+  -DCSV2_BUILD_TESTS=ON \
+  -DCSV2_BUILD_BENCHMARKS=ON \
+  -DCSV2_BUILD_BENCHMARK_CHECKS=ON \
+  -DCSV2_REQUIRE_PYTHON_AUDITS=ON \
+  -DCSV2_VERIFICATION_PROFILE=quick
+cmake --build build --parallel
+ctest --test-dir build --output-on-failure
+```
+
+Use `./clang-format.bash --write` to format the tracked first-party C++
+sources. CI runs the same file selection with
+`CLANG_FORMAT=clang-format-18 ./clang-format.bash --check`.
+
+Use `full` before changing standards, feature detection, iterators/ranges,
+ownership, no-mmap/no-exceptions behavior, or platform mapping. Use `perf` only
+with the benchmark evidence process; profile selection is not itself a claim
+that a machine is controlled.
+
+Full/perf profiles and every CI job require Python 3.10 audits. A quick local
+configuration may continue without Python only after printing the skipped
+audit categories; do not report that run as the complete quick gate.
+
+`CSV2_ENABLE_SANITIZERS=ON` applies supported sanitizers only to first-party
+verification targets. GNU-style GCC/Clang and AppleClang use ASan+UBSan; MSVC
+uses ASan; x64 Clang-CL uses ASan+UBSan in a non-Debug CRT configuration.
+
+## Runtime tests
+
+Do not add behavior to a monolithic main file. Put it under the owning one of
+the 13 domains in `test/runtime/` and use a stable ID:
+
+```cpp
+CSV2_TEST_CASE("reader.scan.trailing-empty", "reader.scan") {
+  // ...
+}
+```
+
+Runtime sources use the backend-independent macros from
+`csv2_test/assertions.hpp`. With the `auto` backend, C++14–23 normal variants
+use Catch2; the `minitest` backend, C++11, and all no-exceptions variants use
+the non-throwing CSV2 runner. Keep one semantic
+source unless a language feature genuinely requires a compile-only contract.
+Each scenario must be an independent `CSV2_TEST_CASE`; do not use Catch2
+sections or emulate them in minitest, because their setup and failure schedules
+are not equivalent.
+
+When adding a source or capability, update the declaration in
+`test/runtime/CMakeLists.txt`. CMake validates declaration semantics such as
+profiles and capability combinations; compilation and execution validate the
+source itself.
+CTest names are stable:
+
+```text
+csv2.runtime.<domain>.<modular|single>.cxx<standard>.<normal|no_mmap|no_exceptions>
+```
+
+Select focused work by name or label rather than a test count. Shared support
+types belong in the focused headers under `test/support/include/csv2_test/`;
+avoid expanding the compatibility umbrella `test_support.hpp`.
+
+Compile-only public-header, config, standard-library-feature, and mmap path
+contracts belong in `test/contracts/`. Platform injection and emulation belong
+in `test/platform/`.
+
+See [`test/README.md`](test/README.md) for the complete domain and matrix
+contract.
+
+## Fixtures, properties, and fuzzing
+
+Use inline bytes for small cases. If a fixture improves clarity:
+
+1. add it under `test/fixtures/upstream`, `regression`, or `property`;
+2. preserve exact LF/CRLF/quoted-LF bytes;
+3. never normalize the file through a text-mode rewrite.
+
+`.gitattributes` disables checkout conversion for fixtures and fuzz seeds.
+
+Changes to parsing or escaping should extend the deterministic round-trip
+property and, when appropriate, both libFuzzer targets. Replay the committed
+corpora, minimize crashes, and use libFuzzer `-merge=1` before proposing a new
+seed. Raw corpora, profiles, and crash artifacts stay in ignored build trees;
+commit only a small stable reproducer.
+
+## Benchmarks and performance claims
+
+Current-tree kernels live in `benchmark/current/kernels/` and are registered
+by operation, source, and dataset. Every kernel must define:
+
+- preparation outside timing;
+- the exact timed action;
+- a live local value/memory observation before clear or destruction;
+- untimed checksum verification;
+- input bytes, rows, cells, and operation bytes;
+- whether the timed path must allocate zero times;
+- supported sources, preparation requirements, and explicit failure status.
+
+Add one stable entry to `benchmark/checks/case_manifest.json` for every new
+operation. The manifest gate lists the compiled registry, verifies the exact
+semantic wire, and starts a short dry run for each available operation; feature-
+conditional entries may remain absent from builds that lack the capability.
+Actual timing must select exactly one operation and one concrete compatible
+source per process.
+
+Operation names must describe their cache and preparation boundary. Do not call
+repeated filesystem reads cold I/O or prepared page touches first-fault work.
+Separate index construction from prepared lookup, and bind validation scenario
+names to preflight-checked corpus diagnostics.
+
+Timing never replaces correctness tests. Do not compare historical benchmark
+executables or hand-built artifacts across revisions. Use the owned pipeline,
+which exports immutable Git objects and compiles the same C++11
+`benchmark/compare/common_driver.cpp` against both exact header trees with an
+audited compiler and normalized command. `--external-artifacts` is for
+exploratory diagnostics only.
+
+Performance statements require the versioned pipeline, retained JSON, A/A
+noise calibration, alternating A/B runs, matching checksums, and the threshold
+documented in [`benchmark/README.md`](benchmark/README.md). GitHub-hosted
+results are `exploratory` and cannot establish “no regression”. Only a
+completed `controlled` evidence bundle produced by the cross-report finalizer
+is decision-eligible. Controlled work also requires a reviewed machine profile
+whose digest and runtime observation match A/A, A/B, and fixed metrics. Do not
+edit or synthesize the embedded profile: finalization reparses its bound source
+artifact. Do not edit derived statistics or verdicts: validators rebuild them
+from launch wires, samples, and the recorded schedule.
+
+## Verification dependencies
+
+Catch2 and Google Benchmark are test-only, offline snapshots under
+`third_party/verification`. Do not add `FetchContent`, submodules, system-package
+fallbacks, or configure-time network access. Before changing a snapshot:
+
+1. update exact tag/commit, archive SHA-256, SPDX license, whitelist,
+   per-file SHA-256 list, and snapshot hash in `manifest.json`;
+2. fetch and stage only through the maintainer tool's explicit network mode;
+3. keep patches as separate files under `patches/` with rationale and upstream
+   issue; never edit a snapshot silently;
+4. run the dependent builds and behavior tests;
+5. install with all verification components enabled and compile a clean-prefix
+   consumer.
+
+```bash
+python3 tools/vendor/update_verification_dependencies.py check
+python3 tools/vendor/test_update_verification_dependencies.py -v
+```
+
+Third-party sources are excluded from CSV2 formatting, Werror, sanitizers, and
+coverage. Dependency loaders must also override `COMPILE_WARNING_AS_ERROR` at
+target scope because CMake's global initializer crosses subdirectory policy
+scopes. Loaders must reject target collisions and restore the parent Cache
+value/type/help/advanced/strings state exactly. Snapshot file-list and wording
+audits are maintainer-side review tools, not tracked CI gates. See
+[`third_party/verification/README.md`](third_party/verification/README.md).
+
+## CI and documentation
+
+`.github/workflows/ci.yml` is the only automatic orchestrator. It has no
+workflow-level path filter: a full Git diff is classified after checkout,
+documentation-only changes keep only preflight and `CI / gate`, and unknown or
+unreadable paths conservatively select every owner. Rename detection is disabled
+for classification so both sides of a rename remain visible; pull requests use
+their merge-base comparison while pushes use the exact before/after range. Files
+installed as package metadata, including the licenses, are never docs-only.
+Repository-control files such as `.gitattributes` and `.gitignore`
+conservatively select all owners. CPack uses an explicit artifact policy rather
+than interpreting editor ignore globs. The Linux GCC owner builds both
+configured source formats and verifies their
+complete modular/single-header public surfaces and package metadata byte for
+byte against the checkout, path safety, content-equivalent inventories, and
+Git control-file exclusion. Only after that validation, CI safely expands both
+formats, configures and installs each source tree, builds and runs its installed
+modular consumers, and compiles its single-header contract. The
+stable branch-protection context is `CI / gate`; individual matrix jobs are
+implementation details and must not become required contexts.
+
+Linux, Windows, and macOS own representative platform behavior. Benchmark
+changes additionally select their `benchmark-portability` slice. Exact-head
+GCC full owns the canonical exhaustive runtime/benchmark matrix, the fuzz
+workflow owns deterministic/libFuzzer behavior plus exhaustive no-mmap
+benchmark checks, and the performance workflow owns A/A, A/B, legacy, schema,
+and provenance behavior. The Gate fails if any selected owner is skipped,
+canceled, or unsuccessful; an unselected owner may be skipped but may not fail
+silently.
+
+Linux and Windows sanitizer entries force minitest, build only
+`csv2_sanitizer_smoke`, and execute only the `sanitizer-smoke` label.
+Linux sanitizer entries also compare the configured target manifest with the
+stable Linux quick `(CTest name, executable target)` manifest and the actual
+labeled CTest JSON. Missing, extra, renamed, rebound, or duplicate tests and
+target/label/build-closure drift therefore fail without relying on a detached
+hard-coded test total. Ordinary
+non-sanitizer quick CTest runs are bounded to two concurrent tests; full and
+sanitizer CTest runs remain sequential. Pull-request and manual
+`fuzz-benchmark.yml` runs retain the combined deterministic fuzz and benchmark
+portability smoke plus the separate no-mmap exhaustive build. Its weekly
+schedule is a separate fuzz-only build: tests and benchmarks are disabled,
+only the Reader and Writer libFuzzer targets are built, each committed corpus
+runs for 50,000 iterations, and crash reproducers are retained as failure
+artifacts. Every libFuzzer entry runs both targets even if the first fails and
+uses separate Reader/Writer artifact prefixes.
+
+Pull requests that select the full owner run the exact-head GCC 14 full profile.
+Pull requests that select the performance owner also run an exploratory
+end-to-end protocol smoke. Manual `full.yml`
+dispatches add Clang/libc++, Windows, macOS, coverage, and extended fuzzing;
+manual `perf.yml` dispatches retain exploratory and controlled machine-profile
+runs. Controlled dispatches accept only repository-owner requests from the
+default branch with explicit 40-character baseline and candidate SHAs, then
+enter the `csv2-perf` Environment before using the labeled self-hosted runner.
+Keep matrices `fail-fast: false`, upload JUnit/evidence artifacts, and select
+CTest by stable names or labels rather than hard-coded totals.
+
+Performance jobs must finish with `benchmark/finalize_evidence.py`; checking
+that component files merely exist is not an evidence gate. Comparison and
+fixed-metrics reports can declare only `controlled_complete`. Do not set or
+infer final `decision_eligible` outside the cross-report evidence bundle.
+Fixed metrics must bind exactly one A/B case by dataset, semantic case ID,
+scope, source, and byte basis.
+
+Update the root README for public behavior, `test/README.md` for verification
+topology, `benchmark/README.md` and `benchmark/protocol/README.md` for timing or
+wire changes, and the verification dependency README for supply-chain changes.
+Temporary research and one-off reports belong in ignored local directories,
+not a tracked top-level `docs/` tree.
 
 ## Code of conduct
-This project adheres to the [Open Code of Conduct][code-of-conduct]. By participating, you are expected to honor this code.
+
+This project follows the [Open Code of Conduct][code-of-conduct].
 
 [code-of-conduct]: https://github.com/spotify/code-of-conduct/blob/master/code-of-conduct.md

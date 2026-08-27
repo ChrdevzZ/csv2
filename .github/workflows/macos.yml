@@ -1,28 +1,35 @@
 name: macOS
 
 on:
-  push:
-    branches:
-      - main
-      - master
-  pull_request:
-    branches:
-      - main
-      - master
-  merge_group:
-    types:
-      - checks_requested
+  workflow_call:
+    inputs:
+      quick:
+        type: boolean
+        default: true
+      benchmark:
+        type: boolean
+        default: true
   workflow_dispatch:
+    inputs:
+      quick:
+        description: Run core and package contracts
+        type: boolean
+        default: true
+      benchmark:
+        description: Run AppleClang benchmark portability contracts
+        type: boolean
+        default: true
 
 permissions:
   contents: read
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: true
+  group: macos-${{ github.workflow }}-${{ github.event_name }}-${{ github.event_name == 'workflow_dispatch' && github.run_id || github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   test:
+    if: inputs.quick || inputs.benchmark
     name: macOS / AppleClang 21
     runs-on: macos-26
     timeout-minutes: 15
@@ -38,65 +45,58 @@ jobs:
           -DCMAKE_BUILD_TYPE=Release
           -DCMAKE_CXX_COMPILER=clang++
           -DCMAKE_COMPILE_WARNING_AS_ERROR=ON
-          -DCSV2_BUILD_TESTS=ON
-          -DCSV2_BUILD_BENCHMARKS=ON
-          -DCSV2_REQUIRE_MODERN_STANDARD_TESTS=ON
-          -DCSV2_REQUIRE_CXX26_TESTS=ON
+          -DCSV2_BUILD_TESTS=${{ inputs.quick && 'ON' || 'OFF' }}
+          -DCSV2_BUILD_BENCHMARKS=${{ inputs.benchmark && 'ON' || 'OFF' }}
+          -DCSV2_BUILD_BENCHMARK_CHECKS=${{ inputs.benchmark && 'ON' || 'OFF' }}
+          -DCSV2_BENCHMARKS_EXCLUDE_FROM_ALL=ON
+          -DCSV2_VERIFICATION_PROFILE=quick
+          -DCSV2_REQUIRE_PYTHON_AUDITS=ON
           -DCSV2_CI_EXPECTED_COMPILER_ID=AppleClang
           -DCSV2_CI_EXPECTED_COMPILER_VERSION_PREFIX=21
 
       - name: Build
+        if: inputs.quick
         run: cmake --build build --parallel
 
+      - name: Build benchmark portability owners
+        if: inputs.benchmark
+        run: >-
+          cmake --build build --parallel
+          --target csv2_benchmark_portability
+
       - name: Test
-        run: ctest --test-dir build --output-on-failure
+        if: inputs.quick
+        run: >-
+          ctest --test-dir build -LE benchmark-checksum
+          --parallel 2 --no-tests=error
+          --output-on-failure --output-junit ctest.xml
+
+      - name: Test benchmark portability owners
+        if: inputs.benchmark
+        run: >-
+          ctest --test-dir build -L benchmark-portability
+          --parallel 2 --no-tests=error
+          --output-on-failure --output-junit benchmark-portability.xml
 
       - name: Install package
+        if: inputs.quick
         run: cmake --install build --prefix build/install
 
       - name: Verify installed package consumer
+        if: inputs.quick
         run: |
-          mkdir -p build/consumer
-          cat > build/consumer/CMakeLists.txt <<'EOF'
-          cmake_minimum_required(VERSION 3.10)
-          project(csv2_consumer LANGUAGES CXX)
-          find_package(csv2 CONFIG REQUIRED)
-          add_executable(csv2_consumer main.cpp)
-          target_link_libraries(csv2_consumer PRIVATE csv2::csv2)
-          target_compile_features(csv2_consumer PRIVATE cxx_std_20)
-          set_target_properties(csv2_consumer PROPERTIES CXX_EXTENSIONS OFF)
-          add_executable(csv2_no_mmap_consumer no_mmap.cpp)
-          target_link_libraries(csv2_no_mmap_consumer PRIVATE csv2::csv2)
-          target_compile_features(csv2_no_mmap_consumer PRIVATE cxx_std_11)
-          target_compile_definitions(csv2_no_mmap_consumer PRIVATE CSV2_HAS_MMAP=0)
-          set_target_properties(csv2_no_mmap_consumer PROPERTIES CXX_EXTENSIONS OFF)
-          EOF
-          cat > build/consumer/main.cpp <<'EOF'
-          #include <csv2/reader.hpp>
-          #include <string>
-          int main() {
-            csv2::Reader<> reader;
-            return reader.parse(std::string("a,b")) ? 0 : 1;
-          }
-          EOF
-          cat > build/consumer/no_mmap.cpp <<'EOF'
-          #include <csv2/mio.hpp>
-          #ifdef MIO_MMAP_HEADER
-          #error "mio must be absent when CSV2_HAS_MMAP=0"
-          #endif
-          #include <csv2/errors.hpp>
-          #include <csv2/parameters.hpp>
-          #include <csv2/reader.hpp>
-          #include <csv2/writer.hpp>
-          int main() { return CSV2_HAS_MMAP; }
-          EOF
-          cmake -S build/consumer -B build/consumer-build -G Ninja \
+          cmake -S test/contracts/consumer -B build/consumer-build -G Ninja \
             -DCMAKE_PREFIX_PATH="$PWD/build/install"
           cmake --build build/consumer-build --parallel
           ./build/consumer-build/csv2_consumer
           ./build/consumer-build/csv2_no_mmap_consumer
 
-      - name: Verify single-header regeneration
-        run: |
-          python3 utils/amalgamate/amalgamate.py -c single_include.json -s .
-          git diff --exit-code -- single_include/csv2/csv2.hpp
+      - name: Upload CTest results
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: macos-appleclang21-ctest
+          path: |
+            build/ctest.xml
+            build/benchmark-portability.xml
+          if-no-files-found: error

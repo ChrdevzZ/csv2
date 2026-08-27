@@ -1,0 +1,125 @@
+include_guard(GLOBAL)
+
+function(csv2_add_runtime_variant standard header_mode variant)
+  if(NOT standard IN_LIST csv2_supported_standards)
+    return()
+  endif()
+
+  get_property(domain_ids GLOBAL PROPERTY CSV2_TEST_DOMAIN_IDS)
+  set(sources)
+  set(selected_domains)
+  foreach(domain IN LISTS domain_ids)
+    if(ARGN AND NOT domain IN_LIST ARGN)
+      continue()
+    endif()
+    string(REPLACE "." "_" domain_key "${domain}")
+    get_property(min_standard GLOBAL
+      PROPERTY CSV2_TEST_DOMAIN_${domain_key}_MIN_STANDARD)
+    get_property(profiles GLOBAL
+      PROPERTY CSV2_TEST_DOMAIN_${domain_key}_PROFILES)
+    get_property(requires GLOBAL
+      PROPERTY CSV2_TEST_DOMAIN_${domain_key}_REQUIRES)
+    if(standard LESS min_standard OR
+       NOT CSV2_VERIFICATION_PROFILE IN_LIST profiles)
+      continue()
+    endif()
+    if(variant STREQUAL "no_mmap" AND "mmap" IN_LIST requires)
+      continue()
+    endif()
+    if(variant STREQUAL "no_exceptions" AND "exceptions" IN_LIST requires)
+      continue()
+    endif()
+    get_property(domain_sources GLOBAL
+      PROPERTY CSV2_TEST_DOMAIN_${domain_key}_SOURCES)
+    list(APPEND sources ${domain_sources})
+    list(APPEND selected_domains ${domain})
+  endforeach()
+  list(REMOVE_DUPLICATES sources)
+  if(NOT sources)
+    return()
+  endif()
+
+  set(target "csv2_runtime_${header_mode}_cxx${standard}_${variant}")
+  set(backend minitest)
+  if(CSV2_TEST_ASSERTION_BACKEND STREQUAL "auto" AND
+     variant STREQUAL "normal" AND standard GREATER_EQUAL 14)
+    set(backend catch2)
+  endif()
+
+  if(backend STREQUAL "minitest")
+    add_executable(${target} ${sources}
+      ${csv2_SOURCE_DIR}/test/support/minitest_main.cpp)
+    target_link_libraries(${target} PRIVATE csv2_minitest)
+  else()
+    add_executable(${target} ${sources})
+    target_compile_definitions(${target} PRIVATE CSV2_TEST_USE_CATCH2)
+    target_link_libraries(${target} PRIVATE
+      csv2_test_support Catch2::Catch2WithMain)
+  endif()
+
+  if(header_mode STREQUAL "single")
+    target_compile_definitions(${target} PRIVATE CSV2_TEST_SINGLE_HEADER)
+    target_include_directories(${target} PRIVATE ${csv2_SOURCE_DIR}/single_include)
+  else()
+    target_link_libraries(${target} PRIVATE csv2::csv2)
+  endif()
+
+  if(variant STREQUAL "no_mmap")
+    target_compile_definitions(${target} PRIVATE CSV2_HAS_MMAP=0 CSV2_TEST_NO_MMAP)
+  elseif(variant STREQUAL "no_exceptions")
+    target_compile_definitions(${target} PRIVATE CSV2_TEST_NO_EXCEPTIONS)
+    if(MSVC OR CMAKE_CXX_COMPILER_FRONTEND_VARIANT STREQUAL "MSVC")
+      target_compile_definitions(${target} PRIVATE _HAS_EXCEPTIONS=0)
+    endif()
+  endif()
+
+  csv2_set_test_standard(${target} ${standard})
+  if(variant STREQUAL "no_exceptions")
+    csv2_enable_test_options(${target} NO_EXCEPTIONS)
+  else()
+    csv2_enable_test_options(${target})
+  endif()
+
+  # GCC 14 can diagnose an unreachable 64-byte scanner branch after it
+  # propagates the object size of a short std::string test fixture through the
+  # header-only Reader. Keep these optimizer diagnostics visible without
+  # turning the known false positives into build failures. All other warnings
+  # remain covered by CMAKE_COMPILE_WARNING_AS_ERROR.
+  if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU" AND
+     CMAKE_CXX_COMPILER_VERSION VERSION_GREATER_EQUAL 14 AND
+     CMAKE_CXX_COMPILER_VERSION VERSION_LESS 15)
+    target_compile_options(${target} PRIVATE
+      -Wno-error=array-bounds
+      -Wno-error=stringop-overread)
+  endif()
+
+  foreach(domain IN LISTS selected_domains)
+    csv2_register_domain_test(${target} ${domain} ${header_mode}
+      ${standard} ${variant} ${backend})
+  endforeach()
+endfunction()
+
+function(csv2_add_runtime_matrix)
+  if(CSV2_VERIFICATION_PROFILE STREQUAL "full")
+    foreach(standard IN ITEMS 11 14 17 20 23)
+      foreach(header_mode IN ITEMS modular single)
+        foreach(variant IN ITEMS normal no_mmap no_exceptions)
+          csv2_add_runtime_variant(${standard} ${header_mode} ${variant})
+        endforeach()
+      endforeach()
+    endforeach()
+  else()
+    set(csv2_cxx23_feature_domains
+      reader.source reader.convert reader.ranges mio.mapping)
+    csv2_add_runtime_variant(11 modular normal)
+    csv2_add_runtime_variant(11 single normal)
+    csv2_add_runtime_variant(20 modular normal)
+    csv2_add_runtime_variant(20 single normal)
+    csv2_add_runtime_variant(23 modular normal ${csv2_cxx23_feature_domains})
+    csv2_add_runtime_variant(23 single normal ${csv2_cxx23_feature_domains})
+    csv2_add_runtime_variant(11 modular no_mmap)
+    csv2_add_runtime_variant(23 single no_mmap ${csv2_cxx23_feature_domains})
+    csv2_add_runtime_variant(11 single no_exceptions)
+    csv2_add_runtime_variant(23 modular no_exceptions ${csv2_cxx23_feature_domains})
+  endif()
+endfunction()

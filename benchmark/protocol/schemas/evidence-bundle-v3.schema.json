@@ -1,0 +1,216 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "evidence-bundle-v3.schema.json",
+  "title": "CSV2 complete performance evidence bundle v3",
+  "type": "object",
+  "required": [
+    "schema", "status", "evidence_level", "decision_eligible",
+    "generated_at_utc", "completed_at_utc", "baseline_revision",
+    "candidate_revision", "source_tree", "compiler_sha256", "machine",
+    "machine_profile",
+    "datasets", "comparison_binding", "components", "checks", "artifacts", "finalizer"
+  ],
+  "properties": {
+    "schema": {"const": "csv2-performance-evidence-bundle-v3"},
+    "status": {"const": "completed"},
+    "evidence_level": {"enum": ["exploratory", "controlled"]},
+    "decision_eligible": {"type": "boolean"},
+    "generated_at_utc": {"type": "string", "minLength": 1},
+    "completed_at_utc": {"type": "string", "minLength": 1},
+    "baseline_revision": {"$ref": "#/$defs/object_id"},
+    "candidate_revision": {"$ref": "#/$defs/object_id"},
+    "source_tree": {"$ref": "#/$defs/object_id"},
+    "compiler_sha256": {"$ref": "#/$defs/sha256"},
+    "machine": {"$ref": "#/$defs/machine"},
+    "machine_profile": {
+      "oneOf": [{"$ref": "machine-profile-v1.schema.json"}, {"type": "null"}]
+    },
+    "datasets": {
+      "type": "array",
+      "minItems": 1,
+      "items": {"$ref": "#/$defs/dataset"}
+    },
+    "comparison_binding": {"$ref": "#/$defs/comparison_binding"},
+    "components": {
+      "type": "object",
+      "required": ["calibration", "comparison", "fixed_metrics"],
+      "properties": {
+        "calibration": {"$ref": "#/$defs/component"},
+        "comparison": {"$ref": "#/$defs/component"},
+        "fixed_metrics": {"$ref": "#/$defs/component"}
+      },
+      "additionalProperties": false
+    },
+    "checks": {
+      "type": "object",
+      "required": [
+        "artifact_manifests", "calibration", "revisions", "source_tree",
+        "compiler", "machine", "machine_profile", "datasets", "corpus", "semantic_binding"
+      ],
+      "properties": {
+        "artifact_manifests": {"const": true},
+        "calibration": {"const": true},
+        "revisions": {"const": true},
+        "source_tree": {"const": true},
+        "compiler": {"const": true},
+        "machine": {"const": true},
+        "machine_profile": {"const": true},
+        "datasets": {"const": true},
+        "corpus": {"const": true},
+        "semantic_binding": {"const": true}
+      },
+      "additionalProperties": false
+    },
+    "artifacts": {
+      "type": "object",
+      "required": [
+        "calibration_report", "calibration_manifest", "comparison_report",
+        "comparison_manifest", "fixed_metrics_report", "fixed_metrics_manifest",
+        "corpus_manifest"
+      ],
+      "properties": {
+        "calibration_report": {"$ref": "#/$defs/artifact"},
+        "calibration_manifest": {"$ref": "#/$defs/artifact"},
+        "comparison_report": {"$ref": "#/$defs/artifact"},
+        "comparison_manifest": {"$ref": "#/$defs/artifact"},
+        "fixed_metrics_report": {"$ref": "#/$defs/artifact"},
+        "fixed_metrics_manifest": {"$ref": "#/$defs/artifact"},
+        "corpus_manifest": {"$ref": "#/$defs/artifact"}
+      },
+      "additionalProperties": false
+    },
+    "finalizer": {"$ref": "#/$defs/source_bundle"}
+  },
+  "additionalProperties": false,
+  "allOf": [
+    {
+      "if": {
+        "properties": {"evidence_level": {"const": "controlled"}},
+        "required": ["evidence_level"]
+      },
+      "then": {
+        "properties": {
+          "decision_eligible": {"const": true},
+          "machine_profile": {"$ref": "machine-profile-v1.schema.json"},
+          "components": {
+            "properties": {
+              "calibration": {
+                "properties": {"controlled_complete": {"const": true}}
+              },
+              "comparison": {
+                "properties": {"controlled_complete": {"const": true}}
+              },
+              "fixed_metrics": {
+                "properties": {"controlled_complete": {"const": true}}
+              }
+            }
+          }
+        }
+      },
+      "else": {
+        "properties": {
+          "decision_eligible": {"const": false},
+          "machine_profile": {"type": "null"},
+          "components": {
+            "properties": {
+              "calibration": {
+                "properties": {"controlled_complete": {"const": false}}
+              },
+              "comparison": {
+                "properties": {"controlled_complete": {"const": false}}
+              },
+              "fixed_metrics": {
+                "properties": {"controlled_complete": {"const": false}}
+              }
+            }
+          }
+        }
+      }
+    }
+  ],
+  "$defs": {
+    "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "object_id": {"type": "string", "pattern": "^[0-9a-f]{40}([0-9a-f]{24})?$"},
+    "artifact": {
+      "type": "object",
+      "required": ["path", "size", "sha256", "mtime_ns"],
+      "properties": {
+        "path": {"type": "string", "minLength": 1},
+        "size": {"type": "integer", "minimum": 0},
+        "sha256": {"$ref": "#/$defs/sha256"},
+        "mtime_ns": {"type": "integer", "minimum": 0}
+      },
+      "additionalProperties": false
+    },
+    "source_bundle": {
+      "type": "object",
+      "required": ["kind", "root", "revision", "sha256", "files"],
+      "properties": {
+        "kind": {"const": "source-bundle"},
+        "root": {"type": "string", "minLength": 1},
+        "revision": {"type": "string", "minLength": 1},
+        "sha256": {"$ref": "#/$defs/sha256"},
+        "files": {
+          "type": "array",
+          "minItems": 1,
+          "items": {"$ref": "#/$defs/artifact"}
+        }
+      },
+      "additionalProperties": false
+    },
+    "machine": {
+      "type": "object",
+      "required": [
+        "node", "machine", "cpu_model", "logical_cpus", "process_affinity", "python"
+      ],
+      "properties": {
+        "node": {"type": "string", "minLength": 1},
+        "machine": {"type": "string", "minLength": 1},
+        "cpu_model": {"type": "string", "minLength": 1},
+        "logical_cpus": {"type": "integer", "minimum": 1},
+        "process_affinity": {
+          "type": "array",
+          "minItems": 1,
+          "items": {"type": "integer", "minimum": 0}
+        },
+        "python": {"type": "string", "minLength": 1}
+      },
+      "additionalProperties": false
+    },
+    "dataset": {
+      "type": "object",
+      "required": ["name", "size", "sha256"],
+      "properties": {
+        "name": {"type": "string", "minLength": 1},
+        "size": {"type": "integer", "minimum": 1},
+        "sha256": {"$ref": "#/$defs/sha256"}
+      },
+      "additionalProperties": false
+    },
+    "component": {
+      "type": "object",
+      "required": ["schema", "revision", "build_digest", "controlled_complete"],
+      "properties": {
+        "schema": {
+          "enum": ["csv2-benchmark-report-v6", "csv2-fixed-machine-metrics-v6"]
+        },
+        "revision": {"$ref": "#/$defs/object_id"},
+        "build_digest": {"$ref": "#/$defs/sha256"},
+        "controlled_complete": {"type": "boolean"}
+      },
+      "additionalProperties": false
+    },
+    "comparison_binding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["dataset", "semantic_case_id", "scope", "source", "byte_basis"],
+      "properties": {
+        "dataset": {"type": "string", "minLength": 1},
+        "semantic_case_id": {"type": "string", "pattern": "^csv2\\..+\\.v1$"},
+        "scope": {"type": "string", "minLength": 1},
+        "source": {"enum": ["buffer", "mmap", "file"]},
+        "byte_basis": {"const": "input_corpus"}
+      }
+    }
+  }
+}

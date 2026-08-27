@@ -1,47 +1,80 @@
 name: Linux
 
 on:
-  push:
-    branches:
-      - main
-      - master
-  pull_request:
-    branches:
-      - main
-      - master
-  merge_group:
-    types:
-      - checks_requested
+  workflow_call:
+    inputs:
+      quick:
+        type: boolean
+        default: true
+      benchmark:
+        type: boolean
+        default: true
   workflow_dispatch:
+    inputs:
+      quick:
+        description: Run core, package, and sanitizer contracts
+        type: boolean
+        default: true
+      benchmark:
+        description: Run Clang benchmark portability contracts
+        type: boolean
+        default: true
 
 permissions:
   contents: read
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: true
+  group: linux-${{ github.workflow }}-${{ github.event_name }}-${{ github.event_name == 'workflow_dispatch' && github.run_id || github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   gcc:
+    if: inputs.quick
     name: Linux / GCC 14
     runs-on: ubuntu-24.04
     timeout-minutes: 15
+    env:
+      CCACHE_BASEDIR: ${{ github.workspace }}
+      CCACHE_COMPILERCHECK: content
+      CCACHE_DIR: ${{ github.workspace }}/.ccache
+      CCACHE_MAXSIZE: 1G
     steps:
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
+      - name: Prepare compiler cache
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends ccache
+
+      - name: Restore compiler cache
+        id: ccache-restore
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .ccache
+          key: csv2-ccache-v2-linux-gcc14-quick-${{ github.sha }}
+          restore-keys: |
+            csv2-ccache-v2-linux-gcc14-quick-
+            csv2-ccache-v2-linux-gcc14-
+
+      - name: Reset compiler cache statistics
+        run: ccache --zero-stats
+
       - name: Configure
         run: >-
           cmake -S . -B build -G Ninja
           -DCMAKE_BUILD_TYPE=Release
           -DCMAKE_CXX_COMPILER=g++-14
+          -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
           -DCMAKE_COMPILE_WARNING_AS_ERROR=ON
           -DCSV2_BUILD_TESTS=ON
-          -DCSV2_BUILD_BENCHMARKS=ON
-          -DCSV2_REQUIRE_MODERN_STANDARD_TESTS=ON
-          -DCSV2_REQUIRE_CXX26_TESTS=ON
+          -DCSV2_TEST_ASSERTION_BACKEND=minitest
+          -DCSV2_BUILD_BENCHMARKS=OFF
+          -DCSV2_BUILD_BENCHMARK_CHECKS=OFF
+          -DCSV2_VERIFICATION_PROFILE=quick
+          -DCSV2_REQUIRE_PYTHON_AUDITS=ON
           -DCSV2_CI_EXPECTED_COMPILER_ID=GNU
           -DCSV2_CI_EXPECTED_COMPILER_VERSION_PREFIX=14
 
@@ -50,66 +83,68 @@ jobs:
           cmake -S . -B build-reduced -G Ninja \
             -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_CXX_COMPILER=g++-14 \
+            -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
             -DCMAKE_CXX_COMPILE_FEATURES=cxx_std_11 \
             -DCSV2_BUILD_TESTS=ON \
-            -DCSV2_BUILD_BENCHMARKS=OFF
+            -DCSV2_BUILD_BENCHMARKS=OFF \
+            -DCSV2_REQUIRE_PYTHON_AUDITS=ON
           cmake --build build-reduced --target \
             csv2_test csv2_single_header_test \
             csv2_standard_contract_module_cxx11 \
             csv2_standard_contract_single_cxx11 --parallel
-          cmake --build build-reduced --target help > build-reduced/targets.txt
-          if grep -Eq 'cxx(14|17|20|23|26)' build-reduced/targets.txt; then
-            grep -E 'cxx(14|17|20|23|26)' build-reduced/targets.txt
-            exit 1
-          fi
 
       - name: Build
         run: cmake --build build --parallel
 
+      - name: Build source packages
+        run: cmake --build build --target package_source
+
+      - name: Verify source package archives
+        run: |
+          set -euo pipefail
+          python3 tools/ci/verify_source_archives.py \
+            --source-root . \
+            --extract-root build/source-archives \
+            build/csv2-*.tar.gz build/csv2-*.tar.xz
+          source_tree_count=0
+          for source_tree in build/source-archives/{tgz,txz}/csv2-*; do
+            [[ -d "$source_tree" ]]
+            source_kind="$(basename "$(dirname "$source_tree")")"
+            source_build="build/source-${source_kind}-build"
+            source_install="build/source-${source_kind}-install"
+            source_consumer="build/source-${source_kind}-consumer"
+            cmake -S "$source_tree" -B "$source_build" -G Ninja \
+              -DCMAKE_BUILD_TYPE=Release \
+              -DCMAKE_CXX_COMPILER=g++-14
+            cmake --build "$source_build" --parallel
+            cmake --install "$source_build" --prefix "$source_install"
+            cmake -S "$source_tree/test/contracts/consumer" \
+              -B "$source_consumer" -G Ninja \
+              -DCMAKE_CXX_COMPILER=g++-14 \
+              -DCMAKE_PREFIX_PATH="$PWD/$source_install"
+            cmake --build "$source_consumer" --parallel
+            "$source_consumer/csv2_consumer"
+            "$source_consumer/csv2_no_mmap_consumer"
+            g++-14 -std=c++11 -Wall -Wextra -Wpedantic -Werror \
+              -DCSV2_TEST_SINGLE_HEADER=1 \
+              -I "$source_tree/single_include" \
+              -c "$source_tree/test/contracts/headers/self_containment.cpp" \
+              -o "$source_consumer/single-header.o"
+            source_tree_count=$((source_tree_count + 1))
+          done
+          [[ "$source_tree_count" -eq 2 ]]
+
       - name: Test
-        run: ctest --test-dir build --output-on-failure
+        run: >-
+          ctest --test-dir build --parallel 2
+          --output-on-failure --output-junit ctest.xml
 
       - name: Install package
         run: cmake --install build --prefix build/install
 
       - name: Verify installed package consumer
         run: |
-          mkdir -p build/consumer
-          cat > build/consumer/CMakeLists.txt <<'EOF'
-          cmake_minimum_required(VERSION 3.10)
-          project(csv2_consumer LANGUAGES CXX)
-          find_package(csv2 CONFIG REQUIRED)
-          add_executable(csv2_consumer main.cpp)
-          target_link_libraries(csv2_consumer PRIVATE csv2::csv2)
-          target_compile_features(csv2_consumer PRIVATE cxx_std_20)
-          set_target_properties(csv2_consumer PROPERTIES CXX_EXTENSIONS OFF)
-          add_executable(csv2_no_mmap_consumer no_mmap.cpp)
-          target_link_libraries(csv2_no_mmap_consumer PRIVATE csv2::csv2)
-          target_compile_features(csv2_no_mmap_consumer PRIVATE cxx_std_11)
-          target_compile_definitions(csv2_no_mmap_consumer PRIVATE CSV2_HAS_MMAP=0)
-          set_target_properties(csv2_no_mmap_consumer PROPERTIES CXX_EXTENSIONS OFF)
-          EOF
-          cat > build/consumer/main.cpp <<'EOF'
-          #include <csv2/reader.hpp>
-          #include <string>
-
-          int main() {
-            csv2::Reader<> reader;
-            return reader.parse(std::string("a,b")) ? 0 : 1;
-          }
-          EOF
-          cat > build/consumer/no_mmap.cpp <<'EOF'
-          #include <csv2/mio.hpp>
-          #ifdef MIO_MMAP_HEADER
-          #error "mio must be absent when CSV2_HAS_MMAP=0"
-          #endif
-          #include <csv2/errors.hpp>
-          #include <csv2/parameters.hpp>
-          #include <csv2/reader.hpp>
-          #include <csv2/writer.hpp>
-          int main() { return CSV2_HAS_MMAP; }
-          EOF
-          cmake -S build/consumer -B build/consumer-build -G Ninja \
+          cmake -S test/contracts/consumer -B build/consumer-build -G Ninja \
             -DCMAKE_PREFIX_PATH="$PWD/build/install"
           cmake --build build/consumer-build --parallel
           ./build/consumer-build/csv2_consumer
@@ -117,58 +152,101 @@ jobs:
 
       - name: Verify relocatable pkg-config consumer
         run: |
-          csv2_pc_dir="$(dirname "$(find build/install -name csv2.pc -print -quit)")"
-          csv2_includedir="$(PKG_CONFIG_PATH="$csv2_pc_dir" pkg-config \
-            --variable=includedir csv2)"
-          test -f "$csv2_includedir/csv2/reader.hpp"
-          cat > build/pkg-config-consumer.cpp <<'EOF'
-          #define CSV2_HAS_MMAP 0
-          #include <csv2/mio.hpp>
-          #ifdef MIO_MMAP_HEADER
-          #error "mio must be absent when CSV2_HAS_MMAP=0"
-          #endif
-          #include <csv2/errors.hpp>
-          #include <csv2/parameters.hpp>
-          #include <csv2/reader.hpp>
-          #include <csv2/writer.hpp>
-          int main() { return CSV2_HAS_MMAP; }
-          EOF
+          csv2_pc_dir="$PWD/build/install/lib/pkgconfig"
+          read -r -a csv2_cflags <<< \
+            "$(PKG_CONFIG_LIBDIR="$csv2_pc_dir" pkg-config --cflags csv2)"
           g++-14 -std=c++11 -Wall -Wextra -Wpedantic -Werror \
-            $(PKG_CONFIG_PATH="$csv2_pc_dir" pkg-config --cflags csv2) \
-            build/pkg-config-consumer.cpp -o build/pkg-config-consumer
+            "${csv2_cflags[@]}" \
+            test/contracts/consumer/pkg_config.cpp -o build/pkg-config-consumer
           ./build/pkg-config-consumer
 
-      - name: Verify single-header regeneration
-        run: |
-          python3 utils/amalgamate/amalgamate.py -c single_include.json -s .
-          git diff --exit-code -- single_include/csv2/csv2.hpp
+      - name: Upload CTest results
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: linux-gcc14-ctest
+          path: build/ctest.xml
+          if-no-files-found: error
+
+      - name: Show compiler cache statistics
+        if: always()
+        run: ccache --show-stats
+
+      - name: Save compiler cache
+        if: >-
+          success() &&
+          steps.ccache-restore.outputs.cache-hit != 'true' &&
+          (
+            github.event_name == 'push' ||
+            github.event_name == 'workflow_dispatch' ||
+            (
+              github.event_name == 'pull_request' &&
+              github.event.pull_request.head.repo.full_name == github.repository
+            )
+          )
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .ccache
+          key: csv2-ccache-v2-linux-gcc14-quick-${{ github.sha }}
 
   gcc-sanitizers:
+    if: inputs.quick
     name: Linux / GCC 14 / ASan + UBSan
     runs-on: ubuntu-24.04
     timeout-minutes: 15
+    env:
+      CCACHE_BASEDIR: ${{ github.workspace }}
+      CCACHE_COMPILERCHECK: content
+      CCACHE_DIR: ${{ github.workspace }}/.ccache
+      CCACHE_MAXSIZE: 1G
     steps:
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
+      - name: Prepare compiler cache
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends ccache
+
+      - name: Restore compiler cache
+        id: ccache-restore
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .ccache
+          key: csv2-ccache-v2-linux-gcc14-sanitizer-${{ github.sha }}
+          restore-keys: csv2-ccache-v2-linux-gcc14-sanitizer-
+
+      - name: Reset compiler cache statistics
+        run: ccache --zero-stats
+
       - name: Configure
         run: >-
           cmake -S . -B build -G Ninja
           -DCMAKE_BUILD_TYPE=Debug
           -DCMAKE_CXX_COMPILER=g++-14
+          -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
           -DCMAKE_COMPILE_WARNING_AS_ERROR=ON
           -DCSV2_BUILD_TESTS=ON
+          -DCSV2_TEST_ASSERTION_BACKEND=minitest
           -DCSV2_BUILD_BENCHMARKS=OFF
+          -DCSV2_VERIFICATION_PROFILE=quick
+          -DCSV2_REQUIRE_PYTHON_AUDITS=ON
           -DCSV2_ENABLE_SANITIZERS=ON
-          -DCSV2_REQUIRE_MODERN_STANDARD_TESTS=ON
-          -DCSV2_REQUIRE_CXX26_TESTS=ON
           -DCSV2_CI_EXPECTED_COMPILER_ID=GNU
           -DCSV2_CI_EXPECTED_COMPILER_VERSION_PREFIX=14
 
-      - name: Build
-        run: cmake --build build --parallel
+      - name: Build sanitizer smoke
+        run: cmake --build build --parallel --target csv2_sanitizer_smoke
+
+      - name: Verify sanitizer smoke inventory
+        run: >-
+          python3 tools/ci/verify_ctest_inventory.py
+          --build-dir build
+          --label sanitizer-smoke
+          --expected-targets build/test/sanitizer-smoke-targets.txt
+          --expected-tests test/cmake/sanitizer-smoke-linux.tsv
 
       - name: Test with ASan, UBSan, and leak detection
         env:
@@ -176,58 +254,128 @@ jobs:
           UBSAN_OPTIONS: halt_on_error=1:print_stacktrace=1
         run: >-
           ctest --test-dir build
-          -L sanitizer-runtime
+          -L sanitizer-smoke
           --no-tests=error
+          --output-junit ctest.xml
           --output-on-failure
 
+      - name: Show compiler cache statistics
+        if: always()
+        run: ccache --show-stats
+
+      - name: Save compiler cache
+        if: >-
+          success() &&
+          steps.ccache-restore.outputs.cache-hit != 'true' &&
+          (
+            github.event_name == 'push' ||
+            github.event_name == 'workflow_dispatch' ||
+            (
+              github.event_name == 'pull_request' &&
+              github.event.pull_request.head.repo.full_name == github.repository
+            )
+          )
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .ccache
+          key: csv2-ccache-v2-linux-gcc14-sanitizer-${{ github.sha }}
+
   clang:
+    if: inputs.quick || inputs.benchmark
     name: Linux / ${{ matrix.compiler }}
     runs-on: ubuntu-24.04
     timeout-minutes: 15
+    env:
+      CCACHE_BASEDIR: ${{ github.workspace }}
+      CCACHE_COMPILERCHECK: content
+      CCACHE_DIR: ${{ github.workspace }}/.ccache
+      CCACHE_MAXSIZE: 1G
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - compiler: Clang 18 + libc++
-            build_type: Release
-            benchmarks: "ON"
-            sanitizers: "OFF"
-          - compiler: Clang 18 + libc++ / ASan + UBSan
-            build_type: Debug
-            benchmarks: "OFF"
-            sanitizers: "ON"
+        include: ${{ fromJSON(inputs.quick && '[{"compiler":"Clang 18 + libc++","artifact":"clang18-libcxx","build_type":"Release","benchmarks":"ON","sanitizers":"OFF","assertion_backend":"auto"},{"compiler":"Clang 18 + libc++ / ASan + UBSan","artifact":"clang18-libcxx-sanitizers","build_type":"Debug","benchmarks":"OFF","sanitizers":"ON","assertion_backend":"minitest"}]' || '[{"compiler":"Clang 18 + libc++","artifact":"clang18-libcxx","build_type":"Release","benchmarks":"ON","sanitizers":"OFF","assertion_backend":"auto"}]') }}
     steps:
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
-      - name: Install stable Clang 18 libc++ and clang-format
+      - name: Install stable Clang 18 dependencies
         run: |
+          set -euo pipefail
+          packages=(ccache libc++-18-dev libc++abi-18-dev)
+          if [[ '${{ matrix.sanitizers }}' == 'OFF' ]]; then
+            packages+=(clang-format-18)
+          fi
           sudo apt-get update
-          sudo apt-get install --no-install-recommends libc++-18-dev libc++abi-18-dev clang-format-18
+          sudo apt-get install --no-install-recommends "${packages[@]}"
+
+      - name: Restore compiler cache
+        id: ccache-restore
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .ccache
+          key: csv2-ccache-v2-linux-${{ matrix.artifact }}-${{ github.sha }}
+          restore-keys: csv2-ccache-v2-linux-${{ matrix.artifact }}-
+
+      - name: Reset compiler cache statistics
+        run: ccache --zero-stats
 
       - name: Configure
         run: >-
           cmake -S . -B build -G Ninja
           -DCMAKE_BUILD_TYPE=${{ matrix.build_type }}
           -DCMAKE_CXX_COMPILER=clang++-18
+          -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
           -DCMAKE_CXX_FLAGS=-stdlib=libc++
           -DCMAKE_COMPILE_WARNING_AS_ERROR=ON
-          -DCSV2_BUILD_TESTS=ON
-          -DCSV2_BUILD_BENCHMARKS=${{ matrix.benchmarks }}
+          -DCSV2_BUILD_TESTS=${{ inputs.quick && 'ON' || 'OFF' }}
+          -DCSV2_TEST_ASSERTION_BACKEND=${{ matrix.assertion_backend }}
+          -DCSV2_BUILD_BENCHMARKS=${{ inputs.benchmark && matrix.benchmarks == 'ON' && 'ON' || 'OFF' }}
+          -DCSV2_BUILD_BENCHMARK_CHECKS=${{ inputs.benchmark && matrix.benchmarks == 'ON' && 'ON' || 'OFF' }}
+          -DCSV2_BENCHMARKS_EXCLUDE_FROM_ALL=ON
+          -DCSV2_VERIFICATION_PROFILE=quick
+          -DCSV2_REQUIRE_PYTHON_AUDITS=ON
           -DCSV2_ENABLE_SANITIZERS=${{ matrix.sanitizers }}
-          -DCSV2_REQUIRE_MODERN_STANDARD_TESTS=ON
-          -DCSV2_REQUIRE_CXX26_TESTS=ON
           -DCSV2_CI_EXPECTED_COMPILER_ID=Clang
           -DCSV2_CI_EXPECTED_COMPILER_VERSION_PREFIX=18
 
       - name: Build
+        if: matrix.sanitizers == 'OFF' && inputs.quick
         run: cmake --build build --parallel
 
+      - name: Build benchmark portability owners
+        if: matrix.sanitizers == 'OFF' && inputs.benchmark
+        run: >-
+          cmake --build build --parallel
+          --target csv2_benchmark_portability
+
+      - name: Build sanitizer smoke
+        if: matrix.sanitizers == 'ON'
+        run: cmake --build build --parallel --target csv2_sanitizer_smoke
+
+      - name: Verify sanitizer smoke inventory
+        if: matrix.sanitizers == 'ON'
+        run: >-
+          python3 tools/ci/verify_ctest_inventory.py
+          --build-dir build
+          --label sanitizer-smoke
+          --expected-targets build/test/sanitizer-smoke-targets.txt
+          --expected-tests test/cmake/sanitizer-smoke-linux.tsv
+
       - name: Test
-        if: matrix.sanitizers == 'OFF'
-        run: ctest --test-dir build --output-on-failure
+        if: matrix.sanitizers == 'OFF' && inputs.quick
+        run: >-
+          ctest --test-dir build -LE benchmark-checksum
+          --parallel 2 --no-tests=error --output-on-failure
+          --output-junit ctest.xml
+
+      - name: Test benchmark portability owners
+        if: matrix.sanitizers == 'OFF' && inputs.benchmark
+        run: >-
+          ctest --test-dir build -L benchmark-portability
+          --parallel 2 --no-tests=error --output-on-failure
+          --output-junit benchmark-portability.xml
 
       - name: Test with ASan and UBSan
         if: matrix.sanitizers == 'ON'
@@ -239,25 +387,42 @@ jobs:
           UBSAN_OPTIONS: halt_on_error=1:print_stacktrace=1
         run: >-
           ctest --test-dir build
-          -L sanitizer-runtime
+          -L sanitizer-smoke
           --no-tests=error
+          --output-junit ctest.xml
           --output-on-failure
 
       - name: Check first-party C++ formatting
         if: matrix.sanitizers == 'OFF'
-        run: |
-          git ls-files -z -- \
-            'include/csv2/detail/*.hpp' \
-            'include/csv2/errors.hpp' \
-            'include/csv2/parameters.hpp' \
-            'include/csv2/reader.hpp' \
-            'include/csv2/writer.hpp' \
-            'benchmark/common_driver.cpp' \
-            'benchmark/main.cpp' \
-            'test/config.cpp' \
-            'test/config_fallback.cpp' \
-            'test/fuzz_reader.cpp' \
-            'test/main.cpp' \
-            'test/mmap_path.cpp' \
-            'test/standard_cxx*.cpp' | \
-            xargs -0 clang-format-18 --dry-run --Werror
+        run: CLANG_FORMAT=clang-format-18 ./clang-format.bash --check
+
+      - name: Upload CTest results
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: linux-${{ matrix.artifact }}-ctest
+          path: |
+            build/ctest.xml
+            build/benchmark-portability.xml
+          if-no-files-found: error
+
+      - name: Show compiler cache statistics
+        if: always()
+        run: ccache --show-stats
+
+      - name: Save compiler cache
+        if: >-
+          success() &&
+          steps.ccache-restore.outputs.cache-hit != 'true' &&
+          (
+            github.event_name == 'push' ||
+            github.event_name == 'workflow_dispatch' ||
+            (
+              github.event_name == 'pull_request' &&
+              github.event.pull_request.head.repo.full_name == github.repository
+            )
+          )
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .ccache
+          key: csv2-ccache-v2-linux-${{ matrix.artifact }}-${{ github.sha }}

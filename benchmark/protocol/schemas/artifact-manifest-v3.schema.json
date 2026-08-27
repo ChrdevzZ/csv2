@@ -1,0 +1,166 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "artifact-manifest-v3.schema.json",
+  "title": "CSV2 benchmark artifact manifest v3",
+  "type": "object",
+  "required": ["schema", "kind", "report", "inputs"],
+  "properties": {
+    "schema": {"const": "csv2-artifact-manifest-v3"},
+    "kind": {"enum": ["comparison", "fixed-metrics", "evidence-bundle"]},
+    "report": {"$ref": "#/$defs/artifact"},
+    "inputs": {"type": "object"}
+  },
+  "additionalProperties": false,
+  "oneOf": [
+    {
+      "properties": {
+        "kind": {"const": "comparison"},
+        "inputs": {"$ref": "#/$defs/comparison_inputs"}
+      }
+    },
+    {
+      "properties": {
+        "kind": {"const": "fixed-metrics"},
+        "inputs": {"$ref": "#/$defs/fixed_metrics_inputs"}
+      }
+    },
+    {
+      "properties": {
+        "kind": {"const": "evidence-bundle"},
+        "inputs": {"$ref": "#/$defs/evidence_bundle_inputs"}
+      }
+    }
+  ],
+  "$defs": {
+    "artifact": {
+      "type": "object",
+      "required": ["path", "size", "sha256", "mtime_ns"],
+      "properties": {
+        "path": {"type": "string", "minLength": 1},
+        "size": {"type": "integer", "minimum": 0},
+        "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "mtime_ns": {"type": "integer", "minimum": 0}
+      },
+      "additionalProperties": false
+    },
+    "revision_artifact": {
+      "type": "object",
+      "required": ["path", "size", "sha256", "mtime_ns", "revision"],
+      "properties": {
+        "path": {"type": "string", "minLength": 1},
+        "size": {"type": "integer", "minimum": 0},
+        "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "mtime_ns": {"type": "integer", "minimum": 0},
+        "revision": {"type": "string", "minLength": 1}
+      },
+      "additionalProperties": false
+    },
+    "source_bundle": {
+      "type": "object",
+      "required": ["kind", "root", "revision", "sha256", "files"],
+      "properties": {
+        "kind": {"const": "source-bundle"},
+        "root": {"type": "string", "minLength": 1},
+        "revision": {"type": "string", "minLength": 1},
+        "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "files": {
+          "type": "array",
+          "minItems": 1,
+          "items": {"$ref": "#/$defs/artifact"}
+        }
+      },
+      "additionalProperties": false
+    },
+    "nullable_digest": {
+      "oneOf": [
+        {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        {"type": "null"}
+      ]
+    },
+    "comparison_inputs": {
+      "type": "object",
+      "required": ["baseline", "candidate", "datasets", "builds", "machine_profile"],
+      "properties": {
+        "baseline": {"$ref": "#/$defs/revision_artifact"},
+        "candidate": {"$ref": "#/$defs/revision_artifact"},
+        "datasets": {
+          "type": "array",
+          "minItems": 1,
+          "items": {"$ref": "#/$defs/artifact"}
+        },
+        "builds": {
+          "type": "object",
+          "required": ["baseline", "candidate"],
+          "properties": {
+            "baseline": {"$ref": "#/$defs/nullable_digest"},
+            "candidate": {"$ref": "#/$defs/nullable_digest"}
+          },
+          "additionalProperties": false
+        },
+        "machine_profile": {
+          "oneOf": [{"$ref": "#/$defs/artifact"}, {"type": "null"}]
+        }
+      },
+      "additionalProperties": false
+    },
+    "fixed_metrics_artifacts": {
+      "type": "object",
+      "required": ["collector", "executable", "allocation_executable", "dataset"],
+      "properties": {
+        "collector": {"$ref": "#/$defs/source_bundle"},
+        "executable": {"$ref": "#/$defs/revision_artifact"},
+        "allocation_executable": {"$ref": "#/$defs/revision_artifact"},
+        "dataset": {"$ref": "#/$defs/artifact"},
+        "compiler_executable": {"$ref": "#/$defs/artifact"},
+        "compile_commands": {"$ref": "#/$defs/artifact"}
+      },
+      "dependentRequired": {
+        "compiler_executable": ["compile_commands"],
+        "compile_commands": ["compiler_executable"]
+      },
+      "additionalProperties": false
+    },
+    "fixed_metrics_inputs": {
+      "type": "object",
+      "required": ["artifacts", "build", "machine_profile"],
+      "properties": {
+        "artifacts": {"$ref": "#/$defs/fixed_metrics_artifacts"},
+        "build": {"$ref": "#/$defs/nullable_digest"},
+        "machine_profile": {
+          "oneOf": [{"$ref": "#/$defs/artifact"}, {"type": "null"}]
+        }
+      },
+      "additionalProperties": false,
+      "oneOf": [
+        {"properties": {"build": {"type": "null"}}},
+        {
+          "properties": {
+            "build": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+            "artifacts": {
+              "required": ["compiler_executable", "compile_commands"]
+            }
+          }
+        }
+      ]
+    },
+    "evidence_bundle_inputs": {
+      "type": "object",
+      "required": [
+        "calibration_report", "calibration_manifest", "comparison_report",
+        "comparison_manifest", "fixed_metrics_report", "fixed_metrics_manifest",
+        "corpus_manifest", "finalizer"
+      ],
+      "properties": {
+        "calibration_report": {"$ref": "#/$defs/artifact"},
+        "calibration_manifest": {"$ref": "#/$defs/artifact"},
+        "comparison_report": {"$ref": "#/$defs/artifact"},
+        "comparison_manifest": {"$ref": "#/$defs/artifact"},
+        "fixed_metrics_report": {"$ref": "#/$defs/artifact"},
+        "fixed_metrics_manifest": {"$ref": "#/$defs/artifact"},
+        "corpus_manifest": {"$ref": "#/$defs/artifact"},
+        "finalizer": {"$ref": "#/$defs/source_bundle"}
+      },
+      "additionalProperties": false
+    }
+  }
+}
