@@ -90,7 +90,11 @@ if(CSV2_BUILD_TESTS OR CSV2_BUILD_FUZZERS)
 endif()
 
 if(CSV2_BUILD_BENCHMARKS)
-  add_subdirectory(benchmark)
+  if(CSV2_BENCHMARKS_EXCLUDE_FROM_ALL)
+    add_subdirectory(benchmark EXCLUDE_FROM_ALL)
+  else()
+    add_subdirectory(benchmark)
+  endif()
 endif()
 
 if(CSV2_IS_TOP_LEVEL)

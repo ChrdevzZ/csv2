@@ -121,7 +121,13 @@ closed for every other backend and if the configured toolchain cannot provide
 a required canonical runtime dimension. Compile-only contracts and Catch2 are
 intentionally outside this slice. `sanitizer-smoke` is the focused CI label;
 the existing `sanitizer-runtime` label remains the preserved full
-cross-platform sanitizer suite.
+cross-platform sanitizer suite. Linux CI compares the generated canonical
+target manifest, [`cmake/sanitizer-smoke-linux.tsv`](cmake/sanitizer-smoke-linux.tsv),
+and the actual labeled CTest JSON. The committed contract fixes every stable
+test name to its executable target, so missing, extra, renamed, rebound, or
+duplicate entries fail without relying on a detached test-count total. Update
+that manifest explicitly when an intentional Linux quick inventory change is
+reviewed.
 
 ## Profiles
 
@@ -148,6 +154,14 @@ the compiler must advertise a standard before that standard is added.
 Python 3.10 runs the vendor-tool safety tests, benchmark checks, and performance
 pipeline. Quick C++ runtime and compile targets can still build without it;
 full/perf profiles and CI require it through `CSV2_REQUIRE_PYTHON_AUDITS`.
+
+The always-run CI classifier assigns runtime changes to the cross-platform
+quick owners and the exact-head full owner. Benchmark-only changes can call the
+same platform workflows with runtime compilation disabled, while sanitizer
+rows run only for quick-owned changes. Unknown paths select all owners. Git
+renames are compared as delete/add pairs, PRs use merge-base semantics, pushes
+use before/after semantics, and content-bearing fixture/corpus directories are
+never treated as documentation based only on a filename extension.
 
 Tests and fuzzers are independent:
 

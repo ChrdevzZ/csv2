@@ -34,8 +34,12 @@ csv2_set_test_standard(csv2_minitest_registry_capacity 11)
 csv2_enable_test_options(csv2_minitest_registry_capacity)
 add_test(NAME csv2.minitest.registry_capacity
   COMMAND csv2_minitest_registry_capacity)
+set(csv2_minitest_capacity_labels
+  minitest sanitizer-runtime verification)
+csv2_append_sanitizer_smoke_label(csv2_minitest_registry_capacity
+  csv2_minitest_capacity_labels)
 set_tests_properties(csv2.minitest.registry_capacity PROPERTIES
-  LABELS "minitest;sanitizer-runtime;sanitizer-smoke;verification" TIMEOUT 10)
+  LABELS "${csv2_minitest_capacity_labels}" TIMEOUT 10)
 
 set(csv2_minitest_duplicate_source
   "${CMAKE_CURRENT_BINARY_DIR}/minitest_registry_duplicate.cpp")
@@ -58,5 +62,9 @@ csv2_set_test_standard(csv2_minitest_registry_duplicate 11)
 csv2_enable_test_options(csv2_minitest_registry_duplicate)
 add_test(NAME csv2.minitest.registry_duplicate
   COMMAND csv2_minitest_registry_duplicate)
+set(csv2_minitest_duplicate_labels
+  minitest sanitizer-runtime verification)
+csv2_append_sanitizer_smoke_label(csv2_minitest_registry_duplicate
+  csv2_minitest_duplicate_labels)
 set_tests_properties(csv2.minitest.registry_duplicate PROPERTIES
-  LABELS "minitest;sanitizer-runtime;sanitizer-smoke;verification" TIMEOUT 10)
+  LABELS "${csv2_minitest_duplicate_labels}" TIMEOUT 10)

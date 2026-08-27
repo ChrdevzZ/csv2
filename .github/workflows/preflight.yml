@@ -1,0 +1,58 @@
+name: CI preflight
+
+on:
+  workflow_call:
+    inputs:
+      base:
+        required: true
+        type: string
+      head:
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    name: Preflight / workflows and CI policy
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Check out repository history
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Check patch whitespace
+        env:
+          BASE_SHA: ${{ inputs.base }}
+          EVENT_NAME: ${{ github.event_name }}
+          HEAD_SHA: ${{ inputs.head }}
+        run: |
+          comparison="$BASE_SHA..$HEAD_SHA"
+          if [[ "$EVENT_NAME" == 'pull_request' || "$EVENT_NAME" == 'merge_group' ]]; then
+            comparison="$BASE_SHA...$HEAD_SHA"
+          fi
+          git diff --no-renames --check "$comparison"
+
+      - name: Run CI policy tests
+        run: |
+          python3 -m unittest discover -s tools/ci -p 'test_*.py'
+          python3 -m unittest benchmark.tools.tests.test_case_manifest
+          python3 tools/vendor/test_update_verification_dependencies.py
+
+      - name: Validate GitHub Actions workflows
+        run: |
+          set -euo pipefail
+          version=1.7.12
+          archive="actionlint_${version}_linux_amd64.tar.gz"
+          curl --fail --silent --show-error --location \
+            --output "$archive" \
+            "https://github.com/rhysd/actionlint/releases/download/v${version}/${archive}"
+          printf '%s  %s\n' \
+            '8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8' \
+            "$archive" | sha256sum --check -
+          tar --no-same-owner -xzf "$archive" actionlint
+          ./actionlint -color

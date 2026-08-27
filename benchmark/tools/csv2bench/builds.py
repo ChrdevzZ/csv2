@@ -906,6 +906,236 @@ def _file_api_reply(build_root: Path) -> tuple[dict[str, object], dict[str, obje
     return codemodel, toolchains
 
 
+CURRENT_FRONTEND_SOURCES = frozenset(
+    {
+        "benchmark/current/main.cpp",
+        "benchmark/current/support/allocation.cpp",
+    }
+)
+CURRENT_CORE_SOURCES = frozenset(
+    {
+        "benchmark/current/context.cpp",
+        "benchmark/current/registry.cpp",
+        "benchmark/current/support/output_buffer.cpp",
+        "benchmark/current/support/result.cpp",
+        "benchmark/current/kernels/source.cpp",
+        "benchmark/current/kernels/traversal.cpp",
+        "benchmark/current/kernels/extraction.cpp",
+        "benchmark/current/kernels/validation.cpp",
+        "benchmark/current/kernels/conversion.cpp",
+        "benchmark/current/kernels/ranges.cpp",
+        "benchmark/current/kernels/index.cpp",
+        "benchmark/current/kernels/writer.cpp",
+    }
+)
+CURRENT_BUILD_CONFIG_SOURCES = frozenset({"benchmark/current/build_config.cpp"})
+
+
+def _has_define(defines: set[str], name: str) -> bool:
+    return any(value == name or value.startswith(f"{name}=") for value in defines)
+
+
+def _expected_string_defines(name: str, value: str) -> set[str]:
+    return {f'{name}="{value}"', f'{name}=\\"{value}\\"'}
+
+
+def validate_current_compile_topology(
+    *,
+    owners: dict[str, dict[str, object]],
+    target_closures: dict[str, list[str]],
+    source_root: Path,
+    revision: str,
+    compiler_flags: Sequence[str],
+) -> None:
+    """Fail closed unless current benchmark compile ownership is exact."""
+
+    expected_owners = {
+        "csv2_benchmark",
+        "csv2_benchmark_allocations",
+        "csv2_benchmark_core",
+        "csv2_benchmark_build_config",
+        "csv2_benchmark_observer_audit",
+    }
+    if set(owners) != expected_owners:
+        raise RuntimeError("current benchmark compile owner set is not exact")
+
+    expected_closures = {
+        "csv2_benchmark": {
+            "csv2_benchmark",
+            "csv2_benchmark_core",
+            "csv2_benchmark_build_config",
+        },
+        "csv2_benchmark_allocations": {
+            "csv2_benchmark_allocations",
+            "csv2_benchmark_core",
+            "csv2_benchmark_build_config",
+        },
+        "csv2_benchmark_observer_audit": {"csv2_benchmark_observer_audit"},
+    }
+    if set(target_closures) != set(expected_closures):
+        raise RuntimeError("current benchmark compile closure set is not exact")
+    for target_name, expected in expected_closures.items():
+        actual_values = target_closures[target_name]
+        if len(actual_values) != len(set(actual_values)) or set(actual_values) != expected:
+            raise RuntimeError(f"{target_name} compile closure is not exact")
+
+    expected_sources = {
+        "csv2_benchmark": CURRENT_FRONTEND_SOURCES,
+        "csv2_benchmark_allocations": CURRENT_FRONTEND_SOURCES,
+        "csv2_benchmark_core": CURRENT_CORE_SOURCES,
+        "csv2_benchmark_build_config": CURRENT_BUILD_CONFIG_SOURCES,
+        "csv2_benchmark_observer_audit": (
+            CURRENT_FRONTEND_SOURCES | CURRENT_CORE_SOURCES | CURRENT_BUILD_CONFIG_SOURCES
+        ),
+    }
+    expected_types = {
+        "csv2_benchmark": "EXECUTABLE",
+        "csv2_benchmark_allocations": "EXECUTABLE",
+        "csv2_benchmark_core": "OBJECT_LIBRARY",
+        "csv2_benchmark_build_config": "OBJECT_LIBRARY",
+        "csv2_benchmark_observer_audit": "EXECUTABLE",
+    }
+    public_include = str((source_root / "include").resolve(strict=False))
+    default_input = (
+        source_root / "benchmark" / "datasets" / "fixtures" / "short_unquoted.csv"
+    ).as_posix()
+    revision_definitions = _expected_string_defines("CSV2_BENCHMARK_REVISION", revision)
+    input_definitions = _expected_string_defines(
+        "CSV2_BENCHMARK_DEFAULT_INPUT", default_input
+    )
+    public_include_owners = expected_owners - {"csv2_benchmark_build_config"}
+
+    for owner_name in sorted(expected_owners):
+        owner = owners[owner_name]
+        if owner.get("type") != expected_types[owner_name]:
+            raise RuntimeError(f"{owner_name} has the wrong CMake target type")
+        sources = owner.get("sources")
+        if not isinstance(sources, set) or sources != set(expected_sources[owner_name]):
+            raise RuntimeError(f"{owner_name} compile source set is not exact")
+        groups = owner.get("groups")
+        if not isinstance(groups, list) or not groups:
+            raise RuntimeError(f"{owner_name} has no compile groups")
+        for group in groups:
+            if not isinstance(group, dict):
+                raise RuntimeError(f"{owner_name} has a malformed compile group")
+            fragments = group.get("fragments")
+            defines = group.get("defines")
+            includes = group.get("includes")
+            standard = group.get("standard")
+            if (
+                not isinstance(fragments, str)
+                or not isinstance(defines, set)
+                or not isinstance(includes, set)
+                or not isinstance(standard, str)
+            ):
+                raise RuntimeError(f"{owner_name} has a malformed compile group")
+            fragment_tokens = shlex.split(fragments, posix=os.name != "nt")
+            missing_flags = [flag for flag in compiler_flags if flag not in fragment_tokens]
+            if missing_flags:
+                raise RuntimeError(
+                    f"{owner_name} lacks requested compiler flags: "
+                    + ", ".join(missing_flags)
+                )
+            if "NDEBUG" not in fragments:
+                raise RuntimeError(f"{owner_name} lacks NDEBUG")
+            if not any(flag in fragments for flag in ("-O2", "-O3", "/O2")):
+                raise RuntimeError(f"{owner_name} lacks an optimized compile flag")
+            if standard not in {"20", "23", "26"} or not any(
+                flag in fragments
+                for flag in (
+                    "-std=c++20",
+                    "-std=c++23",
+                    "-std=c++2b",
+                    "-std=c++latest",
+                    "-std:c++20",
+                    "-std:c++latest",
+                    "/std:c++20",
+                    "/std:c++latest",
+                )
+            ):
+                raise RuntimeError(f"{owner_name} lacks the required modern C++ mode")
+            if owner_name in public_include_owners and public_include not in includes:
+                raise RuntimeError(
+                    f"{owner_name} does not compile against the exported include root"
+                )
+
+            forbidden = set()
+            required = set()
+            required_exact: list[tuple[str, set[str]]] = []
+            if owner_name == "csv2_benchmark":
+                required.add("CSV2_HAS_MMAP")
+                forbidden.update(
+                    {
+                        "CSV2_BENCHMARK_ENABLE_ALLOCATION_TRACKING",
+                        "CSV2_BENCHMARK_OBSERVER_AUDIT",
+                        "CSV2_BENCHMARK_REVISION",
+                        "CSV2_BENCHMARK_DEFAULT_INPUT",
+                    }
+                )
+            elif owner_name == "csv2_benchmark_allocations":
+                required.update(
+                    {"CSV2_HAS_MMAP", "CSV2_BENCHMARK_ENABLE_ALLOCATION_TRACKING"}
+                )
+                required_exact.append(
+                    (
+                        "allocation tracking",
+                        {"CSV2_BENCHMARK_ENABLE_ALLOCATION_TRACKING=1"},
+                    )
+                )
+                forbidden.update(
+                    {
+                        "CSV2_BENCHMARK_OBSERVER_AUDIT",
+                        "CSV2_BENCHMARK_REVISION",
+                        "CSV2_BENCHMARK_DEFAULT_INPUT",
+                    }
+                )
+            elif owner_name == "csv2_benchmark_core":
+                required.add("CSV2_HAS_MMAP")
+                forbidden.update(
+                    {
+                        "CSV2_BENCHMARK_ENABLE_ALLOCATION_TRACKING",
+                        "CSV2_BENCHMARK_OBSERVER_AUDIT",
+                        "CSV2_BENCHMARK_REVISION",
+                        "CSV2_BENCHMARK_DEFAULT_INPUT",
+                    }
+                )
+            elif owner_name == "csv2_benchmark_build_config":
+                required_exact.extend(
+                    (
+                        ("revision define", revision_definitions),
+                        ("default-input define", input_definitions),
+                    )
+                )
+                forbidden.update(
+                    {
+                        "CSV2_HAS_MMAP",
+                        "CSV2_BENCHMARK_ENABLE_ALLOCATION_TRACKING",
+                        "CSV2_BENCHMARK_OBSERVER_AUDIT",
+                    }
+                )
+            else:
+                required.update({"CSV2_HAS_MMAP", "CSV2_BENCHMARK_OBSERVER_AUDIT"})
+                required_exact.extend(
+                    (
+                        ("observer define", {"CSV2_BENCHMARK_OBSERVER_AUDIT=1"}),
+                        ("revision define", revision_definitions),
+                        ("default-input define", input_definitions),
+                    )
+                )
+                forbidden.add("CSV2_BENCHMARK_ENABLE_ALLOCATION_TRACKING")
+
+            for name in sorted(required):
+                if not _has_define(defines, name):
+                    label = "allocation tracking" if "ALLOCATION_TRACKING" in name else name
+                    raise RuntimeError(f"{owner_name} lacks required {label} define")
+            for label, accepted in required_exact:
+                if not (defines & accepted):
+                    raise RuntimeError(f"{owner_name} lacks exact {label}")
+            for name in sorted(forbidden):
+                if _has_define(defines, name):
+                    raise RuntimeError(f"{owner_name} has forbidden define {name}")
+
+
 def audit_current_codemodel(
     source_root: Path,
     build_root: Path,
@@ -921,7 +1151,9 @@ def audit_current_codemodel(
         if len(configurations) != 1:
             raise RuntimeError("CMake codemodel must contain one configuration")
         configuration = configurations[0]
-        targets = {target["name"]: target for target in configuration["targets"]}
+        target_references = configuration["targets"]
+        targets = {target["name"]: target for target in target_references}
+        target_ids = {target["id"]: target for target in target_references}
         compiler_paths = [
             toolchain["compiler"]["path"]
             for toolchain in toolchains["toolchains"]
@@ -933,92 +1165,157 @@ def audit_current_codemodel(
         raise RuntimeError("CMake File API compiler differs from the audited compiler")
 
     reply_root = build_root / ".cmake" / "api" / "v1" / "reply"
-    summaries: dict[str, object] = {}
-    reference_sources: set[str] | None = None
-    for target_name in ("csv2_benchmark", "csv2_benchmark_allocations"):
+    loaded_targets: dict[str, dict[str, object]] = {}
+
+    def load_target(reference: dict[str, object]) -> dict[str, object]:
+        identifier = str(reference["id"])
+        if identifier not in loaded_targets:
+            try:
+                loaded_targets[identifier] = json.loads(
+                    (reply_root / str(reference["jsonFile"])).read_text(
+                        encoding="utf-8"
+                    )
+                )
+            except (OSError, json.JSONDecodeError, KeyError, TypeError) as error:
+                raise RuntimeError(
+                    f"CMake target reply is malformed: {reference.get('name', identifier)}"
+                ) from error
+        return loaded_targets[identifier]
+
+    def compile_closure(
+        root_reference: dict[str, object],
+    ) -> list[tuple[dict[str, object], dict[str, object]]]:
+        result: list[tuple[dict[str, object], dict[str, object]]] = []
+        pending = [root_reference]
+        visited: set[str] = set()
+        while pending:
+            reference = pending.pop()
+            identifier = str(reference["id"])
+            if identifier in visited:
+                continue
+            visited.add(identifier)
+            target = load_target(reference)
+            result.append((reference, target))
+            for dependency in target.get("dependencies", []):
+                dependency_reference = target_ids.get(dependency.get("id"))
+                if dependency_reference is None:
+                    raise RuntimeError(
+                        f"CMake codemodel lacks dependency {dependency.get('id')}"
+                    )
+                dependency_target = load_target(dependency_reference)
+                if dependency_target.get("type") == "OBJECT_LIBRARY":
+                    pending.append(dependency_reference)
+        return result
+
+    resolved_source_root = source_root.resolve(strict=True)
+
+    def compile_owner_profile(
+        reference: dict[str, object], target: dict[str, object]
+    ) -> dict[str, object]:
+        owner = str(reference["name"])
+        raw_sources = target.get("sources", [])
+        raw_groups = target.get("compileGroups", [])
+        if not isinstance(raw_sources, list) or not isinstance(raw_groups, list):
+            raise RuntimeError(f"CMake target {owner} has malformed compile metadata")
+        source_paths: set[str] = set()
+        for entry in raw_sources:
+            if not isinstance(entry, dict) or "compileGroupIndex" not in entry:
+                continue
+            try:
+                source_path = Path(str(entry["path"]))
+                if not source_path.is_absolute():
+                    source_path = resolved_source_root / source_path
+                relative = (
+                    source_path.resolve(strict=True)
+                    .relative_to(resolved_source_root)
+                    .as_posix()
+                )
+            except (KeyError, OSError, ValueError) as error:
+                raise RuntimeError(
+                    f"{owner} source escapes the immutable source tree: {entry.get('path')}"
+                ) from error
+            if relative in source_paths:
+                raise RuntimeError(f"{owner} compiles source more than once: {relative}")
+            source_paths.add(relative)
+        groups: list[dict[str, object]] = []
+        for group in raw_groups:
+            try:
+                fragments = " ".join(
+                    str(fragment["fragment"])
+                    for fragment in group.get("compileCommandFragments", [])
+                )
+                defines = {
+                    str(define["define"]) for define in group.get("defines", [])
+                }
+                includes = {
+                    str(Path(str(include["path"])).resolve(strict=True))
+                    for include in group.get("includes", [])
+                }
+                standard = str(group.get("languageStandard", {}).get("standard", ""))
+            except (KeyError, OSError, TypeError) as error:
+                raise RuntimeError(f"CMake target {owner} has a malformed compile group") from error
+            groups.append(
+                {
+                    "fragments": fragments,
+                    "defines": defines,
+                    "includes": includes,
+                    "standard": standard,
+                }
+            )
+        return {"type": target.get("type"), "sources": source_paths, "groups": groups}
+
+    owner_profiles: dict[str, dict[str, object]] = {}
+    target_closures: dict[str, list[str]] = {}
+    root_replies: dict[str, dict[str, object]] = {}
+    for target_name in (
+        "csv2_benchmark",
+        "csv2_benchmark_allocations",
+        "csv2_benchmark_observer_audit",
+    ):
         target_reference = targets.get(target_name)
         if target_reference is None:
             raise RuntimeError(f"CMake codemodel is missing target {target_name}")
+        target = load_target(target_reference)
+        root_replies[target_name] = target
+        closure = compile_closure(target_reference)
+        target_closures[target_name] = [str(reference["name"]) for reference, _ in closure]
+        for reference, compiled_target in closure:
+            owner = str(reference["name"])
+            profile = compile_owner_profile(reference, compiled_target)
+            if owner in owner_profiles and owner_profiles[owner] != profile:
+                raise RuntimeError(f"CMake target {owner} has inconsistent compile metadata")
+            owner_profiles[owner] = profile
+
+    validate_current_compile_topology(
+        owners=owner_profiles,
+        target_closures=target_closures,
+        source_root=resolved_source_root,
+        revision=revision,
+        compiler_flags=compiler_flags,
+    )
+
+    summaries: dict[str, object] = {}
+    for target_name in ("csv2_benchmark", "csv2_benchmark_allocations"):
+        target = root_replies[target_name]
         try:
-            target = json.loads(
-                (reply_root / target_reference["jsonFile"]).read_text(encoding="utf-8")
-            )
-            source_entries = target["sources"]
-            compile_groups = target["compileGroups"]
             artifacts_values = target["artifacts"]
-        except (OSError, json.JSONDecodeError, KeyError, TypeError) as error:
+        except (KeyError, TypeError) as error:
             raise RuntimeError(f"CMake target reply is malformed: {target_name}") from error
-        source_paths = set()
-        for entry in source_entries:
-            if "compileGroupIndex" not in entry:
-                continue
-            source_path = Path(entry["path"])
-            if not source_path.is_absolute():
-                source_path = source_root / source_path
-            try:
-                relative = source_path.resolve(strict=True).relative_to(source_root).as_posix()
-            except ValueError as error:
-                raise RuntimeError(
-                    f"{target_name} source escapes the immutable source tree: {source_path}"
-                ) from error
-            source_paths.add(relative)
-        if not source_paths:
-            raise RuntimeError(f"{target_name} has no compiled source files")
-        if reference_sources is None:
-            reference_sources = source_paths
-        elif source_paths != reference_sources:
-            raise RuntimeError("current benchmark targets compile different source sets")
-        if not compile_groups:
-            raise RuntimeError(f"{target_name} has no compile groups")
-        fragments = " ".join(
-            fragment["fragment"]
-            for group in compile_groups
-            for fragment in group.get("compileCommandFragments", [])
+        closure_profiles = {
+            name: owner_profiles[name] for name in target_closures[target_name]
+        }
+        source_paths = set().union(
+            *(profile["sources"] for profile in closure_profiles.values())
         )
-        fragment_tokens = shlex.split(fragments, posix=os.name != "nt")
-        missing_compiler_flags = [
-            flag for flag in compiler_flags if flag not in fragment_tokens
+        groups = [
+            group
+            for profile in closure_profiles.values()
+            for group in profile["groups"]
         ]
-        if missing_compiler_flags:
-            raise RuntimeError(
-                f"{target_name} lacks requested compiler flags: "
-                + ", ".join(missing_compiler_flags)
-            )
-        defines = {
-            define["define"] for group in compile_groups for define in group.get("defines", [])
-        }
-        include_paths = {
-            str(Path(include["path"]).resolve(strict=True))
-            for group in compile_groups
-            for include in group.get("includes", [])
-        }
-        revision_definitions = {
-            f'CSV2_BENCHMARK_REVISION=\\"{revision}\\"',
-            f'CSV2_BENCHMARK_REVISION="{revision}"',
-        }
-        if "NDEBUG" not in fragments or not (defines & revision_definitions):
-            raise RuntimeError(f"{target_name} lacks NDEBUG or the exact revision define")
-        if not any(flag in fragments for flag in ("-O2", "-O3", "/O2")):
-            raise RuntimeError(f"{target_name} lacks an optimized compile flag")
-        language_standards = {
-            str(group.get("languageStandard", {}).get("standard", ""))
-            for group in compile_groups
-        }
-        if not (
-            language_standards & {"20", "23", "26"}
-            and any(
-                flag in fragments
-                for flag in (
-                    "-std=c++20", "-std=c++23", "-std=c++2b", "-std=c++latest",
-                    "-std:c++20", "-std:c++latest",
-                    "/std:c++20", "/std:c++latest",
-                )
-            )
-        ):
-            raise RuntimeError(f"{target_name} lacks the required modern C++ mode")
-        public_include = str((source_root / "include").resolve(strict=True))
-        if public_include not in include_paths:
-            raise RuntimeError(f"{target_name} does not compile against the exported include root")
+        fragments = " ".join(str(group["fragments"]) for group in groups)
+        defines = set().union(*(group["defines"] for group in groups))
+        include_paths = set().union(*(group["includes"] for group in groups))
+        language_standards = {str(group["standard"]) for group in groups}
         executable_artifacts = [
             value
             for value in artifacts_values
@@ -1033,6 +1330,15 @@ def audit_current_codemodel(
             "language_standards": sorted(language_standards),
             "defines": sorted(defines),
             "includes": sorted(include_paths),
+            "object_libraries": sorted(
+                name
+                for name, profile in closure_profiles.items()
+                if profile["type"] == "OBJECT_LIBRARY"
+            ),
+            "compile_owners": {
+                name: sorted(profile["sources"])
+                for name, profile in sorted(closure_profiles.items())
+            },
             "artifact": str(artifact_path),
         }
 

@@ -2,6 +2,8 @@ include_guard(GLOBAL)
 
 option(CSV2_BUILD_TESTS "Build csv2 tests and enable their CTest entries" OFF)
 option(CSV2_BUILD_BENCHMARKS "Build csv2 benchmarks" OFF)
+option(CSV2_BENCHMARKS_EXCLUDE_FROM_ALL
+  "Configure benchmark targets but exclude them from the default all target" OFF)
 option(CSV2_BUILD_FUZZERS "Build the Clang libFuzzer targets" OFF)
 option(CSV2_BUILD_BENCHMARK_CHECKS
   "Register deterministic benchmark protocol and checksum CTest entries" OFF)

@@ -16,7 +16,169 @@ from csv2bench import BUILD_SCHEMA, artifacts, builds
 REPOSITORY = _support.BENCHMARK_DIR.parent
 
 
+def valid_current_compile_topology() -> tuple[
+    dict[str, dict[str, object]], dict[str, list[str]], Path, str, tuple[str, ...]
+]:
+    source_root = Path("/csv2-source")
+    revision = "a" * 40
+    compiler_flags = ("-O3", "-DNDEBUG")
+    public_include = str(source_root / "include")
+    common_defines = {"BENCHMARK_STATIC_DEFINE", "CSV2_HAS_MMAP=1"}
+
+    def profile(
+        target_type: str,
+        sources: set[str],
+        defines: set[str],
+        *,
+        include_public: bool = True,
+    ) -> dict[str, object]:
+        includes = {"/csv2-source/benchmark/current"}
+        if include_public:
+            includes.add(public_include)
+        return {
+            "type": target_type,
+            "sources": sources,
+            "groups": [
+                {
+                    "fragments": "-O3 -DNDEBUG -std=c++23 -Wall",
+                    "defines": defines,
+                    "includes": includes,
+                    "standard": "23",
+                }
+            ],
+        }
+
+    frontend_sources = set(builds.CURRENT_FRONTEND_SOURCES)
+    core_sources = set(builds.CURRENT_CORE_SOURCES)
+    config_sources = set(builds.CURRENT_BUILD_CONFIG_SOURCES)
+    all_sources = frontend_sources | core_sources | config_sources
+    revision_define = f'CSV2_BENCHMARK_REVISION="{revision}"'
+    input_define = (
+        "CSV2_BENCHMARK_DEFAULT_INPUT="
+        f'"{(source_root / "benchmark/datasets/fixtures/short_unquoted.csv").as_posix()}"'
+    )
+    owners = {
+        "csv2_benchmark": profile("EXECUTABLE", frontend_sources, set(common_defines)),
+        "csv2_benchmark_allocations": profile(
+            "EXECUTABLE",
+            frontend_sources,
+            common_defines | {"CSV2_BENCHMARK_ENABLE_ALLOCATION_TRACKING=1"},
+        ),
+        "csv2_benchmark_core": profile("OBJECT_LIBRARY", core_sources, set(common_defines)),
+        "csv2_benchmark_build_config": profile(
+            "OBJECT_LIBRARY",
+            config_sources,
+            {revision_define, input_define},
+            include_public=False,
+        ),
+        "csv2_benchmark_observer_audit": profile(
+            "EXECUTABLE",
+            all_sources,
+            common_defines
+            | {
+                "CSV2_BENCHMARK_OBSERVER_AUDIT=1",
+                revision_define,
+                input_define,
+            },
+        ),
+    }
+    closures = {
+        "csv2_benchmark": [
+            "csv2_benchmark",
+            "csv2_benchmark_core",
+            "csv2_benchmark_build_config",
+        ],
+        "csv2_benchmark_allocations": [
+            "csv2_benchmark_allocations",
+            "csv2_benchmark_core",
+            "csv2_benchmark_build_config",
+        ],
+        "csv2_benchmark_observer_audit": ["csv2_benchmark_observer_audit"],
+    }
+    return owners, closures, source_root, revision, compiler_flags
+
+
 class BuildTests(unittest.TestCase):
+    def validate_current_topology(
+        self,
+        owners: dict[str, dict[str, object]],
+        closures: dict[str, list[str]],
+        source_root: Path,
+        revision: str,
+        compiler_flags: tuple[str, ...],
+    ) -> None:
+        builds.validate_current_compile_topology(
+            owners=owners,
+            target_closures=closures,
+            source_root=source_root,
+            revision=revision,
+            compiler_flags=compiler_flags,
+        )
+
+    def test_current_compile_topology_accepts_exact_macro_ownership(self) -> None:
+        self.validate_current_topology(*valid_current_compile_topology())
+
+    def test_current_compile_topology_requires_shared_core_dependency(self) -> None:
+        topology = valid_current_compile_topology()
+        topology[1]["csv2_benchmark"].remove("csv2_benchmark_core")
+        with self.assertRaisesRegex(RuntimeError, "compile closure"):
+            self.validate_current_topology(*topology)
+
+    def test_current_compile_topology_rejects_different_core(self) -> None:
+        topology = valid_current_compile_topology()
+        topology[0]["csv2_benchmark_allocations_core"] = copy.deepcopy(
+            topology[0]["csv2_benchmark_core"]
+        )
+        topology[1]["csv2_benchmark_allocations"].remove("csv2_benchmark_core")
+        topology[1]["csv2_benchmark_allocations"].append(
+            "csv2_benchmark_allocations_core"
+        )
+        with self.assertRaisesRegex(RuntimeError, "compile owner set|compile closure"):
+            self.validate_current_topology(*topology)
+
+    def test_current_compile_topology_rejects_allocation_macro_leak(self) -> None:
+        topology = valid_current_compile_topology()
+        topology[0]["csv2_benchmark_core"]["groups"][0]["defines"].add(
+            "CSV2_BENCHMARK_ENABLE_ALLOCATION_TRACKING=1"
+        )
+        with self.assertRaisesRegex(RuntimeError, "forbidden define"):
+            self.validate_current_topology(*topology)
+
+    def test_current_compile_topology_requires_allocation_tracking_macro(self) -> None:
+        topology = valid_current_compile_topology()
+        topology[0]["csv2_benchmark_allocations"]["groups"][0]["defines"].remove(
+            "CSV2_BENCHMARK_ENABLE_ALLOCATION_TRACKING=1"
+        )
+        with self.assertRaisesRegex(RuntimeError, "allocation tracking"):
+            self.validate_current_topology(*topology)
+
+    def test_current_compile_topology_requires_revision_on_build_config_only(self) -> None:
+        topology = valid_current_compile_topology()
+        config_defines = topology[0]["csv2_benchmark_build_config"]["groups"][0][
+            "defines"
+        ]
+        revision_define = next(
+            value for value in config_defines if value.startswith("CSV2_BENCHMARK_REVISION=")
+        )
+        config_defines.remove(revision_define)
+        topology[0]["csv2_benchmark_core"]["groups"][0]["defines"].add(revision_define)
+        with self.assertRaisesRegex(RuntimeError, "revision define|forbidden define"):
+            self.validate_current_topology(*topology)
+
+    def test_current_compile_topology_checks_flags_per_owner(self) -> None:
+        topology = valid_current_compile_topology()
+        topology[0]["csv2_benchmark_build_config"]["groups"][0]["fragments"] = (
+            "-DNDEBUG -std=c++23 -Wall"
+        )
+        with self.assertRaisesRegex(RuntimeError, "requested compiler flags"):
+            self.validate_current_topology(*topology)
+
+    def test_current_compile_topology_requires_independent_observer_target(self) -> None:
+        topology = valid_current_compile_topology()
+        topology[1]["csv2_benchmark_observer_audit"].append("csv2_benchmark_core")
+        with self.assertRaisesRegex(RuntimeError, "compile closure"):
+            self.validate_current_topology(*topology)
+
     def test_current_build_verification_rejects_source_drift(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

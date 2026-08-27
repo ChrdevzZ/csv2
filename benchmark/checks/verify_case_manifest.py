@@ -110,6 +110,11 @@ def main() -> None:
     parser.add_argument("--executable", type=Path, required=True)
     parser.add_argument("--source-root", type=Path, required=True)
     parser.add_argument("--manifest", type=Path, required=True)
+    parser.add_argument(
+        "--registry-only",
+        action="store_true",
+        help="Validate registry and manifest coverage without executing cases",
+    )
     args = parser.parse_args()
 
     executable = args.executable.resolve(strict=True)
@@ -128,11 +133,15 @@ def main() -> None:
             "case manifest contains unknown operations: " + ", ".join(stale)
         )
     for operation in sorted(operations):
-        source, dataset = cases[operation]
+        source, _ = cases[operation]
         if source not in operations[operation]:
             raise RuntimeError(
                 f"stable case source is unsupported for {operation}: {source}"
             )
+    if args.registry_only:
+        return
+    for operation in sorted(operations):
+        source, dataset = cases[operation]
         common = [
             str(executable),
             "--csv2-input",

@@ -1,79 +1,42 @@
 name: Windows
 
 on:
-  push:
-    branches:
-      - main
-      - master
-  pull_request:
-    branches:
-      - main
-      - master
-  merge_group:
-    types:
-      - checks_requested
+  workflow_call:
+    inputs:
+      quick:
+        type: boolean
+        default: true
+      benchmark:
+        type: boolean
+        default: true
   workflow_dispatch:
+    inputs:
+      quick:
+        description: Run core, package, and sanitizer contracts
+        type: boolean
+        default: true
+      benchmark:
+        description: Run MSVC benchmark portability contracts
+        type: boolean
+        default: true
 
 permissions:
   contents: read
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: true
+  group: windows-${{ github.workflow }}-${{ github.event_name }}-${{ github.event_name == 'workflow_dispatch' && github.run_id || github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   test:
+    if: inputs.quick || inputs.benchmark
     name: Windows / ${{ matrix.compiler }}
     runs-on: windows-2025-vs2026
     timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - compiler: MSVC 19.51
-            artifact: msvc1951
-            configuration: Debug
-            toolset: ""
-            benchmarks: "ON"
-            sanitizers: "OFF"
-            assertion_backend: auto
-            sanitizer_runtime: none
-            expected_id: MSVC
-            expected_version: "19.51"
-            install: true
-          - compiler: MSVC 19.51 / ASan
-            artifact: msvc1951-asan
-            configuration: Release
-            toolset: ""
-            benchmarks: "OFF"
-            sanitizers: "ON"
-            assertion_backend: minitest
-            sanitizer_runtime: msvc
-            expected_id: MSVC
-            expected_version: "19.51"
-            install: false
-          - compiler: Clang-CL 22.1
-            artifact: clangcl221
-            configuration: Release
-            toolset: -T ClangCL
-            benchmarks: "OFF"
-            sanitizers: "OFF"
-            assertion_backend: auto
-            sanitizer_runtime: none
-            expected_id: Clang
-            expected_version: "22.1"
-            install: false
-          - compiler: Clang-CL 22.1 / ASan + UBSan
-            artifact: clangcl221-sanitizers
-            configuration: Release
-            toolset: -T ClangCL
-            benchmarks: "OFF"
-            sanitizers: "ON"
-            assertion_backend: minitest
-            sanitizer_runtime: clang
-            expected_id: Clang
-            expected_version: "22.1"
-            install: false
+        include: ${{ fromJSON(inputs.quick && '[{"compiler":"MSVC 19.51","artifact":"msvc1951","configuration":"Debug","toolset":"","benchmark_owner":true,"sanitizers":"OFF","assertion_backend":"auto","sanitizer_runtime":"none","expected_id":"MSVC","expected_version":"19.51","install":true},{"compiler":"MSVC 19.51 / ASan","artifact":"msvc1951-asan","configuration":"Release","toolset":"","benchmark_owner":false,"sanitizers":"ON","assertion_backend":"minitest","sanitizer_runtime":"msvc","expected_id":"MSVC","expected_version":"19.51","install":false},{"compiler":"Clang-CL 22.1","artifact":"clangcl221","configuration":"Release","toolset":"-T ClangCL","benchmark_owner":false,"sanitizers":"OFF","assertion_backend":"minitest","sanitizer_runtime":"none","expected_id":"Clang","expected_version":"22.1","install":false},{"compiler":"Clang-CL 22.1 / ASan + UBSan","artifact":"clangcl221-sanitizers","configuration":"Release","toolset":"-T ClangCL","benchmark_owner":false,"sanitizers":"ON","assertion_backend":"minitest","sanitizer_runtime":"clang","expected_id":"Clang","expected_version":"22.1","install":false}]' || '[{"compiler":"MSVC 19.51","artifact":"msvc1951","configuration":"Debug","toolset":"","benchmark_owner":true,"sanitizers":"OFF","assertion_backend":"auto","sanitizer_runtime":"none","expected_id":"MSVC","expected_version":"19.51","install":false}]') }}
 
     steps:
       - name: Check out repository
@@ -87,10 +50,11 @@ jobs:
           -G "Visual Studio 18 2026" -A x64
           ${{ matrix.toolset }}
           -DCMAKE_COMPILE_WARNING_AS_ERROR=ON
-          -DCSV2_BUILD_TESTS=ON
+          -DCSV2_BUILD_TESTS=${{ inputs.quick && 'ON' || 'OFF' }}
           -DCSV2_TEST_ASSERTION_BACKEND=${{ matrix.assertion_backend }}
-          -DCSV2_BUILD_BENCHMARKS=${{ matrix.benchmarks }}
-          -DCSV2_BUILD_BENCHMARK_CHECKS=${{ matrix.benchmarks }}
+          -DCSV2_BUILD_BENCHMARKS=${{ inputs.benchmark && matrix.benchmark_owner && 'ON' || 'OFF' }}
+          -DCSV2_BUILD_BENCHMARK_CHECKS=${{ inputs.benchmark && matrix.benchmark_owner && 'ON' || 'OFF' }}
+          -DCSV2_BENCHMARKS_EXCLUDE_FROM_ALL=ON
           -DCSV2_VERIFICATION_PROFILE=quick
           -DCSV2_REQUIRE_PYTHON_AUDITS=ON
           -DCSV2_ENABLE_SANITIZERS=${{ matrix.sanitizers }}
@@ -98,8 +62,14 @@ jobs:
           "-DCSV2_CI_EXPECTED_COMPILER_VERSION_PREFIX=${{ matrix.expected_version }}"
 
       - name: Build
-        if: matrix.sanitizers == 'OFF'
+        if: matrix.sanitizers == 'OFF' && inputs.quick
         run: cmake --build build --config ${{ matrix.configuration }} --parallel
+
+      - name: Build benchmark portability owners
+        if: matrix.sanitizers == 'OFF' && matrix.benchmark_owner && inputs.benchmark
+        run: >-
+          cmake --build build --config ${{ matrix.configuration }} --parallel
+          --target csv2_benchmark csv2_benchmark_allocations csv2_common_benchmark
 
       - name: Build sanitizer smoke
         if: matrix.sanitizers == 'ON'
@@ -108,12 +78,25 @@ jobs:
           --target csv2_sanitizer_smoke
 
       - name: Test
-        if: matrix.sanitizers == 'OFF'
+        if: matrix.sanitizers == 'OFF' && inputs.quick
         run: >-
           ctest --test-dir build
           -C ${{ matrix.configuration }}
+          -LE benchmark-checksum
           --parallel 2
+          --no-tests=error
           --output-junit ctest.xml
+          --output-on-failure
+
+      - name: Test benchmark portability owners
+        if: matrix.sanitizers == 'OFF' && matrix.benchmark_owner && inputs.benchmark
+        run: >-
+          ctest --test-dir build
+          -C ${{ matrix.configuration }}
+          -L benchmark-portability
+          --parallel 2
+          --no-tests=error
+          --output-junit benchmark-portability.xml
           --output-on-failure
 
       - name: Test with sanitizers
@@ -174,14 +157,14 @@ jobs:
           }
 
       - name: Install package
-        if: matrix.install
+        if: matrix.install && inputs.quick
         run: >-
           cmake --install build
           --config ${{ matrix.configuration }}
           --prefix build/install
 
       - name: Verify installed package consumer
-        if: matrix.install
+        if: matrix.install && inputs.quick
         shell: pwsh
         run: |
           cmake -S test/contracts/consumer -B build/consumer-build `
@@ -203,5 +186,7 @@ jobs:
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: windows-${{ matrix.artifact }}-ctest
-          path: build/ctest.xml
+          path: |
+            build/ctest.xml
+            build/benchmark-portability.xml
           if-no-files-found: error

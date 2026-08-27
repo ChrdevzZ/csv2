@@ -1,0 +1,203 @@
+name: CI
+
+on:
+  pull_request:
+    branches:
+      - main
+      - master
+  push:
+    branches:
+      - main
+      - master
+  merge_group:
+    types:
+      - checks_requested
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.event_name }}-${{ github.event_name == 'workflow_dispatch' && github.run_id || github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  classify:
+    name: CI / classify
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      base: ${{ steps.range.outputs.base }}
+      head: ${{ steps.range.outputs.head }}
+      quick: ${{ steps.classify.outputs.quick }}
+      benchmark: ${{ steps.classify.outputs.benchmark }}
+      fuzz: ${{ steps.classify.outputs.fuzz }}
+      perf: ${{ steps.classify.outputs.perf }}
+      full: ${{ steps.classify.outputs.full }}
+    steps:
+      - name: Check out complete repository history
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Resolve complete comparison range
+        id: range
+        env:
+          EVENT_BASE: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || github.event.before }}
+          EVENT_HEAD: ${{ github.event.pull_request.head.sha || github.event.merge_group.head_sha || github.sha }}
+        run: |
+          set -euo pipefail
+          base="$EVENT_BASE"
+          head="$EVENT_HEAD"
+          force_all=false
+          if [[ -z "$head" ]] || ! git cat-file -e "${head}^{commit}" 2>/dev/null; then
+            head=$(git rev-parse HEAD)
+          fi
+          if [[ -n "$base" ]] && [[ ! "$base" =~ ^0+$ ]] && \
+             ! git cat-file -e "${base}^{commit}" 2>/dev/null; then
+            git fetch --no-tags --depth=1 origin "$base" || true
+          fi
+          if [[ -z "$base" ]] || [[ "$base" =~ ^0+$ ]] || \
+             ! git cat-file -e "${base}^{commit}" 2>/dev/null; then
+            base=$(git rev-parse "${head}^" 2>/dev/null || printf '%s' "$head")
+            force_all=true
+          fi
+          base=$(git rev-parse "${base}^{commit}")
+          head=$(git rev-parse "${head}^{commit}")
+          printf 'base=%s\nhead=%s\nforce_all=%s\n' \
+            "$base" "$head" "$force_all" >> "$GITHUB_OUTPUT"
+
+      - name: Classify complete Git diff
+        id: classify
+        env:
+          BASE_SHA: ${{ steps.range.outputs.base }}
+          EVENT_NAME: ${{ github.event_name }}
+          FORCE_ALL: ${{ steps.range.outputs.force_all }}
+          HEAD_SHA: ${{ steps.range.outputs.head }}
+        run: |
+          if [[ "$EVENT_NAME" == 'workflow_dispatch' || "$FORCE_ALL" == 'true' ]]; then
+            python3 tools/ci/classify_changes.py --paths-from-stdin </dev/null
+          elif [[ "$EVENT_NAME" == 'pull_request' || "$EVENT_NAME" == 'merge_group' ]]; then
+            python3 tools/ci/classify_changes.py \
+              --base "$BASE_SHA" --head "$HEAD_SHA" --merge-base
+          else
+            python3 tools/ci/classify_changes.py \
+              --base "$BASE_SHA" --head "$HEAD_SHA"
+          fi
+
+  preflight:
+    name: CI / preflight
+    needs: classify
+    uses: ./.github/workflows/preflight.yml
+    with:
+      base: ${{ needs.classify.outputs.base }}
+      head: ${{ needs.classify.outputs.head }}
+
+  linux:
+    name: CI / Linux
+    if: needs.classify.outputs.quick == 'true' || needs.classify.outputs.benchmark == 'true'
+    needs: [classify, preflight]
+    uses: ./.github/workflows/linux.yml
+    with:
+      quick: ${{ needs.classify.outputs.quick == 'true' }}
+      benchmark: ${{ needs.classify.outputs.benchmark == 'true' }}
+
+  windows:
+    name: CI / Windows
+    if: needs.classify.outputs.quick == 'true' || needs.classify.outputs.benchmark == 'true'
+    needs: [classify, preflight]
+    uses: ./.github/workflows/windows.yml
+    with:
+      quick: ${{ needs.classify.outputs.quick == 'true' }}
+      benchmark: ${{ needs.classify.outputs.benchmark == 'true' }}
+
+  macos:
+    name: CI / macOS
+    if: needs.classify.outputs.quick == 'true' || needs.classify.outputs.benchmark == 'true'
+    needs: [classify, preflight]
+    uses: ./.github/workflows/macos.yml
+    with:
+      quick: ${{ needs.classify.outputs.quick == 'true' }}
+      benchmark: ${{ needs.classify.outputs.benchmark == 'true' }}
+
+  fuzz:
+    name: CI / fuzz and no-mmap benchmark
+    if: needs.classify.outputs.fuzz == 'true'
+    needs: [classify, preflight]
+    uses: ./.github/workflows/fuzz-benchmark.yml
+
+  full:
+    name: CI / full
+    if: needs.classify.outputs.full == 'true'
+    needs: [classify, preflight]
+    uses: ./.github/workflows/full.yml
+    with:
+      benchmarks: ${{ needs.classify.outputs.benchmark == 'true' }}
+      extended: false
+
+  perf:
+    name: CI / performance protocol
+    if: github.event_name == 'pull_request' && needs.classify.outputs.perf == 'true'
+    needs: [classify, preflight]
+    uses: ./.github/workflows/perf.yml
+    with:
+      protocol_smoke: true
+
+  gate:
+    name: CI / gate
+    if: always()
+    needs: [classify, preflight, linux, windows, macos, fuzz, full, perf]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    env:
+      CLASSIFY_RESULT: ${{ needs.classify.result }}
+      PREFLIGHT_RESULT: ${{ needs.preflight.result }}
+      PLATFORM_REQUIRED: ${{ (needs.classify.outputs.quick == 'true' || needs.classify.outputs.benchmark == 'true') && 'true' || 'false' }}
+      LINUX_RESULT: ${{ needs.linux.result }}
+      WINDOWS_RESULT: ${{ needs.windows.result }}
+      MACOS_RESULT: ${{ needs.macos.result }}
+      FUZZ_REQUIRED: ${{ needs.classify.result != 'success' || needs.classify.outputs.fuzz == 'true' }}
+      FUZZ_RESULT: ${{ needs.fuzz.result }}
+      FULL_REQUIRED: ${{ needs.classify.result != 'success' || needs.classify.outputs.full == 'true' }}
+      FULL_RESULT: ${{ needs.full.result }}
+      PERF_REQUIRED: ${{ (github.event_name == 'pull_request' && needs.classify.outputs.perf == 'true') && 'true' || 'false' }}
+      PERF_RESULT: ${{ needs.perf.result }}
+    steps:
+      - name: Check out gate policy
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Evaluate planned owners
+        run: >-
+          python3 tools/ci/evaluate_gate.py
+          --job "classify:true:$CLASSIFY_RESULT"
+          --job "preflight:true:$PREFLIGHT_RESULT"
+          --job "linux:$PLATFORM_REQUIRED:$LINUX_RESULT"
+          --job "windows:$PLATFORM_REQUIRED:$WINDOWS_RESULT"
+          --job "macos:$PLATFORM_REQUIRED:$MACOS_RESULT"
+          --job "fuzz:$FUZZ_REQUIRED:$FUZZ_RESULT"
+          --job "full:$FULL_REQUIRED:$FULL_RESULT"
+          --job "perf:$PERF_REQUIRED:$PERF_RESULT"
+
+      - name: Publish run provenance
+        if: always()
+        env:
+          EVENT_HEAD: ${{ github.event.pull_request.head.sha || github.event.merge_group.head_sha || github.sha }}
+          PLAN_BENCHMARK: ${{ needs.classify.outputs.benchmark }}
+          PLAN_FULL: ${{ needs.classify.outputs.full }}
+          PLAN_FUZZ: ${{ needs.classify.outputs.fuzz }}
+          PLAN_PERF: ${{ needs.classify.outputs.perf }}
+          PLAN_QUICK: ${{ needs.classify.outputs.quick }}
+        run: |
+          {
+            printf '### CI provenance\n\n'
+            printf -- "- workflow SHA: \`%s\`\n" "$GITHUB_SHA"
+            printf -- "- exact event head: \`%s\`\n" "$EVENT_HEAD"
+            printf -- "- run ID / attempt: \`%s\` / \`%s\`\n" \
+              "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT"
+            printf -- '- owner plan: quick=%s, benchmark=%s, fuzz=%s, perf=%s, full=%s\n' \
+              "$PLAN_QUICK" "$PLAN_BENCHMARK" "$PLAN_FUZZ" \
+              "$PLAN_PERF" "$PLAN_FULL"
+          } >> "$GITHUB_STEP_SUMMARY"

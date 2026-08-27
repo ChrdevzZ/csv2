@@ -3,9 +3,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/ChrdevzZ/csv2/actions/workflows/linux.yml"><img src="https://github.com/ChrdevzZ/csv2/actions/workflows/linux.yml/badge.svg" alt="Linux"></a>
-  <a href="https://github.com/ChrdevzZ/csv2/actions/workflows/windows.yml"><img src="https://github.com/ChrdevzZ/csv2/actions/workflows/windows.yml/badge.svg" alt="Windows"></a>
-  <a href="https://github.com/ChrdevzZ/csv2/actions/workflows/macos.yml"><img src="https://github.com/ChrdevzZ/csv2/actions/workflows/macos.yml/badge.svg" alt="macOS"></a>
+  <a href="https://github.com/ChrdevzZ/csv2/actions/workflows/ci.yml"><img src="https://github.com/ChrdevzZ/csv2/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
   <a href="#compiling-tests"><img src="https://img.shields.io/badge/C%2B%2B-11-00599C.svg?logo=cplusplus&amp;logoColor=white" alt="C++11 minimum"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="License: MIT"></a>
 </p>
@@ -321,7 +319,8 @@ hosted throughput is exploratory. The formal comparison driver is uninstrumented
 a separate timer-scope audit build proves Reader/checksum boundaries and is
 rejected by report generation. `source/mmap-touch-pretouched` explicitly touches
 the same page-stride addresses during setup and timing without claiming OS
-residency. A stable case manifest verifies and dry-runs every registered operation.
+residency. A portability check validates registry/manifest coverage, while the
+exhaustive owner verifies and dry-runs every registered operation.
 
 ```bash
 cmake -S . -B build-benchmark -G Ninja \
@@ -392,6 +391,7 @@ ctest --test-dir build --no-tests=error --output-on-failure
 | `CSV2_BUILD_TESTS` | Runtime domains and compile contracts |
 | `CSV2_BUILD_BENCHMARKS` | Current-tree and common benchmark executables |
 | `CSV2_BUILD_BENCHMARK_CHECKS` | Deterministic benchmark CTest checks; requires benchmarks |
+| `CSV2_BENCHMARKS_EXCLUDE_FROM_ALL` | Configure benchmark targets without adding them to the default `all` target |
 | `CSV2_BUILD_FUZZERS` | Clang/libFuzzer Reader and Writer targets on supported platforms |
 | `CSV2_ENABLE_SANITIZERS` | Sanitizers for first-party verification targets |
 | `CSV2_REQUIRE_PYTHON_AUDITS` | Fail unless the Python 3.10 audits are available |
@@ -404,12 +404,12 @@ C++11–23, modular/single-header, and variant matrix; C++26 is compile-only. De
 [`test/README.md`](test/README.md), [`CONTRIBUTING.md`](CONTRIBUTING.md), and
 [`third_party/verification/README.md`](third_party/verification/README.md).
 
-Pull requests run the cross-platform quick workflows. Verification-related
-changes also run one exact-head Linux GCC 14 full job and a small end-to-end
-exploratory evidence smoke covering current metrics, candidate A/A, base/head
-A/B, all four modern Writer comparison paths, and a legacy-only `9504e0b`
-owned build. Manual full and performance workflows retain the broader platform
-matrix and controlled self-hosted path.
+The always-run `CI` workflow classifies the complete Git diff and ends in one
+stable `CI / gate`. Documentation-only changes run preflight and the Gate;
+unknown paths fail open to every owner. Selected changes call the reusable
+Linux, Windows, macOS, fuzz, exact-head full, and performance-protocol
+workflows. Manual full and performance runs retain the broader platform matrix
+and controlled self-hosted path.
 
 ## Installing and Consuming with CMake
 

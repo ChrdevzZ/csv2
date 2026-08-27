@@ -1,19 +1,32 @@
 name: Performance evidence
 
 on:
-  pull_request:
-    paths:
-      - .github/workflows/perf.yml
-      - benchmark/**
-      - cmake/verification/**
-      - include/**
-      - single_include/**
-      - test/fixtures/**
-      - third_party/verification/google_benchmark/**
-      - third_party/verification/google_benchmark.files
-      - third_party/verification/google_benchmark.sha256
-      - third_party/verification/manifest.json
-      - CMakeLists.txt
+  workflow_call:
+    inputs:
+      protocol_smoke:
+        type: boolean
+        default: true
+      baseline_ref:
+        type: string
+        default: ""
+      candidate_ref:
+        type: string
+        default: ""
+      runs:
+        type: string
+        default: "20"
+      files:
+        type: string
+        default: all
+      operations:
+        type: string
+        default: rows_cells,legacy_writer_raw,writer_raw_direct,writer_raw_streamable,writer_escaped_direct,writer_escaped_streamable
+      corpus_scale:
+        type: string
+        default: "100"
+      evidence:
+        type: string
+        default: ""
   workflow_dispatch:
     inputs:
       baseline_ref:
@@ -21,7 +34,7 @@ on:
         required: true
         type: string
       candidate_ref:
-        description: Candidate commit or ref (empty uses the dispatched SHA)
+        description: Candidate SHA (controlled requires 40 hex; exploratory may be empty)
         required: false
         default: ""
         type: string
@@ -58,12 +71,12 @@ permissions:
   contents: read
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}-${{ inputs.evidence || 'protocol-smoke' }}
+  group: perf-${{ github.workflow }}-${{ github.event_name }}-${{ github.event_name == 'workflow_dispatch' && github.run_id || github.event.pull_request.number || github.ref }}-${{ inputs.evidence || 'protocol-smoke' }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   protocol-smoke:
-    if: github.event_name == 'pull_request'
+    if: github.event_name == 'pull_request' && inputs.protocol_smoke
     name: Perf / PR protocol smoke / GCC 14
     runs-on: ubuntu-24.04
     timeout-minutes: 30
@@ -301,23 +314,67 @@ jobs:
             build-perf/current-owned/build/benchmark-corpus/manifest.json
           if-no-files-found: error
 
+  authorize-controlled:
+    if: github.event_name == 'workflow_dispatch' && inputs.evidence == 'controlled'
+    name: Perf / authorize controlled dispatch
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      baseline_sha: ${{ steps.authorize.outputs.baseline_sha }}
+      candidate_sha: ${{ steps.authorize.outputs.candidate_sha }}
+    steps:
+      - name: Check out repository history
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Authorize owner, branch, and immutable revisions
+        id: authorize
+        env:
+          ACTOR: ${{ github.actor }}
+          BASELINE_INPUT: ${{ inputs.baseline_ref }}
+          CANDIDATE_INPUT: ${{ inputs.candidate_ref }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          DISPATCH_REF: ${{ github.ref }}
+          OPERATIONS: ${{ inputs.operations }}
+          OWNER: ${{ github.repository_owner }}
+          RUNS: ${{ inputs.runs }}
+          TRIGGERING_ACTOR: ${{ github.triggering_actor }}
+        run: |
+          set -euo pipefail
+          test "$ACTOR" = "$OWNER"
+          test "$TRIGGERING_ACTOR" = "$OWNER"
+          test "$DISPATCH_REF" = "refs/heads/$DEFAULT_BRANCH"
+          [[ "$BASELINE_INPUT" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$CANDIDATE_INPUT" =~ ^[0-9a-f]{40}$ ]]
+          test "$BASELINE_INPUT" != "$CANDIDATE_INPUT"
+          test "$RUNS" -ge 20
+          git cat-file -e "${BASELINE_INPUT}^{commit}"
+          git cat-file -e "${CANDIDATE_INPUT}^{commit}"
+          python3 -c 'import sys; values=[v.strip() for v in sys.argv[1].split(",")]; assert "rows_cells" in values and all(values) and len(values)==len(set(values)), "operations must be unique and include rows_cells"' "$OPERATIONS"
+          printf 'baseline_sha=%s\ncandidate_sha=%s\n' \
+            "$BASELINE_INPUT" "$CANDIDATE_INPUT" >> "$GITHUB_OUTPUT"
+
   controlled:
-    if: inputs.evidence == 'controlled'
+    needs: authorize-controlled
+    if: needs.authorize-controlled.result == 'success'
     name: Perf / controlled / csv2-perf runner
     runs-on: [self-hosted, linux, x64, csv2-perf]
+    environment: csv2-perf
     timeout-minutes: 180
     steps:
       - name: Check out exact candidate repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ inputs.candidate_ref || github.sha }}
+          ref: ${{ needs.authorize-controlled.outputs.candidate_sha }}
           fetch-depth: 0
           persist-credentials: false
 
       - name: Validate runner and resolve immutable revisions
         env:
-          BASELINE_INPUT: ${{ inputs.baseline_ref }}
-          CANDIDATE_INPUT: ${{ inputs.candidate_ref }}
+          BASELINE_SHA: ${{ needs.authorize-controlled.outputs.baseline_sha }}
+          CANDIDATE_SHA: ${{ needs.authorize-controlled.outputs.candidate_sha }}
           RUNS: ${{ inputs.runs }}
           OPERATIONS: ${{ inputs.operations }}
         run: |
@@ -325,16 +382,12 @@ jobs:
           test "$RUNS" -ge 20
           : "${CSV2_PERF_MACHINE_PROFILE:?CSV2_PERF_MACHINE_PROFILE is required}"
           command -v taskset
-          baseline=$(git rev-parse "${BASELINE_INPUT}^{commit}")
-          candidate_input=${CANDIDATE_INPUT:-$GITHUB_SHA}
-          requested_candidate=$(git rev-parse "${candidate_input}^{commit}")
           candidate=$(git rev-parse 'HEAD^{commit}')
-          test "$candidate" = "$requested_candidate"
-          test "$baseline" != "$candidate"
+          test "$candidate" = "$CANDIDATE_SHA"
+          test "$BASELINE_SHA" != "$CANDIDATE_SHA"
           python3 -c 'import sys; values=[v.strip() for v in sys.argv[1].split(",")]; assert "rows_cells" in values and all(values) and len(values)==len(set(values)), "operations must be unique and include rows_cells"' "$OPERATIONS"
-          git cat-file -e "${baseline}^{commit}"
           printf 'BASELINE_SHA=%s\nCANDIDATE_SHA=%s\n' \
-            "$baseline" "$candidate" >> "$GITHUB_ENV"
+            "$BASELINE_SHA" "$CANDIDATE_SHA" >> "$GITHUB_ENV"
           mkdir -p build-perf/reports
           cp --no-clobber "$CSV2_PERF_MACHINE_PROFILE" \
             build-perf/reports/machine-profile.json

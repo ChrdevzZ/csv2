@@ -6,7 +6,14 @@ set(csv2_quote_fixture
 csv2_add_benchmark_check(csv2.benchmark.current.protocol
   COMMAND csv2_benchmark --csv2-input ${csv2_check_fixture}
     --csv2-source buffer --csv2-operation traversal/rows-cells --csv2-verify
-  PASS_REGEX "protocol=csv2-current-v4.*rows=3.*cells=9")
+  PASS_REGEX "protocol=csv2-current-v4.*rows=3.*cells=9"
+  TIER portability)
+
+csv2_add_benchmark_check(csv2.benchmark.current.default_input
+  COMMAND csv2_benchmark
+    --csv2-source buffer --csv2-operation traversal/rows-cells --csv2-verify
+  PASS_REGEX "protocol=csv2-current-v4.*dataset=short_unquoted.csv.*rows=128.*cells=1024"
+  TIER portability)
 
 function(csv2_add_exact_current_check name input operation checksum)
   csv2_add_benchmark_check(${name}
@@ -17,7 +24,8 @@ function(csv2_add_exact_current_check name input operation checksum)
       -DCSV2_BENCHMARK_OPERATION=${operation}
       -DCSV2_EXPECTED_PROTOCOL=csv2-current-v4
       -DCSV2_EXPECTED_CHECKSUM=${checksum}
-      -P ${CMAKE_CURRENT_SOURCE_DIR}/verify_wire.cmake)
+      -P ${CMAKE_CURRENT_SOURCE_DIR}/verify_wire.cmake
+    TIER portability)
 endfunction()
 
 csv2_add_exact_current_check(csv2.benchmark.current.checksum.rows_cells
@@ -44,7 +52,8 @@ csv2_add_exact_current_check(csv2.benchmark.current.checksum.validation_invalid_
 csv2_add_benchmark_check(csv2.benchmark.current.dry_run
   COMMAND csv2_benchmark --csv2-input ${csv2_check_fixture}
     --csv2-source buffer --csv2-operation traversal/rows-cells
-    --benchmark_dry_run)
+    --benchmark_dry_run
+  TIER portability)
 
 foreach(csv2_unsupported_mode IN ITEMS list timing)
   csv2_add_benchmark_check(csv2.benchmark.reject.unsupported_${csv2_unsupported_mode}
@@ -266,7 +275,8 @@ foreach(csv2_index_operation IN ITEMS sequential-lookup random-lookup)
     COMMAND csv2_benchmark_allocations --csv2-input ${csv2_check_fixture}
       --csv2-source buffer --csv2-operation index/${csv2_index_operation}
       --csv2-verify
-    PASS_REGEX "allocations=0")
+    PASS_REGEX "allocations=0"
+    TIER portability)
 endforeach()
 
 csv2_add_benchmark_check(csv2.benchmark.current.preparation.index.sequential
@@ -286,7 +296,8 @@ foreach(csv2_writer_operation IN ITEMS raw-direct escaped-direct always-direct)
     COMMAND csv2_benchmark_allocations --csv2-input ${csv2_quote_fixture}
       --csv2-source buffer --csv2-operation writer/${csv2_writer_operation}
       --csv2-verify
-    PASS_REGEX "allocations=0")
+    PASS_REGEX "allocations=0"
+    TIER portability)
 endforeach()
 
 foreach(csv2_extraction_operation IN ITEMS
@@ -303,6 +314,22 @@ foreach(csv2_extraction_operation IN ITEMS
       --csv2-operation extraction/${csv2_extraction_operation}
       --csv2-verify
     PASS_REGEX "allocations=0")
+endforeach()
+
+foreach(csv2_allocating_extraction IN ITEMS
+    cell-raw/fresh-string
+    cell-decoded/fresh-vector)
+  string(REPLACE "/" "." csv2_allocating_extraction_name
+    "${csv2_allocating_extraction}")
+  csv2_add_benchmark_check(
+    csv2.benchmark.current.allocations.positive.${csv2_allocating_extraction_name}
+    COMMAND csv2_benchmark_allocations
+      --csv2-input ${csv2_SOURCE_DIR}/benchmark/datasets/fixtures/long_field.csv
+      --csv2-source buffer
+      --csv2-operation extraction/${csv2_allocating_extraction}
+      --csv2-verify
+    PASS_REGEX "allocations=[1-9][0-9]* allocated_bytes=[1-9][0-9]*"
+    TIER portability)
 endforeach()
 
 set(csv2_zero_allocation_checks
@@ -334,11 +361,13 @@ endforeach()
 
 csv2_add_benchmark_check(csv2.benchmark.common.protocol
   COMMAND csv2_common_benchmark --describe
-  PASS_REGEX "protocol=csv2-common-v5.*instrumentation=none.*capabilities=legacy-reader,legacy-writer,modern-writer.*operation_contracts=rows_cells:traversal_only:.*csv2.traversal.rows-cells.v1:input_corpus")
+  PASS_REGEX "protocol=csv2-common-v5.*instrumentation=none.*capabilities=legacy-reader,legacy-writer,modern-writer.*operation_contracts=rows_cells:traversal_only:.*csv2.traversal.rows-cells.v1:input_corpus"
+  TIER portability)
 csv2_add_benchmark_check(csv2.benchmark.common.rows_cells
   COMMAND csv2_common_benchmark --operation rows_cells
     --input ${csv2_check_fixture} --source buffer --iterations 1
-  PASS_REGEX "protocol=csv2-common-v5.*instrumentation=none.*semantic_case_id=csv2.traversal.rows-cells.v1.*rows=3.*cells=9.*timed_reader_steps=0.*timed_checksum_mix_calls=0")
+  PASS_REGEX "protocol=csv2-common-v5.*instrumentation=none.*semantic_case_id=csv2.traversal.rows-cells.v1.*rows=3.*cells=9.*timed_reader_steps=0.*timed_checksum_mix_calls=0"
+  TIER portability)
 set(csv2_timer_audit_operations
   "rows_cells,legacy_writer_raw,writer_raw_direct,writer_raw_streamable,writer_escaped_direct,writer_escaped_streamable")
 if(csv2_benchmark_has_mmap)
@@ -366,14 +395,16 @@ foreach(csv2_common_writer_operation IN ITEMS
       -DCSV2_BENCHMARK_INPUT=${csv2_quote_fixture}
       -DCSV2_BENCHMARK_OPERATION=${csv2_common_writer_operation}
       -DCSV2_EXPECTED_CHECKSUM=11995933538725573646
-      -P ${CMAKE_CURRENT_SOURCE_DIR}/verify_common_wire.cmake)
+      -P ${CMAKE_CURRENT_SOURCE_DIR}/verify_common_wire.cmake
+    TIER portability)
 endforeach()
 
 if(csv2_benchmark_has_mmap)
   csv2_add_benchmark_check(csv2.benchmark.current.mmap
     COMMAND csv2_benchmark --csv2-input ${csv2_check_fixture}
       --csv2-source mmap --csv2-operation traversal/rows-cells --csv2-verify
-    PASS_REGEX "protocol=csv2-current-v4.*source=mmap")
+    PASS_REGEX "protocol=csv2-current-v4.*source=mmap"
+    TIER portability)
   csv2_add_benchmark_check(csv2.benchmark.current.preparation.mmap_pretouched
     COMMAND csv2_benchmark --csv2-input ${csv2_check_fixture}
       --csv2-source mmap --csv2-operation source/mmap-touch-pretouched
@@ -402,7 +433,15 @@ foreach(csv2_contract IN ITEMS
 endforeach()
 
 if(CSV2_PYTHON_AUDITS_AVAILABLE)
-  csv2_add_benchmark_check(csv2.benchmark.current.case_manifest
+  csv2_add_benchmark_check(csv2.benchmark.current.case_manifest.registry
+    COMMAND ${CSV2_PYTHON_EXECUTABLE} -B
+      ${CMAKE_CURRENT_SOURCE_DIR}/verify_case_manifest.py
+      --executable $<TARGET_FILE:csv2_benchmark>
+      --source-root ${csv2_SOURCE_DIR}
+      --manifest ${CMAKE_CURRENT_SOURCE_DIR}/case_manifest.json
+      --registry-only
+    TIER portability)
+  csv2_add_benchmark_check(csv2.benchmark.current.case_manifest.execute
     COMMAND ${CSV2_PYTHON_EXECUTABLE} -B
       ${CMAKE_CURRENT_SOURCE_DIR}/verify_case_manifest.py
       --executable $<TARGET_FILE:csv2_benchmark>
