@@ -34,7 +34,7 @@ There are two tests.
 
 ## Performance Benchmark
 
-### Hardware 
+### Hardware
 
 ```
 MacBook Pro (15-inch, 2019)
