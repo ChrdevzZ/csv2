@@ -73,8 +73,9 @@ CSV2_TEST_CASE("reader.scan.trailing-empty", "reader.scan") {
 ```
 
 Runtime sources use the backend-independent macros from
-`csv2_test/assertions.hpp`. C++14–23 normal variants use Catch2; C++11 and all
-no-exceptions variants use the non-throwing CSV2 runner. Keep one semantic
+`csv2_test/assertions.hpp`. With the `auto` backend, C++14–23 normal variants
+use Catch2; the `minitest` backend, C++11, and all no-exceptions variants use
+the non-throwing CSV2 runner. Keep one semantic
 source unless a language feature genuinely requires a compile-only contract.
 Each scenario must be an independent `CSV2_TEST_CASE`; do not use Catch2
 sections or emulate them in minitest, because their setup and failure schedules
@@ -190,33 +191,57 @@ audits are maintainer-side review tools, not tracked CI gates. See
 
 ## CI and documentation
 
-The existing Linux, Windows, macOS, and fuzz/benchmark workflow identities are
-the automatic quick checks. On pull requests with at most 3,000 changed files,
-the Linux GCC quick job uses minitest and leaves benchmark/checksum ownership to
-the path-filtered exact-head full and performance workflows. Larger pull
-requests, and every push, merge-queue, or manual Linux run, conservatively use
-the default assertion backend and keep benchmark checks enabled. Changes to
-`linux.yml` itself trigger the exact-head full workflow so that this ownership
-boundary is tested with the proposed workflow revision.
-The performance pull-request trigger is limited to benchmark and verification
-infrastructure, public headers, performance fixtures, the Google Benchmark
-snapshot/provenance files, and the shared verification manifest; unrelated
-test and Catch2 changes remain owned by the foundational/full checks.
+`.github/workflows/ci.yml` is the only automatic orchestrator. It has no
+workflow-level path filter: a full Git diff is classified after checkout,
+documentation-only changes keep only preflight and `CI / gate`, and unknown or
+unreadable paths conservatively select every owner. Rename detection is disabled
+for classification so both sides of a rename remain visible; pull requests use
+their merge-base comparison while pushes use the exact before/after range. Files
+installed as package metadata, including the licenses, are never docs-only. The
+root `.gitignore` is also executable source-package policy and selects all
+owners. Linux builds both configured CPack source formats and verifies their
+complete modular/single-header public surfaces and package metadata byte for
+byte against the checkout, path safety, content-equivalent inventories, and
+Git control-file exclusion. Only after that validation, CI safely expands both
+formats, configures and installs each source tree, builds and runs its installed
+modular consumers, and compiles its single-header contract. The
+stable branch-protection context is `CI / gate`; individual matrix jobs are
+implementation details and must not become required contexts.
+
+Linux, Windows, and macOS own representative platform behavior. Benchmark
+changes additionally select their `benchmark-portability` slice. Exact-head
+GCC full owns the canonical exhaustive runtime/benchmark matrix, the fuzz
+workflow owns deterministic/libFuzzer behavior plus exhaustive no-mmap
+benchmark checks, and the performance workflow owns A/A, A/B, legacy, schema,
+and provenance behavior. The Gate fails if any selected owner is skipped,
+canceled, or unsuccessful; an unselected owner may be skipped but may not fail
+silently.
 
 Linux and Windows sanitizer entries force minitest, build only
-`csv2_sanitizer_smoke`, and execute only the `sanitizer-smoke` label. Ordinary
+`csv2_sanitizer_smoke`, and execute only the `sanitizer-smoke` label.
+Linux sanitizer entries also compare the configured target manifest with the
+stable Linux quick `(CTest name, executable target)` manifest and the actual
+labeled CTest JSON. Missing, extra, renamed, rebound, or duplicate tests and
+target/label/build-closure drift therefore fail without relying on a detached
+hard-coded test total. Ordinary
 non-sanitizer quick CTest runs are bounded to two concurrent tests; full and
 sanitizer CTest runs remain sequential. Pull-request and manual
 `fuzz-benchmark.yml` runs retain the combined deterministic fuzz and benchmark
-checksum smoke. Its weekly schedule is a separate fuzz-only build: tests and
-benchmarks are disabled, only the Reader and Writer libFuzzer targets are
-built, and each committed corpus runs for 50,000 iterations.
+portability smoke plus the separate no-mmap exhaustive build. Its weekly
+schedule is a separate fuzz-only build: tests and benchmarks are disabled,
+only the Reader and Writer libFuzzer targets are built, each committed corpus
+runs for 50,000 iterations, and crash reproducers are retained as failure
+artifacts. Every libFuzzer entry runs both targets even if the first fails and
+uses separate Reader/Writer artifact prefixes.
 
-Verification-related pull requests additionally run the exact-head GCC 14 full
-profile and an exploratory end-to-end protocol smoke. Manual `full.yml`
+Pull requests that select the full owner run the exact-head GCC 14 full profile.
+Pull requests that select the performance owner also run an exploratory
+end-to-end protocol smoke. Manual `full.yml`
 dispatches add Clang/libc++, Windows, macOS, coverage, and extended fuzzing;
 manual `perf.yml` dispatches retain exploratory and controlled machine-profile
-runs.
+runs. Controlled dispatches accept only repository-owner requests from the
+default branch with explicit 40-character baseline and candidate SHAs, then
+enter the `csv2-perf` Environment before using the labeled self-hosted runner.
 Keep matrices `fail-fast: false`, upload JUnit/evidence artifacts, and select
 CTest by stable names or labels rather than hard-coded totals.
 

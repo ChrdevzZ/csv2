@@ -1,3 +1,4 @@
+#include "build_config.hpp"
 #include "context.hpp"
 #include "registry.hpp"
 #include "support/allocation.hpp"
@@ -10,10 +11,6 @@
 #include <exception>
 #include <iostream>
 #include <string>
-
-#ifndef CSV2_BENCHMARK_REVISION
-#define CSV2_BENCHMARK_REVISION "unstamped"
-#endif
 
 namespace csv2_benchmark {
 namespace {
@@ -148,7 +145,8 @@ int verify_operations(Registry &registry, Context &context, const Options &optio
         return;
       }
 
-      std::cout << "protocol=csv2-current-v4" << " revision=" << CSV2_BENCHMARK_REVISION
+      std::cout << "protocol=csv2-current-v4"
+                << " revision=" << build_config::revision()
                 << " operation=" << operation.id << " source=" << source_name(source)
                 << " dataset=" << safe_component(context.dataset_name())
                 << " semantic_case_id=" << operation.semantic_case_id

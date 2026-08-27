@@ -39,11 +39,31 @@ ctest --test-dir build-benchmark -L benchmark-checksum \
 
 `CSV2_BUILD_BENCHMARK_CHECKS` controls CTest registration and requires
 benchmarks to be enabled. With checks off, the benchmark executables and common
-driver still build. A quick local configuration may proceed without Python but
+driver still build. `CSV2_BENCHMARKS_EXCLUDE_FROM_ALL=ON` keeps this graph
+configured while allowing a platform job to build only
+`csv2_benchmark`, `csv2_benchmark_allocations`, and
+`csv2_common_benchmark`. A quick local configuration may proceed without Python but
 prints every skipped Python audit; full/perf and
 `CSV2_REQUIRE_PYTHON_AUDITS=ON` require Python 3.10+. The current benchmark
 uses C++23 when available and otherwise C++20. Google Benchmark itself is built
 as C++17 and is never installed or exported.
+
+`csv2_benchmark` and `csv2_benchmark_allocations` share a 12-source object core;
+their allocation-sensitive frontends remain separate. Revision and default
+input definitions live in a small shared build-config object. The observer
+audit intentionally recompiles the complete source set under its observer
+macro and Release IPO, so LTO cannot erase the contract being audited.
+The owned-build File API audit checks each compile owner independently: both
+frontends must close over the same two object libraries, target-specific macros
+must remain isolated, and every owner must carry the requested optimized modern
+C++ flags. Portability checks also prove the configured default input and both
+zero- and positive-allocation behavior.
+
+Checks are split into `benchmark-portability` and `benchmark-exhaustive` CTest
+labels. Platform quick jobs run the representative portability slice; exact-head
+full runs both; the no-mmap fuzz/benchmark owner runs the complete checksum
+label. The registry-only case-manifest check never executes every operation;
+the exhaustive companion retains the complete verify/dry-run sweep.
 
 ## Current-tree operation registry
 
@@ -388,4 +408,7 @@ semantic case. For an explicit `files` subset, fixed metrics uses its first
 dataset so that the cross-report evidence overlaps. The workflow fails before
 evidence upload unless the final bundle and its artifact manifest are both
 produced; failed runs upload a separate diagnostics artifact, never an evidence artifact.
+Controlled execution is additionally restricted to a repository-owner manual
+dispatch from the default branch with explicit full baseline/candidate SHAs and
+the `csv2-perf` Environment; compiler caches remain disabled on that path.
 This Stage B infrastructure change makes no library performance claim.

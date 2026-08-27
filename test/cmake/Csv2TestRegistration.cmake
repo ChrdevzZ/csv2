@@ -1,12 +1,33 @@
 include_guard(GLOBAL)
 
+# Keep the focused sanitizer build closure and CTest label driven by one manifest.
+set(csv2_sanitizer_smoke_targets
+  csv2_runtime_modular_cxx20_normal
+  csv2_runtime_single_cxx23_normal
+  csv2_runtime_modular_cxx11_no_mmap
+  csv2_runtime_single_cxx11_no_exceptions
+  csv2_minitest_registry_capacity
+  csv2_minitest_registry_duplicate
+  csv2_fuzz_smoke
+  csv2_fuzz_writer_smoke)
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+  list(APPEND csv2_sanitizer_smoke_targets
+    csv2_mio_windows_api
+    csv2_single_header_mio_windows_api)
+endif()
+
+function(csv2_append_sanitizer_smoke_label target labels_variable)
+  set(labels ${${labels_variable}})
+  if(target IN_LIST csv2_sanitizer_smoke_targets)
+    list(APPEND labels sanitizer-smoke)
+  endif()
+  set(${labels_variable} ${labels} PARENT_SCOPE)
+endfunction()
+
 function(csv2_register_runtime_test target test_name)
   add_test(NAME ${test_name} COMMAND ${target})
   set(labels sanitizer-runtime)
-  if(target STREQUAL "csv2_mio_windows_api" OR
-     target STREQUAL "csv2_single_header_mio_windows_api")
-    list(APPEND labels sanitizer-smoke)
-  endif()
+  csv2_append_sanitizer_smoke_label(${target} labels)
   set_tests_properties(${test_name} PROPERTIES
     LABELS "${labels}"
     WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
@@ -27,12 +48,7 @@ function(csv2_register_domain_test target domain header_mode standard variant ba
   endif()
   set(labels runtime sanitizer-runtime ${domain} ${labels} ${variant}
     ${header_mode} cxx${standard})
-  if(target STREQUAL "csv2_runtime_modular_cxx20_normal" OR
-     target STREQUAL "csv2_runtime_single_cxx23_normal" OR
-     target STREQUAL "csv2_runtime_modular_cxx11_no_mmap" OR
-     target STREQUAL "csv2_runtime_single_cxx11_no_exceptions")
-    list(APPEND labels sanitizer-smoke)
-  endif()
+  csv2_append_sanitizer_smoke_label(${target} labels)
   set_tests_properties(${test_name} PROPERTIES
     LABELS "${labels}"
     TIMEOUT ${timeout}

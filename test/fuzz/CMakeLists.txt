@@ -21,14 +21,20 @@ endfunction()
 if(CSV2_BUILD_TESTS)
   csv2_configure_fuzz_target(csv2_fuzz_smoke reader.cpp TRUE)
   add_test(NAME csv2.fuzz.reader.smoke.cxx11 COMMAND csv2_fuzz_smoke)
+  set(csv2_fuzz_reader_smoke_labels fuzz-smoke reader sanitizer-runtime)
+  csv2_append_sanitizer_smoke_label(csv2_fuzz_smoke
+    csv2_fuzz_reader_smoke_labels)
   set_tests_properties(csv2.fuzz.reader.smoke.cxx11 PROPERTIES
-    LABELS "fuzz-smoke;reader;sanitizer-runtime;sanitizer-smoke" TIMEOUT 30
+    LABELS "${csv2_fuzz_reader_smoke_labels}" TIMEOUT 30
     WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
 
   csv2_configure_fuzz_target(csv2_fuzz_writer_smoke writer_roundtrip.cpp TRUE)
   add_test(NAME csv2.fuzz.writer.smoke.cxx11 COMMAND csv2_fuzz_writer_smoke)
+  set(csv2_fuzz_writer_smoke_labels fuzz-smoke writer sanitizer-runtime)
+  csv2_append_sanitizer_smoke_label(csv2_fuzz_writer_smoke
+    csv2_fuzz_writer_smoke_labels)
   set_tests_properties(csv2.fuzz.writer.smoke.cxx11 PROPERTIES
-    LABELS "fuzz-smoke;writer;sanitizer-runtime;sanitizer-smoke" TIMEOUT 30
+    LABELS "${csv2_fuzz_writer_smoke_labels}" TIMEOUT 30
     WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
 endif()
 

@@ -1,28 +1,35 @@
 name: macOS
 
 on:
-  push:
-    branches:
-      - main
-      - master
-  pull_request:
-    branches:
-      - main
-      - master
-  merge_group:
-    types:
-      - checks_requested
+  workflow_call:
+    inputs:
+      quick:
+        type: boolean
+        default: true
+      benchmark:
+        type: boolean
+        default: true
   workflow_dispatch:
+    inputs:
+      quick:
+        description: Run core and package contracts
+        type: boolean
+        default: true
+      benchmark:
+        description: Run AppleClang benchmark portability contracts
+        type: boolean
+        default: true
 
 permissions:
   contents: read
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: true
+  group: macos-${{ github.workflow }}-${{ github.event_name }}-${{ github.event_name == 'workflow_dispatch' && github.run_id || github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   test:
+    if: inputs.quick || inputs.benchmark
     name: macOS / AppleClang 21
     runs-on: macos-26
     timeout-minutes: 15
@@ -38,26 +45,45 @@ jobs:
           -DCMAKE_BUILD_TYPE=Release
           -DCMAKE_CXX_COMPILER=clang++
           -DCMAKE_COMPILE_WARNING_AS_ERROR=ON
-          -DCSV2_BUILD_TESTS=ON
-          -DCSV2_BUILD_BENCHMARKS=ON
-          -DCSV2_BUILD_BENCHMARK_CHECKS=ON
+          -DCSV2_BUILD_TESTS=${{ inputs.quick && 'ON' || 'OFF' }}
+          -DCSV2_BUILD_BENCHMARKS=${{ inputs.benchmark && 'ON' || 'OFF' }}
+          -DCSV2_BUILD_BENCHMARK_CHECKS=${{ inputs.benchmark && 'ON' || 'OFF' }}
+          -DCSV2_BENCHMARKS_EXCLUDE_FROM_ALL=ON
           -DCSV2_VERIFICATION_PROFILE=quick
           -DCSV2_REQUIRE_PYTHON_AUDITS=ON
           -DCSV2_CI_EXPECTED_COMPILER_ID=AppleClang
           -DCSV2_CI_EXPECTED_COMPILER_VERSION_PREFIX=21
 
       - name: Build
+        if: inputs.quick
         run: cmake --build build --parallel
 
-      - name: Test
+      - name: Build benchmark portability owners
+        if: inputs.benchmark
         run: >-
-          ctest --test-dir build --parallel 2
+          cmake --build build --parallel --target
+          csv2_benchmark csv2_benchmark_allocations csv2_common_benchmark
+
+      - name: Test
+        if: inputs.quick
+        run: >-
+          ctest --test-dir build -LE benchmark-checksum
+          --parallel 2 --no-tests=error
           --output-on-failure --output-junit ctest.xml
 
+      - name: Test benchmark portability owners
+        if: inputs.benchmark
+        run: >-
+          ctest --test-dir build -L benchmark-portability
+          --parallel 2 --no-tests=error
+          --output-on-failure --output-junit benchmark-portability.xml
+
       - name: Install package
+        if: inputs.quick
         run: cmake --install build --prefix build/install
 
       - name: Verify installed package consumer
+        if: inputs.quick
         run: |
           cmake -S test/contracts/consumer -B build/consumer-build -G Ninja \
             -DCMAKE_PREFIX_PATH="$PWD/build/install"
@@ -70,5 +96,7 @@ jobs:
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: macos-appleclang21-ctest
-          path: build/ctest.xml
+          path: |
+            build/ctest.xml
+            build/benchmark-portability.xml
           if-no-files-found: error

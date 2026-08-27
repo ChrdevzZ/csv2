@@ -1,25 +1,30 @@
 name: Full verification
 
 on:
-  pull_request:
-    paths:
-      - .github/workflows/full.yml
-      - .github/workflows/linux.yml
-      - benchmark/**
-      - cmake/**
-      - include/**
-      - single_include/**
-      - test/**
-      - third_party/verification/**
-      - tools/**
-      - CMakeLists.txt
+  workflow_call:
+    inputs:
+      benchmarks:
+        type: boolean
+        default: true
+      extended:
+        type: boolean
+        default: false
   workflow_dispatch:
+    inputs:
+      benchmarks:
+        description: Build and run exhaustive benchmark contracts
+        type: boolean
+        default: true
+      extended:
+        description: Add Clang, Windows, macOS, fuzz, and coverage jobs
+        type: boolean
+        default: true
 
 permissions:
   contents: read
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  group: full-${{ github.workflow }}-${{ github.event_name }}-${{ github.event_name == 'workflow_dispatch' && github.run_id || github.event.pull_request.number || github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
@@ -27,10 +32,16 @@ jobs:
     name: Full / Linux / ${{ matrix.name }}
     runs-on: ubuntu-24.04
     timeout-minutes: 60
+    env:
+      CCACHE_BASEDIR: ${{ github.workspace }}
+      CCACHE_COMPILERCHECK: content
+      CCACHE_DIR: ${{ github.workspace }}/.ccache
+      CCACHE_MAXSIZE: 1G
+      CSV2_CACHE_PROFILE: ${{ inputs.benchmarks && 'bench' || 'core' }}
     strategy:
       fail-fast: false
       matrix:
-        include: ${{ fromJSON(github.event_name == 'pull_request' && '[{"name":"GCC 14","compiler":"g++-14","expected_id":"GNU","expected_version":"14","cxx_flags":"","fuzzers":"OFF"}]' || '[{"name":"GCC 14","compiler":"g++-14","expected_id":"GNU","expected_version":"14","cxx_flags":"","fuzzers":"OFF"},{"name":"Clang 18 + libc++","compiler":"clang++-18","expected_id":"Clang","expected_version":"18","cxx_flags":"-stdlib=libc++","fuzzers":"ON"}]') }}
+        include: ${{ fromJSON(inputs.extended && '[{"name":"GCC 14","compiler":"g++-14","expected_id":"GNU","expected_version":"14","cxx_flags":"","fuzzers":"OFF"},{"name":"Clang 18 + libc++","compiler":"clang++-18","expected_id":"Clang","expected_version":"18","cxx_flags":"-stdlib=libc++","fuzzers":"ON"}]' || '[{"name":"GCC 14","compiler":"g++-14","expected_id":"GNU","expected_version":"14","cxx_flags":"","fuzzers":"OFF"}]') }}
     steps:
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -39,22 +50,40 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
-      - name: Install Clang libc++
-        if: matrix.expected_id == 'Clang'
+      - name: Install compiler cache and Clang libc++ dependencies
         run: |
+          set -euo pipefail
+          packages=(ccache)
+          if [[ '${{ matrix.expected_id }}' == 'Clang' ]]; then
+            packages+=(libc++-18-dev libc++abi-18-dev)
+          fi
           sudo apt-get update
-          sudo apt-get install --no-install-recommends libc++-18-dev libc++abi-18-dev
+          sudo apt-get install --no-install-recommends "${packages[@]}"
+
+      - name: Restore compiler cache
+        id: ccache-restore
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: .ccache
+          key: csv2-ccache-v2-linux-${{ matrix.expected_id }}-full-${{ env.CSV2_CACHE_PROFILE }}-${{ github.sha }}
+          restore-keys: |
+            csv2-ccache-v2-linux-${{ matrix.expected_id }}-full-${{ env.CSV2_CACHE_PROFILE }}-
+            csv2-ccache-v2-linux-${{ matrix.expected_id }}-full-
+
+      - name: Reset compiler cache statistics
+        run: ccache --zero-stats
 
       - name: Configure full profile
         run: >-
           cmake -S . -B build -G Ninja
           -DCMAKE_BUILD_TYPE=Release
           -DCMAKE_CXX_COMPILER=${{ matrix.compiler }}
+          -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
           -DCMAKE_CXX_FLAGS="${{ matrix.cxx_flags }}"
           -DCMAKE_COMPILE_WARNING_AS_ERROR=ON
           -DCSV2_BUILD_TESTS=ON
-          -DCSV2_BUILD_BENCHMARKS=ON
-          -DCSV2_BUILD_BENCHMARK_CHECKS=ON
+          -DCSV2_BUILD_BENCHMARKS=${{ inputs.benchmarks && 'ON' || 'OFF' }}
+          -DCSV2_BUILD_BENCHMARK_CHECKS=${{ inputs.benchmarks && 'ON' || 'OFF' }}
           -DCSV2_BUILD_FUZZERS=${{ matrix.fuzzers }}
           -DCSV2_VERIFICATION_PROFILE=full
           -DCSV2_REQUIRE_PYTHON_AUDITS=ON
@@ -75,9 +104,14 @@ jobs:
         env:
           ASAN_OPTIONS: detect_leaks=1:halt_on_error=1
           UBSAN_OPTIONS: halt_on_error=1:print_stacktrace=1
-        run: |
-          ./build/test/fuzz/csv2_fuzz -runs=50000 test/fuzz/corpus/reader
-          ./build/test/fuzz/csv2_fuzz_writer -runs=50000 test/fuzz/corpus/writer
+        run: >-
+          python3 tools/ci/run_fuzz_targets.py
+          --reader build/test/fuzz/csv2_fuzz
+          --writer build/test/fuzz/csv2_fuzz_writer
+          --reader-corpus test/fuzz/corpus/reader
+          --writer-corpus test/fuzz/corpus/writer
+          --runs 50000
+          --artifact-root build/fuzz-artifacts
 
       - name: Install package
         run: cmake --install build --prefix build/install
@@ -90,9 +124,16 @@ jobs:
           ./build/consumer/csv2_consumer
           ./build/consumer/csv2_no_mmap_consumer
           csv2_pc_dir="$PWD/build/install/lib/pkgconfig"
-          ${{ matrix.compiler }} -std=c++11 ${{ matrix.cxx_flags }} \
+          compiler="${{ matrix.compiler }}"
+          compiler_flags=()
+          if [[ -n "${{ matrix.cxx_flags }}" ]]; then
+            read -r -a compiler_flags <<< "${{ matrix.cxx_flags }}"
+          fi
+          read -r -a csv2_cflags <<< \
+            "$(PKG_CONFIG_LIBDIR="$csv2_pc_dir" pkg-config --cflags csv2)"
+          "$compiler" -std=c++11 "${compiler_flags[@]}" \
             -Wall -Wextra -Wpedantic -Werror \
-            $(PKG_CONFIG_LIBDIR="$csv2_pc_dir" pkg-config --cflags csv2) \
+            "${csv2_cflags[@]}" \
             test/contracts/consumer/pkg_config.cpp -o build/pkg-config-consumer
           ./build/pkg-config-consumer
 
@@ -104,10 +145,32 @@ jobs:
           path: |
             build/full-ctest.xml
             benchmark/datasets/manifest.json
+            build/fuzz-artifacts
           if-no-files-found: error
 
+      - name: Show compiler cache statistics
+        if: always()
+        run: ccache --show-stats
+
+      - name: Save compiler cache
+        if: >-
+          success() &&
+          steps.ccache-restore.outputs.cache-hit != 'true' &&
+          (
+            github.event_name == 'push' ||
+            github.event_name == 'workflow_dispatch' ||
+            (
+              github.event_name == 'pull_request' &&
+              github.event.pull_request.head.repo.full_name == github.repository
+            )
+          )
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: .ccache
+          key: csv2-ccache-v2-linux-${{ matrix.expected_id }}-full-${{ env.CSV2_CACHE_PROFILE }}-${{ github.sha }}
+
   windows:
-    if: github.event_name == 'workflow_dispatch'
+    if: inputs.extended
     name: Full / Windows / MSVC 19.51
     runs-on: windows-2025-vs2026
     timeout-minutes: 60
@@ -122,8 +185,8 @@ jobs:
           cmake -S . -B build -G "Visual Studio 18 2026" -A x64
           -DCMAKE_COMPILE_WARNING_AS_ERROR=ON
           -DCSV2_BUILD_TESTS=ON
-          -DCSV2_BUILD_BENCHMARKS=ON
-          -DCSV2_BUILD_BENCHMARK_CHECKS=ON
+          -DCSV2_BUILD_BENCHMARKS=${{ inputs.benchmarks && 'ON' || 'OFF' }}
+          -DCSV2_BUILD_BENCHMARK_CHECKS=${{ inputs.benchmarks && 'ON' || 'OFF' }}
           -DCSV2_BUILD_FUZZERS=OFF
           -DCSV2_VERIFICATION_PROFILE=full
           -DCSV2_REQUIRE_PYTHON_AUDITS=ON
@@ -164,7 +227,7 @@ jobs:
           if-no-files-found: error
 
   macos:
-    if: github.event_name == 'workflow_dispatch'
+    if: inputs.extended
     name: Full / macOS / AppleClang 21
     runs-on: macos-26
     timeout-minutes: 60
@@ -181,8 +244,8 @@ jobs:
           -DCMAKE_CXX_COMPILER=clang++
           -DCMAKE_COMPILE_WARNING_AS_ERROR=ON
           -DCSV2_BUILD_TESTS=ON
-          -DCSV2_BUILD_BENCHMARKS=ON
-          -DCSV2_BUILD_BENCHMARK_CHECKS=ON
+          -DCSV2_BUILD_BENCHMARKS=${{ inputs.benchmarks && 'ON' || 'OFF' }}
+          -DCSV2_BUILD_BENCHMARK_CHECKS=${{ inputs.benchmarks && 'ON' || 'OFF' }}
           -DCSV2_BUILD_FUZZERS=OFF
           -DCSV2_VERIFICATION_PROFILE=full
           -DCSV2_REQUIRE_PYTHON_AUDITS=ON
@@ -218,7 +281,7 @@ jobs:
           if-no-files-found: error
 
   coverage:
-    if: github.event_name == 'workflow_dispatch'
+    if: inputs.extended
     name: Full / Linux / Clang 18 coverage (non-blocking)
     runs-on: ubuntu-24.04
     timeout-minutes: 30

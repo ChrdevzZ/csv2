@@ -1,3 +1,4 @@
+#include "build_config.hpp"
 #include "context.hpp"
 #include "support/mapping_touch.hpp"
 
@@ -383,12 +384,12 @@ bool parse_options(int &argc, char **argv, Options &options, std::string &error)
     return false;
   }
   if (options.input.empty() && !options.list) {
-#if defined(CSV2_BENCHMARK_DEFAULT_INPUT)
-    options.input = CSV2_BENCHMARK_DEFAULT_INPUT;
-#else
-    error = "--csv2-input is required";
-    return false;
-#endif
+    const char *default_input = build_config::default_input();
+    if (!default_input || !*default_input) {
+      error = "--csv2-input is required";
+      return false;
+    }
+    options.input = default_input;
   }
   return true;
 }

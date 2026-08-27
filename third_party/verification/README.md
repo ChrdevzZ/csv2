@@ -8,7 +8,7 @@ never installed, exported, linked by `csv2::csv2`, or exposed to consumers.
 
 | Dependency | Version and source | Archive SHA-256 | Snapshot SHA-256 | License | Consumer |
 | --- | --- | --- | --- | --- | --- |
-| Catch2 | signed tag object `95d8a61b089317bec800c7cc4c64064cbcb3802d`, peeled commit `8b08d4d79514f45f7e4ce2a607ac9c94e920d1bb` (`v3.15.3`) | `b0299ae552918220a7a6e21e7de5b714777f4e8c883fb70c4bb23fe01df8c6e3` | `30a95651c113d1d7e7fee94504319312f9854f0c895e88da98d2233481d08925` | BSL-1.0 | C++14–23 normal runtime tests |
+| Catch2 | signed tag object `95d8a61b089317bec800c7cc4c64064cbcb3802d`, peeled commit `8b08d4d79514f45f7e4ce2a607ac9c94e920d1bb` (`v3.15.3`) | `b0299ae552918220a7a6e21e7de5b714777f4e8c883fb70c4bb23fe01df8c6e3` | `30a95651c113d1d7e7fee94504319312f9854f0c895e88da98d2233481d08925` | BSL-1.0 | C++14–23 normal runtime tests with the `auto` assertion backend |
 | Google Benchmark | commit/tag `192ef10025eb2c4cdd392bc502f0c852196baa48` (`v1.9.5`) | `f82705a2726d8f6cdcda274b841f6314dbfc6f731cdda06c946f310ec1cc3ad9` | `e5ed0f09089472e1ea729869600ae03a8aef75fc521952dcfd30c4904481d789` | Apache-2.0 | current-tree benchmark only |
 
 `manifest.json`, `*.files`, and `*.sha256` record the provenance used when a
@@ -28,7 +28,8 @@ C++17; the independent CSV2 common driver does not link it and remains C++11.
 ```text
 C++11 normal runtime tests       -> csv2_minitest
 all no-exceptions runtime tests  -> csv2_minitest
-C++14–23 normal runtime tests    -> Catch2::Catch2WithMain
+C++14–23 normal + `auto` backend -> Catch2::Catch2WithMain
+C++14–23 normal + `minitest`     -> csv2_minitest
 current-tree benchmark           -> benchmark::benchmark
 C++11 common comparison driver   -> csv2::csv2 only
 Python evidence tools            -> Python 3.10+ standard library only
