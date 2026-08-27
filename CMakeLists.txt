@@ -95,6 +95,16 @@ if(CSV2_BUILD_BENCHMARKS)
   else()
     add_subdirectory(benchmark)
   endif()
+
+  # Keep one root-level entry point for the cross-platform portability owner.
+  # Visual Studio does not expose excluded subdirectory projects as direct
+  # root-solution targets, while this aggregate remains outside the default
+  # ALL build and follows its dependencies on every generator.
+  add_custom_target(csv2_benchmark_portability)
+  add_dependencies(csv2_benchmark_portability
+    csv2_benchmark
+    csv2_benchmark_allocations
+    csv2_common_benchmark)
 endif()
 
 if(CSV2_IS_TOP_LEVEL)

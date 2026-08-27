@@ -40,10 +40,12 @@ ctest --test-dir build-benchmark -L benchmark-checksum \
 `CSV2_BUILD_BENCHMARK_CHECKS` controls CTest registration and requires
 benchmarks to be enabled. With checks off, the benchmark executables and common
 driver still build. `CSV2_BENCHMARKS_EXCLUDE_FROM_ALL=ON` keeps this graph
-configured while allowing a platform job to build only
-`csv2_benchmark`, `csv2_benchmark_allocations`, and
-`csv2_common_benchmark`. A quick local configuration may proceed without Python but
-prints every skipped Python audit; full/perf and
+configured while the root-level `csv2_benchmark_portability` aggregate lets a
+platform job build only `csv2_benchmark`, `csv2_benchmark_allocations`, and
+`csv2_common_benchmark`. The aggregate itself remains outside the default build
+and gives single- and multi-configuration generators the same explicit entry
+point. A quick local configuration may proceed without Python but prints every
+skipped Python audit; full/perf and
 `CSV2_REQUIRE_PYTHON_AUDITS=ON` require Python 3.10+. The current benchmark
 uses C++23 when available and otherwise C++20. Google Benchmark itself is built
 as C++17 and is never installed or exported.

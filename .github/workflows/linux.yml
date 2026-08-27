@@ -347,8 +347,8 @@ jobs:
       - name: Build benchmark portability owners
         if: matrix.sanitizers == 'OFF' && inputs.benchmark
         run: >-
-          cmake --build build --parallel --target
-          csv2_benchmark csv2_benchmark_allocations csv2_common_benchmark
+          cmake --build build --parallel
+          --target csv2_benchmark_portability
 
       - name: Build sanitizer smoke
         if: matrix.sanitizers == 'ON'
