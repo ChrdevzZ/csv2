@@ -48,6 +48,10 @@ cmake --build build --parallel
 ctest --test-dir build --output-on-failure
 ```
 
+Use `./clang-format.bash --write` to format the tracked first-party C++
+sources. CI runs the same file selection with
+`CLANG_FORMAT=clang-format-18 ./clang-format.bash --check`.
+
 Use `full` before changing standards, feature detection, iterators/ranges,
 ownership, no-mmap/no-exceptions behavior, or platform mapping. Use `perf` only
 with the benchmark evidence process; profile selection is not itself a claim
@@ -197,9 +201,11 @@ documentation-only changes keep only preflight and `CI / gate`, and unknown or
 unreadable paths conservatively select every owner. Rename detection is disabled
 for classification so both sides of a rename remain visible; pull requests use
 their merge-base comparison while pushes use the exact before/after range. Files
-installed as package metadata, including the licenses, are never docs-only. The
-root `.gitignore` is also executable source-package policy and selects all
-owners. Linux builds both configured CPack source formats and verifies their
+installed as package metadata, including the licenses, are never docs-only.
+Repository-control files such as `.gitattributes` and `.gitignore`
+conservatively select all owners. CPack uses an explicit artifact policy rather
+than interpreting editor ignore globs. The Linux GCC owner builds both
+configured source formats and verifies their
 complete modular/single-header public surfaces and package metadata byte for
 byte against the checkout, path safety, content-equivalent inventories, and
 Git control-file exclusion. Only after that validation, CI safely expands both

@@ -39,6 +39,8 @@ using CommonReader = csv2::Reader<csv2::delimiter<','>, csv2::quote_character<'"
                                   csv2::first_row_is_header<false>>;
 
 const char protocol[] = "csv2-common-v5";
+// Stable protocol seed; checksum mixing intentionally does not implement FNV-1a.
+const std::uint64_t checksum_seed = 1469598103934665603ull;
 volatile std::uint64_t benchmark_sink = 0;
 #if CSV2_BENCHMARK_TIMER_SCOPE_AUDIT
 bool timed_phase = false;
@@ -134,7 +136,7 @@ protected:
 };
 
 std::uint64_t output_checksum(const FixedOutputBuffer &buffer) {
-  std::uint64_t checksum = 1469598103934665603ull;
+  std::uint64_t checksum = checksum_seed;
   for (std::size_t index = 0; index < buffer.size(); ++index)
     mix(checksum, static_cast<unsigned char>(buffer.data()[index]));
   return checksum;
@@ -236,7 +238,7 @@ Observation traverse(const CommonReader &reader) {
 }
 
 std::uint64_t semantic_checksum(const CommonReader &reader) {
-  std::uint64_t checksum = 1469598103934665603ull;
+  std::uint64_t checksum = checksum_seed;
   for (const auto row : reader) {
     mix(checksum, static_cast<std::uint64_t>(row.length()));
     for (const auto cell : row) {

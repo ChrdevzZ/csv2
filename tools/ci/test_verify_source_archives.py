@@ -58,6 +58,16 @@ class VerifySourceArchivesTests(unittest.TestCase):
                 [archive], source_root=SOURCE_ROOT
             )
 
+    def test_accepts_file_name_that_only_resembles_a_build_directory(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            archive = Path(directory) / "csv2-1.8.0.tar.gz"
+            files = required_files()
+            files["benchmark/protocol/schemas/build-v1.schema.json"] = b"{}\n"
+            write_archive(archive, files)
+            verify_source_archives.verify_archives(
+                [archive], source_root=SOURCE_ROOT
+            )
+
     def test_rejects_missing_required_file(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             archive = Path(directory) / "csv2-1.8.0.tar.gz"
@@ -129,6 +139,39 @@ class VerifySourceArchivesTests(unittest.TestCase):
                 verify_source_archives.verify_archives(
                     [archive], source_root=SOURCE_ROOT
                 )
+
+    def test_rejects_local_work_products_and_repository_control_files(self) -> None:
+        forbidden = (
+            ".gitattributes",
+            ".github/workflows/ci.yml",
+            "build/CMakeCache.txt",
+            "benchmark/artifacts/report.json",
+            "benchmark/build-local/results.txt",
+            "benchmark/object.o",
+            "benchmark/profile.log",
+            "notes~",
+            "test/.idea/workspace.xml",
+            "tools/cache.pyd",
+            "tools/local.user",
+            "tools/report-writer-output.csv",
+            "tools/ci/__pycache__/policy.pyc",
+            "utils/.DS_Store",
+        )
+        for relative in forbidden:
+            with (
+                self.subTest(relative=relative),
+                tempfile.TemporaryDirectory() as directory,
+            ):
+                archive = Path(directory) / "csv2-1.8.0.tar.gz"
+                files = required_files()
+                files[relative] = b"must not ship\n"
+                write_archive(archive, files)
+                with self.assertRaisesRegex(
+                    RuntimeError, "forbidden source package member"
+                ):
+                    verify_source_archives.verify_archives(
+                        [archive], source_root=SOURCE_ROOT
+                    )
 
     def test_rejects_inventory_or_content_mismatch(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

@@ -6,6 +6,9 @@
 
 namespace csv2_benchmark {
 
+// Stable protocol seed; checksum mixing intentionally does not implement FNV-1a.
+constexpr std::uint64_t checksum_seed = 1469598103934665603ull;
+
 enum class KernelStatus : std::uint8_t {
   ok,
   input_open_failed,
@@ -30,8 +33,8 @@ struct Result {
   std::uint64_t allocated_bytes;
 
   Result() noexcept
-      : status(KernelStatus::ok), native_error(0), checksum(1469598103934665603ull), bytes(0),
-        rows(0), cells(0), allocations(0), allocated_bytes(0) {}
+      : status(KernelStatus::ok), native_error(0), checksum(checksum_seed), bytes(0), rows(0),
+        cells(0), allocations(0), allocated_bytes(0) {}
 
   bool ok() const noexcept { return status == KernelStatus::ok; }
 };

@@ -21,6 +21,66 @@ REQUIRED_METADATA = (
     "csv2Config.cmake.in",
 )
 
+LOCAL_WORK_DIRECTORIES = {
+    ".codex_tmp",
+    ".idea",
+    ".temp",
+    ".tmp",
+    ".vs",
+    ".vscode",
+    "analysis-cppcheck-build-dir",
+    "artifacts",
+    "build",
+    "coverage",
+    "Debug",
+    "out",
+    "Release",
+    "test-output",
+    "test-results",
+    "x64",
+    "x86",
+}
+LOCAL_WORK_PREFIXES = ("build-", "cmake-build-", "coverage-")
+LOCAL_WORK_FILES = {".DS_Store", "desktop.ini"}
+LOCAL_WORK_SUFFIXES = {
+    ".a",
+    ".dll",
+    ".docstates",
+    ".dylib",
+    ".exe",
+    ".gcda",
+    ".gcno",
+    ".iml",
+    ".lib",
+    ".log",
+    ".nupkg",
+    ".o",
+    ".obj",
+    ".pdb",
+    ".profraw",
+    ".pyc",
+    ".pyd",
+    ".pyo",
+    ".so",
+    ".suo",
+    ".tmp",
+    ".user",
+    ".userosscache",
+}
+GENERATED_BUILD_NAMES = {
+    ".ninja_deps",
+    ".ninja_log",
+    "CMakeCache.txt",
+    "CMakeFiles",
+    "CTestTestfile.cmake",
+    "Testing",
+    "_deps",
+    "build.ninja",
+    "cmake_install.cmake",
+    "install_manifest.txt",
+    "rules.ninja",
+}
+
 
 def safe_parts(member_name: str, archive: Path) -> tuple[str, ...]:
     if not member_name or "\\" in member_name or "\0" in member_name:
@@ -29,6 +89,29 @@ def safe_parts(member_name: str, archive: Path) -> tuple[str, ...]:
     if path.is_absolute() or ".." in path.parts or not path.parts:
         raise RuntimeError(f"unsafe member path in {archive}: {member_name!r}")
     return path.parts
+
+
+def forbidden_source_member(relative: str, *, directory: bool = False) -> bool:
+    path = PurePosixPath(relative)
+    directory_parts = path.parts if directory else path.parts[:-1]
+    return (
+        any(part.startswith(".git") for part in path.parts)
+        or any(
+            part in LOCAL_WORK_DIRECTORIES
+            or part.startswith(LOCAL_WORK_PREFIXES)
+            for part in directory_parts
+        )
+        or any(part in GENERATED_BUILD_NAMES for part in path.parts)
+        or (
+            not directory
+            and (
+                path.name in LOCAL_WORK_FILES
+                or path.name.endswith("-writer-output.csv")
+                or path.name.endswith("~")
+                or path.suffix in LOCAL_WORK_SUFFIXES
+            )
+        )
+    )
 
 
 def source_contract(source_root: Path) -> dict[str, bytes]:
@@ -89,12 +172,10 @@ def archive_inventory(path: Path) -> tuple[str, dict[str, tuple[int, str]]]:
                     continue
 
                 relative = PurePosixPath(*parts[1:]).as_posix()
-                if (
-                    relative == ".gitignore"
-                    or relative == ".git"
-                    or relative.startswith(".git/")
-                ):
-                    raise RuntimeError(f"VCS metadata leaked into {path}: {relative}")
+                if forbidden_source_member(relative, directory=member.isdir()):
+                    raise RuntimeError(
+                        f"forbidden source package member in {path}: {relative}"
+                    )
                 if member.isdir():
                     continue
                 if not member.isfile():
