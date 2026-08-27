@@ -86,13 +86,13 @@ class ClassifyChangesTests(unittest.TestCase):
             {name: False for name in OWNERS},
         )
 
-    def test_unknown_path_fails_open_to_every_owner(self) -> None:
+    def test_unknown_path_fails_safe_to_every_owner(self) -> None:
         self.assertEqual(
             classify("unclassified/new-contract.data"),
             {name: True for name in OWNERS},
         )
 
-    def test_empty_diff_fails_open_to_every_owner(self) -> None:
+    def test_empty_diff_fails_safe_to_every_owner(self) -> None:
         self.assertEqual(classify(), {name: True for name in OWNERS})
 
     def test_public_header_requires_every_owner(self) -> None:
@@ -148,8 +148,10 @@ class ClassifyChangesTests(unittest.TestCase):
             with self.subTest(path=path):
                 self.assertEqual(classify(path), {name: True for name in OWNERS})
 
-    def test_gitignore_change_selects_source_package_owners(self) -> None:
-        self.assertEqual(classify(".gitignore"), {name: True for name in OWNERS})
+    def test_repository_control_file_changes_select_every_owner(self) -> None:
+        for path in (".gitattributes", ".gitignore"):
+            with self.subTest(path=path):
+                self.assertEqual(classify(path), {name: True for name in OWNERS})
 
     def test_owner_prefix_does_not_match_a_lookalike_directory(self) -> None:
         self.assertEqual(

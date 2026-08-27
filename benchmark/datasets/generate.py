@@ -16,6 +16,9 @@ from typing import Iterable, Sequence
 SCHEMA = "csv2-benchmark-corpus-v2"
 GENERATOR_VERSION = 2
 SEED = 0x43535632
+CHECKSUM_SEED = 1469598103934665603
+CHECKSUM_PRIME = 1099511628211
+UINT64_MASK = (1 << 64) - 1
 
 
 class Lcg32:
@@ -29,12 +32,14 @@ class Lcg32:
         return self._state
 
 
-def fnv1a(chunks: Iterable[bytes]) -> int:
-    value = 1469598103934665603
+def stable_checksum(chunks: Iterable[bytes]) -> int:
+    # This project-local seed is part of the versioned manifest contract; it
+    # is intentionally not the standard FNV-1a offset basis.
+    value = CHECKSUM_SEED
     for chunk in chunks:
         for byte in chunk:
             value ^= byte
-            value = (value * 1099511628211) & ((1 << 64) - 1)
+            value = (value * CHECKSUM_PRIME) & UINT64_MASK
     return value
 
 
@@ -53,7 +58,7 @@ def content_checksum(rows: Sequence[Sequence[str]]) -> int:
             data = field.encode("utf-8")
             chunks.append(len(data).to_bytes(8, "little"))
             chunks.append(data)
-    return fnv1a(chunks)
+    return stable_checksum(chunks)
 
 
 def parse_rows(data: bytes) -> list[list[str]]:
@@ -185,8 +190,20 @@ def build_manifest(fixtures: Path, scale: int) -> dict[str, object]:
         },
     }
     generated = generated_datasets(scale)
+    fixture_paths = sorted(fixtures.glob("*.csv"))
+    actual_names = {path.name for path in fixture_paths}
+    expected_names = set(generated)
+    unexpected = sorted(actual_names - expected_names)
+    if unexpected:
+        raise RuntimeError(
+            "unexpected benchmark datasets: " + ", ".join(unexpected)
+        )
+    missing = sorted(expected_names - actual_names)
+    if missing:
+        raise RuntimeError("missing benchmark datasets: " + ", ".join(missing))
+
     records: list[dict[str, object]] = []
-    for path in sorted(fixtures.glob("*.csv")):
+    for path in fixture_paths:
         data = path.read_bytes()
         strict_error = invalid_errors.get(
             path.name,
@@ -194,7 +211,7 @@ def build_manifest(fixtures: Path, scale: int) -> dict[str, object]:
         )
         valid = strict_error["code"] == "none"
         rows = parse_rows(data) if valid else []
-        parameters = generated.get(path.name, (b"", {"kind": "legacy-smoke"}))[1]
+        parameters = generated[path.name][1]
         records.append(
             {
                 "name": path.name,
@@ -204,7 +221,7 @@ def build_manifest(fixtures: Path, scale: int) -> dict[str, object]:
                 "sha256": hashlib.sha256(data).hexdigest(),
                 "rows": len(rows) if valid else None,
                 "cells": sum(len(row) for row in rows) if valid else None,
-                "raw_checksum": str(fnv1a([data])),
+                "raw_checksum": str(stable_checksum([data])),
                 "content_checksum": str(content_checksum(rows)) if valid else None,
                 "strict_valid": valid,
                 "strict_error": strict_error,

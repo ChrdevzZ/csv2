@@ -15,8 +15,7 @@ benchmark/
 ├── checks/     CTest protocol, checksum, CLI, and allocation contracts
 ├── protocol/   versioned report documentation and JSON schemas
 ├── tools/      standard-library-only Python evidence pipeline and tests
-├── finalize_evidence.py  cross-report final decision gate
-└── legacy/     historical csv-game sources, excluded from new reports
+└── finalize_evidence.py  cross-report final decision gate
 ```
 
 `benchmark/CMakeLists.txt` requires CMake 3.16 and is parsed only when

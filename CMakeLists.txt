@@ -50,11 +50,6 @@ else()
   set(CSV2_IS_TOP_LEVEL OFF)
 endif()
 
-if(EXISTS "${CMAKE_BINARY_DIR}/conanbuildinfo.cmake")
-    include("${CMAKE_BINARY_DIR}/conanbuildinfo.cmake")
-    conan_basic_setup()
-endif()
-
 include(${CMAKE_CURRENT_LIST_DIR}/cmake/verification/Csv2VerificationOptions.cmake)
 
 if(csv2_verification_enabled)
@@ -139,31 +134,25 @@ if(CSV2_IS_TOP_LEVEL)
   install(FILES LICENSE LICENSE.mio
           DESTINATION ${CMAKE_INSTALL_DATAROOTDIR}/licenses/csv2)
 
-  if(EXISTS "${PROJECT_SOURCE_DIR}/.gitignore")
-    # Simple glob to regex conversion (.gitignore => CPACK_SOURCE_IGNORE_FILES)
-    file(READ ".gitignore" DOT_GITIGNORE)
-    string(REPLACE ";" "RANDOMSEQUENCE" DOT_GITIGNORE "${DOT_GITIGNORE}")
-    string(REPLACE "\n" ";" DOT_GITIGNORE "${DOT_GITIGNORE}")
-    string(REPLACE "RANDOMSEQUENCE" "\\;" DOT_GITIGNORE "${DOT_GITIGNORE}")
-    foreach(IGNORE_LINE ${DOT_GITIGNORE})
-      if(NOT IGNORE_LINE OR IGNORE_LINE MATCHES "^#")
-        continue()
-      endif()
-      string(REPLACE "\\" "\\\\" IGNORE_LINE "${IGNORE_LINE}")
-      string(REPLACE "." "\\\\." IGNORE_LINE "${IGNORE_LINE}")
-      string(REPLACE "*" ".*" IGNORE_LINE "${IGNORE_LINE}")
-      string(REPLACE "+" "\\\\+" IGNORE_LINE "${IGNORE_LINE}")
-      list(APPEND CPACK_SOURCE_IGNORE_FILES "${IGNORE_LINE}")
-    endforeach()
-  endif()
-
-  # extra ignored files
-  list(APPEND CPACK_SOURCE_IGNORE_FILES
-    .editorconfig
-    .git
-    .gitignore
-    .travis.yml
-    .appveyor.yml
+  # CPack consumes regular expressions, not gitignore globs. Keep packaging
+  # policy explicit so editor preferences cannot silently change artifacts.
+  # Use [.] for literal dots because CPack serializes these expressions through
+  # a generated CMake configuration before evaluating them.
+  set(CPACK_SOURCE_IGNORE_FILES
+    "/[.]git[^/]*($|/)"
+    "/[.](codex_tmp|idea|temp|tmp|vs|vscode)($|/)"
+    "/(analysis-cppcheck-build-dir|build|coverage|out|test-output|test-results)($|/)"
+    "/(build-|cmake-build-|coverage-)[^/]*/"
+    "/(__pycache__|CMakeFiles|Testing|_deps)($|/)"
+    "/(CMakeCache[.]txt|CTestTestfile[.]cmake|cmake_install[.]cmake|install_manifest[.]txt)$"
+    "/(build[.]ninja|rules[.]ninja|[.]ninja_deps|[.]ninja_log)$"
+    "/[^/]+[.](a|dll|docstates|dylib|exe|iml|lib|nupkg|o|obj|pdb|so|suo|user|userosscache)$"
+    "/[^/]+[.]py[cod]$"
+    "/(Debug|Release|x64|x86|artifacts)($|/)"
+    "/[^/]+[.](gcda|gcno|profraw|tmp|log)$"
+    "/[^/]+-writer-output[.]csv$"
+    "/[^/]+~$"
+    "/(desktop[.]ini|[.]DS_Store)$"
   )
   set(CPACK_SOURCE_PACKAGE_FILE_NAME "${PROJECT_NAME}-${PROJECT_VERSION}")
   set(CPACK_GENERATOR "TGZ;TXZ")

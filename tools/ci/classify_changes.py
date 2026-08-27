@@ -111,11 +111,6 @@ def classify_paths(paths: Iterable[str]) -> dict[str, bool]:
             selected["quick"] = True
             selected["full"] = True
             continue
-        if path == ".gitignore":
-            # Root CMake converts this file into CPACK_SOURCE_IGNORE_FILES.
-            return every_owner(True)
-        if path == ".gitattributes":
-            continue
 
         # A path without an explicit owner is never assumed harmless.
         return every_owner(True)

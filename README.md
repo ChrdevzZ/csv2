@@ -335,43 +335,11 @@ ctest --test-dir build-benchmark -L benchmark-checksum \
 ```
 
 Cross-revision runs export one C++11 driver and both header trees from immutable Git objects. Controlled evidence also
-requires a reviewed machine profile, fixed Linux machine, affinity, A/A calibration, matching checksums, three warmups,
-20 paired runs, machine metrics, and a finalized evidence bundle. Reports are validated by reparsing primary wires and
-recomputing statistics; fixed metrics must match one cross-revision semantic case exactly. See
+requires a reviewed machine profile, controlled Linux environment, affinity, A/A calibration, matching checksums, three
+warmups, 20 paired runs, machine metrics, and a finalized evidence bundle. Reports are validated by reparsing primary
+wires and recomputing statistics; fixed metrics must match one cross-revision semantic case exactly. See
 [`benchmark/README.md`](benchmark/README.md) and
 [`benchmark/protocol/README.md`](benchmark/protocol/README.md).
-
-<details>
-<summary>Historical upstream benchmark — 23 September 2022</summary>
-
-The following system description and results are preserved from the
-[upstream README at `4f3c41d`](https://github.com/p-ranav/csv2/blob/4f3c41db6457465e94b92b91fc560b911c16a16a/README.md#performance-benchmark).
-They measured the older program's combined memory-map and cell-iteration path. They are not current fork results and are
-not comparable with the benchmark pipeline described above.
-
-| Type | Value |
-| --- | --- |
-| Processor | 11th Gen Intel(R) Core(TM) i9-11900KF @ 3.50GHz 3.50 GHz |
-| Installed RAM | 32.0 GB (31.9 GB usable) |
-| SSD | [ADATA SX8200PNP](https://www.adata.com/upload/downloadfile/Datasheet_XPG%20SX8200%20Pro_EN_20181017.pdf) |
-| OS | Ubuntu 20.04 LTS running on WSL in Windows 11 |
-| C++ Compiler | g++ (Ubuntu 10.3.0-1ubuntu1~20.04) 10.3.0 |
-
-| Dataset | File Size | Rows | Cols | Time |
-|:--- | ---:| ---:| ---:| ---:|
-| [Denver Crime Data](https://www.kaggle.com/paultimothymooney/denver-crime-data) | 111 MB | 479,100 | 19 | 0.102s |
-| [AirBnb Paris Listings](https://www.kaggle.com/juliatb/airbnb-paris) | 196 MB | 141,730 | 96 | 0.170s |
-| [2015 Flight Delays and Cancellations](https://www.kaggle.com/usdot/flight-delays) | 574 MB | 5,819,079 | 31 | 0.603s |
-| [StackLite: Stack Overflow questions](https://www.kaggle.com/stackoverflow/stacklite) | 870 MB | 17,203,824 | 7 | 0.911s |
-| [Used Cars Dataset](https://www.kaggle.com/austinreese/craigslist-carstrucks-data) | 1.4 GB | 539,768 | 25 | 0.947s |
-| [Title-Based Semantic Subject Indexing](https://www.kaggle.com/hsrobo/titlebased-semantic-subject-indexing) | 3.7 GB | 12,834,026 | 4 | 2.867s |
-| [Bitcoin tweets - 16M tweets](https://www.kaggle.com/alaix14/bitcoin-tweets-20160101-to-20190329) | 4 GB | 47,478,748 | 9 | 3.290s |
-| [DDoS Balanced Dataset](https://www.kaggle.com/devendra416/ddos-datasets) | 6.3 GB | 12,794,627 | 85 | 6.963s |
-| [Seattle Checkouts by Title](https://www.kaggle.com/city-of-seattle/seattle-checkouts-by-title) | 7.1 GB | 34,892,623 | 11 | 7.698s |
-| [SHA-1 password hash dump](https://www.kaggle.com/urvishramaiya/have-i-been-pwnd) | 11 GB | 2,62,974,241 | 2 | 10.775s |
-| [DOHUI NOH scaled_data](https://www.kaggle.com/seaa0612/scaled-data) | 16 GB | 496,782 | 3213 | 16.553s |
-
-</details>
 
 ## Compiling Tests
 
@@ -406,10 +374,10 @@ C++11–23, modular/single-header, and variant matrix; C++26 is compile-only. De
 
 The always-run `CI` workflow classifies the complete Git diff and ends in one
 stable `CI / gate`. Documentation-only changes run preflight and the Gate;
-unknown paths fail open to every owner. Selected changes call the reusable
-Linux, Windows, macOS, fuzz, exact-head full, and performance-protocol
-workflows. Manual full and performance runs retain the broader platform matrix
-and controlled self-hosted path.
+unknown paths fail safe by selecting every owner. Selected changes call the
+reusable Linux, Windows, macOS, fuzz, exact-head full, and
+performance-protocol workflows. Manual full and performance runs retain the
+broader platform matrix and controlled self-hosted path.
 
 ## Installing and Consuming with CMake
 
