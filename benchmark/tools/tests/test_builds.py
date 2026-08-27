@@ -173,6 +173,84 @@ class BuildTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "requested compiler flags"):
             self.validate_current_topology(*topology)
 
+    def test_current_compile_topology_rejects_overridden_release_flags(self) -> None:
+        cases = (
+            (
+                "-O3 -O0 -DNDEBUG -std=c++23 -Wall",
+                ("-O3", "-DNDEBUG"),
+                "effective optimized compile flag",
+            ),
+            (
+                "-O3 -DNDEBUG -UNDEBUG -std=c++23 -Wall",
+                ("-O3", "-DNDEBUG"),
+                "effective NDEBUG",
+            ),
+            (
+                "/O2 /Od /DNDEBUG /std:c++20 /W4",
+                ("/O2", "/DNDEBUG"),
+                "effective optimized compile flag",
+            ),
+            (
+                "/O2 /DNDEBUG /UNDEBUG /std:c++20 /W4",
+                ("/O2", "/DNDEBUG"),
+                "effective NDEBUG",
+            ),
+            (
+                "-O3 -DCSV2_NDEBUG_MARKER -std=c++23 -Wall",
+                ("-O3", "-DCSV2_NDEBUG_MARKER"),
+                "effective NDEBUG",
+            ),
+        )
+        for fragments, compiler_flags, diagnostic in cases:
+            with self.subTest(fragments=fragments):
+                topology = valid_current_compile_topology()
+                for owner in topology[0].values():
+                    owner["groups"][0]["fragments"] = fragments
+                with self.assertRaisesRegex(RuntimeError, diagnostic):
+                    self.validate_current_topology(
+                        topology[0],
+                        topology[1],
+                        topology[2],
+                        topology[3],
+                        compiler_flags,
+                    )
+
+    def test_current_compile_topology_rejects_opaque_release_flags(self) -> None:
+        cases = (
+            (
+                "-O3 -DNDEBUG @flags.rsp -std=c++23 -Wall",
+                "response files",
+            ),
+            (
+                "-O3 -DNDEBUG -include overrides.hpp -std=c++23 -Wall",
+                "preprocessor input",
+            ),
+            (
+                "-O3 -DNDEBUG -Wp,-UNDEBUG -std=c++23 -Wall",
+                "pass-through",
+            ),
+            (
+                "-O3 -DNDEBUG -includeoverrides.hpp -std=c++23 -Wall",
+                "preprocessor input",
+            ),
+            (
+                "-O3 -DNDEBUG -Xpreprocessor -U -Xpreprocessor NDEBUG "
+                "-std=c++23 -Wall",
+                "pass-through",
+            ),
+            (
+                "-O3 -DNDEBUG -Xclang -U -Xclang NDEBUG -std=c++23 -Wall",
+                "pass-through",
+            ),
+        )
+        for fragments, diagnostic in cases:
+            with self.subTest(fragments=fragments):
+                topology = valid_current_compile_topology()
+                for owner in topology[0].values():
+                    owner["groups"][0]["fragments"] = fragments
+                with self.assertRaisesRegex(RuntimeError, diagnostic):
+                    self.validate_current_topology(*topology)
+
     def test_current_compile_topology_requires_independent_observer_target(self) -> None:
         topology = valid_current_compile_topology()
         topology[1]["csv2_benchmark_observer_audit"].append("csv2_benchmark_core")
@@ -248,10 +326,44 @@ class BuildTests(unittest.TestCase):
             manifest["digest"] = builds.document_digest(manifest)
             builds.verify_current_build_manifest(manifest)
 
+            contradictory_flags = copy.deepcopy(manifest)
+            contradictory_flags["compiler_flags"] = [
+                "-O3",
+                "-O0",
+                "-DNDEBUG",
+            ]
+            contradictory_flags["identity_digest"] = (
+                builds.current_build_identity_digest(contradictory_flags)
+            )
+            contradictory_flags.pop("digest", None)
+            contradictory_flags["digest"] = builds.document_digest(
+                contradictory_flags
+            )
+            with self.assertRaisesRegex(
+                RuntimeError, "effective optimized compile flag"
+            ):
+                builds.verify_current_build_manifest(contradictory_flags)
+
             exported = Path(source["root"]) / "CMakeLists.txt"
             exported.write_bytes(exported.read_bytes() + b"\n")
             with self.assertRaisesRegex(RuntimeError, "changed after extraction"):
                 builds.verify_current_build_manifest(manifest)
+
+    def test_current_build_rejects_release_overrides_before_workspace_setup(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            workspace = root / "workspace"
+            with self.assertRaisesRegex(
+                RuntimeError, "effective optimized compile flag"
+            ):
+                builds.build_current_tree(
+                    repository=root / "missing-repository",
+                    reference="HEAD",
+                    compiler=root / "missing-compiler",
+                    compiler_flags=("-O3", "-O0", "-DNDEBUG"),
+                    workspace=workspace,
+                )
+            self.assertFalse(workspace.exists())
 
     def test_msvc_owned_build_normalizes_source_paths_reproducibly(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

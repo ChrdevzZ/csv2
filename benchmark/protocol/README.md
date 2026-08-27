@@ -39,7 +39,10 @@ are allowed only in objects explicitly marked extensible.
   `compile_commands.json`, target compile groups, include roots, revision
   definition, caller-supplied compiler flags, link commands, executables, and
   generated corpus manifest. Every exported blob, tool, build record, target,
-  and corpus manifest is rehashed after measurement before completion.
+  and corpus manifest is rehashed after measurement before completion. Its
+  ordered flags and audited compile groups must leave `-O2`, `-O3`, or `/O2`
+  effective and must leave `NDEBUG` defined; a later debug optimization or
+  undefinition override invalidates the build.
 
 The tools re-read Git objects and all build inputs before completion. A build
 identity digest omits incidental workspace paths but includes every semantic

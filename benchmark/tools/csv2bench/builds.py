@@ -72,28 +72,30 @@ def _common_build_definitions(arguments: Sequence[object]) -> dict[str, list[str
     return definitions
 
 
+def _validate_transparent_compiler_argument(argument: str, label: str) -> None:
+    lowered = argument.lower()
+    if "@" in argument:
+        raise RuntimeError(f"{label} cannot use response files")
+    if lowered.startswith("-wp,") or lowered in ("-xclang", "-xpreprocessor"):
+        raise RuntimeError(f"{label} cannot use preprocessor pass-through options")
+    if (
+        lowered.startswith("-include")
+        or lowered.startswith("-imacros")
+        or lowered.startswith("/fi")
+    ):
+        raise RuntimeError(f"{label} cannot force preprocessor input")
+
+
 def _validate_common_compiler_flags(arguments: Sequence[object]) -> None:
     """Reject caller flags that can alter tool-owned preprocessor definitions."""
     for argument in arguments:
         if not isinstance(argument, str):
             raise RuntimeError("common-driver compiler flags contain a non-string argument")
-        lowered = argument.lower()
         if any(name in argument for name in _COMMON_BUILD_DEFINITIONS):
             raise RuntimeError("compiler flags override a reserved common-driver definition")
-        if "@" in argument:
-            raise RuntimeError("common-driver compiler flags cannot use response files")
-        if lowered.startswith("-wp,"):
-            raise RuntimeError(
-                "common-driver compiler flags cannot use preprocessor pass-through options"
-            )
-        if (
-            lowered in ("-include", "-imacros", "-include-pch", "/fi")
-            or lowered.startswith("-include=")
-            or lowered.startswith("-imacros=")
-            or lowered.startswith("-include-pch=")
-            or (lowered.startswith("/fi") and len(argument) > 3)
-        ):
-            raise RuntimeError("common-driver compiler flags cannot force preprocessor input")
+        _validate_transparent_compiler_argument(
+            argument, "common-driver compiler flags"
+        )
 
 
 def validate_common_build_command_contract(manifest: dict[str, object]) -> None:
@@ -939,6 +941,48 @@ def _expected_string_defines(name: str, value: str) -> set[str]:
     return {f'{name}="{value}"', f'{name}=\\"{value}\\"'}
 
 
+def _validate_effective_release_flags(
+    arguments: Sequence[str], label: str
+) -> None:
+    optimization: str | None = None
+    ndebug: bool | None = None
+    index = 0
+    while index < len(arguments):
+        argument = arguments[index]
+        _validate_transparent_compiler_argument(argument, label)
+        lowered = argument.lower()
+        if re.fullmatch(r"-O(?:[0-9]+|fast|g|s|z)?", argument):
+            optimization = argument
+        elif re.fullmatch(r"/O(?:1|2|d|x)", argument, re.IGNORECASE):
+            optimization = lowered
+
+        macro_action: bool | None = None
+        macro_payload: str | None = None
+        if argument in ("-D", "-U") or lowered in ("/d", "/u"):
+            macro_action = argument == "-D" or lowered == "/d"
+            index += 1
+            if index < len(arguments):
+                macro_payload = arguments[index]
+        elif argument.startswith(("-D", "-U")) and len(argument) > 2:
+            macro_action = argument.startswith("-D")
+            macro_payload = argument[2:]
+        elif lowered.startswith(("/d", "/u")) and len(argument) > 2:
+            macro_action = lowered.startswith("/d")
+            macro_payload = argument[2:]
+        if (
+            macro_action is not None
+            and macro_payload is not None
+            and macro_payload.partition("=")[0] == "NDEBUG"
+        ):
+            ndebug = macro_action
+        index += 1
+
+    if optimization not in {"-O2", "-O3", "/o2"}:
+        raise RuntimeError(f"{label} lacks an effective optimized compile flag")
+    if ndebug is not True:
+        raise RuntimeError(f"{label} lacks effective NDEBUG")
+
+
 def validate_current_compile_topology(
     *,
     owners: dict[str, dict[str, object]],
@@ -1036,10 +1080,7 @@ def validate_current_compile_topology(
                     f"{owner_name} lacks requested compiler flags: "
                     + ", ".join(missing_flags)
                 )
-            if "NDEBUG" not in fragments:
-                raise RuntimeError(f"{owner_name} lacks NDEBUG")
-            if not any(flag in fragments for flag in ("-O2", "-O3", "/O2")):
-                raise RuntimeError(f"{owner_name} lacks an optimized compile flag")
+            _validate_effective_release_flags(fragment_tokens, owner_name)
             if standard not in {"20", "23", "26"} or not any(
                 flag in fragments
                 for flag in (
@@ -1377,11 +1418,14 @@ def build_current_tree(
 ) -> dict[str, object]:
     if corpus_scale < 1:
         raise RuntimeError("corpus scale must be positive")
+    compiler_flags = list(compiler_flags)
+    if not compiler_flags or not all(
+        isinstance(flag, str) and flag for flag in compiler_flags
+    ):
+        raise RuntimeError("owned current-tree builds require non-empty compiler flags")
+    _validate_effective_release_flags(compiler_flags, "owned current-tree compiler flags")
     repository = artifacts.canonical_existing(repository, "Git repository")
     compiler = _compiler_path(compiler)
-    compiler_flags = list(compiler_flags)
-    if not compiler_flags or any(not flag for flag in compiler_flags):
-        raise RuntimeError("owned current-tree builds require non-empty compiler flags")
     cmake_path = shutil.which("cmake")
     ninja_path = shutil.which("ninja")
     if cmake_path is None or ninja_path is None:
@@ -1508,6 +1552,12 @@ def verify_current_build_manifest(manifest: dict[str, object]) -> None:
         or current_build_identity_digest(manifest) != manifest["identity_digest"]
     ):
         raise RuntimeError("current-tree build identity digest is inconsistent")
+    compiler_flags = manifest.get("compiler_flags")
+    if not isinstance(compiler_flags, list) or not all(
+        isinstance(flag, str) and flag for flag in compiler_flags
+    ):
+        raise RuntimeError("current-tree compiler flags are malformed")
+    _validate_effective_release_flags(compiler_flags, "current-tree build")
 
     source = manifest.get("source_export")
     if not isinstance(source, dict):
