@@ -316,7 +316,11 @@ target-specific compile commands, include roots, revision definition,
 caller-supplied compiler flags, link commands, executables, and corpus before
 accepting timing JSON. Owned metrics require a non-empty native
 `--compiler-flags` value; those flags are applied to both Release targets and
-are not descriptive metadata. It records
+are not descriptive metadata. The ordered flags and audited compile commands
+must leave `-O2`, `-O3`, or `/O2` as the effective optimization level and must
+leave `NDEBUG` defined; later debug optimization or undefinition overrides are
+rejected before workspace creation and again when the build manifest is
+validated. It records
 allocations, Google Benchmark real-time samples, Linux PMU counters, peak RSS,
 text/data/BSS sizes, and clean owned-build duration:
 
