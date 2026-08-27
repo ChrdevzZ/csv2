@@ -69,7 +69,7 @@ jobs:
         if: matrix.sanitizers == 'OFF' && matrix.benchmark_owner && inputs.benchmark
         run: >-
           cmake --build build --config ${{ matrix.configuration }} --parallel
-          --target csv2_benchmark csv2_benchmark_allocations csv2_common_benchmark
+          --target csv2_benchmark_portability
 
       - name: Build sanitizer smoke
         if: matrix.sanitizers == 'ON'

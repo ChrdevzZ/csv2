@@ -1,5 +1,5 @@
-#include "build_config.hpp"
 #include "context.hpp"
+#include "build_config.hpp"
 #include "support/mapping_touch.hpp"
 
 #include <algorithm>
