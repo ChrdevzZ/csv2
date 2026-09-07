@@ -276,7 +276,9 @@ endfunction()
 
 csv2_filter_supported_standards(csv2_pre_cxx20_standards 11 14 17)
 foreach(standard IN LISTS csv2_pre_cxx20_standards)
-  csv2_add_version_guard_contract(${standard} FALSE)
+  if(NOT standard EQUAL 11)
+    csv2_add_version_guard_contract(${standard} FALSE)
+  endif()
   csv2_add_version_guard_contract(${standard} TRUE)
 endforeach()
 

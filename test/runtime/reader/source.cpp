@@ -1,5 +1,20 @@
 #include <csv2_test/assertions.hpp>
-#include <csv2_test/test_support.hpp>
+#include <csv2_test/fixtures.hpp>
+#include <csv2_test/reader_support.hpp>
+#include <csv2_test/string_like.hpp>
+#include <csv2_test/temporary_file.hpp>
+
+#include <stdexcept>
+#include <string>
+#include <utility>
+#include <vector>
+
+#if CSV2_HAS_SPAN
+#include <span>
+#endif
+#if CSV2_HAS_STRING_VIEW
+#include <string_view>
+#endif
 
 using namespace csv2_test;
 

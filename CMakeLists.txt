@@ -53,6 +53,14 @@ endif()
 include(${CMAKE_CURRENT_LIST_DIR}/cmake/verification/Csv2VerificationOptions.cmake)
 
 if(csv2_verification_enabled)
+  get_filename_component(csv2_source_real_path "${CMAKE_CURRENT_SOURCE_DIR}" REALPATH)
+  get_filename_component(csv2_binary_real_path "${CMAKE_CURRENT_BINARY_DIR}" REALPATH)
+  if(csv2_source_real_path STREQUAL csv2_binary_real_path)
+    message(FATAL_ERROR
+      "CSV2 verification requires an out-of-source build. Configure with a "
+      "separate binary directory when enabling tests, benchmarks, or fuzzers.")
+  endif()
+
   include(${CMAKE_CURRENT_LIST_DIR}/cmake/verification/Csv2VerificationStandards.cmake)
   include(${CMAKE_CURRENT_LIST_DIR}/cmake/verification/Csv2VerificationTargetOptions.cmake)
   include(${CMAKE_CURRENT_LIST_DIR}/cmake/verification/Csv2VerificationVendor.cmake)

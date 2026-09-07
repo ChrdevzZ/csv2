@@ -1,9 +1,12 @@
 #include <csv2_test/assertions.hpp>
-#include <csv2_test/test_support.hpp>
+#include <csv2_test/csv2_headers.hpp>
 
+#include <cstddef>
 #include <cstdint>
-
-using namespace csv2_test;
+#include <iterator>
+#include <sstream>
+#include <string>
+#include <vector>
 
 namespace {
 

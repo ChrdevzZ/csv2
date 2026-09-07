@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Compatibility entry point for the CSV2 common-driver comparison pipeline."""
+"""Command-line entry point for the CSV2 common-driver comparison pipeline."""
 
 from __future__ import annotations
 

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Compatibility entry point for the CSV2 performance evidence finalizer."""
+"""Command-line entry point for the CSV2 performance evidence finalizer."""
 
 from __future__ import annotations
 

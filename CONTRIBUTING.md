@@ -28,6 +28,11 @@ CSV2_BUILD_BENCHMARK_CHECKS  # requires benchmarks
 CSV2_BUILD_FUZZERS
 ```
 
+Tests, benchmarks, and fuzzers require an out-of-source build directory. With
+all three disabled, library-only configuration, installation, and source packaging
+also support in-source builds. Use a clean checkout or extracted source tree;
+turning components off does not remove outputs from an earlier in-source build.
+
 The real libFuzzer targets require Clang's GNU frontend on a non-Windows
 platform. Windows verification uses the deterministic reader and writer fuzz
 smoke executables built with `CSV2_BUILD_TESTS=ON`.
@@ -97,7 +102,8 @@ csv2.runtime.<domain>.<modular|single>.cxx<standard>.<normal|no_mmap|no_exceptio
 
 Select focused work by name or label rather than a test count. Shared support
 types belong in the focused headers under `test/support/include/csv2_test/`;
-avoid expanding the compatibility umbrella `test_support.hpp`.
+include those headers and the standard-library dependencies directly. Header
+and feature isolation checks belong in `csv2_headers.hpp`.
 
 Compile-only public-header, config, standard-library-feature, and mmap path
 contracts belong in `test/contracts/`. Platform injection and emulation belong

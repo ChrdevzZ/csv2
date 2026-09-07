@@ -1,5 +1,13 @@
 #include <csv2_test/assertions.hpp>
-#include <csv2_test/test_support.hpp>
+#include <csv2_test/reader_support.hpp>
+
+#include <cstddef>
+#include <string>
+#include <vector>
+
+#if CSV2_HAS_RANGES
+#include <ranges>
+#endif
 
 using namespace csv2_test;
 

@@ -19,7 +19,8 @@ benchmark/
 ```
 
 `benchmark/CMakeLists.txt` requires CMake 3.16 and is parsed only when
-`CSV2_BUILD_BENCHMARKS=ON`. Benchmarks build independently of runtime tests.
+`CSV2_BUILD_BENCHMARKS=ON`. Benchmarks require an out-of-source build directory
+and build independently of runtime tests.
 Google Benchmark is used only by `current/`; `compare/common_driver.cpp` links
 only `csv2::csv2` and remains C++11.
 
@@ -197,7 +198,7 @@ strict-valid status. Committed fixtures are deliberately small and cover:
 Generate a larger corpus only under an ignored build tree:
 
 ```bash
-python3 benchmark/generate_datasets.py \
+python3 benchmark/datasets/generate.py \
   --output build-benchmark/corpus/fixtures \
   --manifest build-benchmark/corpus/manifest.json \
   --scale 100
@@ -214,7 +215,9 @@ Never compare two revisions' historical benchmark programs. The owned-build
 pipeline exports the same candidate `benchmark/compare/common_driver.cpp` and
 each exact header tree directly from immutable Git blobs, then compiles both
 with one audited compiler and normalized command. It rejects links, unsafe
-paths, dirty-worktree substitution, mismatched flags, and output drift.
+paths, dirty-worktree substitution, mismatched flags, and output drift. Git
+replacement objects are disabled throughout commit resolution, tree traversal,
+blob export, and later provenance verification.
 
 The formal driver emits `csv2-common-v5` with `instrumentation=none`. A separate
 timer-scope audit executable is built from the same C++11 source with
@@ -249,7 +252,7 @@ contents cannot be bound by the command manifest.
 
 ## Comparison pipeline
 
-`run_suite.py` is a compatibility wrapper around `tools/csv2bench/runner.py`.
+`run_suite.py` is the command-line entry point for `tools/csv2bench/runner.py`.
 Owned mode is the default: the tool resolves commits, exports and builds both
 drivers, embeds `csv2-benchmark-build-v2` manifests, revalidates all Git/build/
 dataset/tool inputs, rejects output aliases, and atomically publishes a v7
@@ -402,8 +405,16 @@ evidence JSON has a sibling v4 SHA-256 artifact manifest. See
 Pull requests that touch verification infrastructure run a small exact-head
 protocol smoke. It produces current fixed metrics, a three-pair candidate A/A,
 a base/head A/B across two legacy operations and four modern Writer operations,
-and a separate legacy-only owned build against `9504e0b`; all timing remains
-`exploratory` and non-decision-eligible.
+and a separate owned comparison against upstream commit
+`4f3c41db6457465e94b92b91fc560b911c16a16a`. The upstream comparison covers
+`rows_cells` and `legacy_writer_raw` with both buffer and mmap sources, using the
+quoted `checks/fixtures/upstream_common.csv` fixture without a final newline.
+Upstream exposes an extra empty row for newline-terminated input, which its
+Writer cannot safely consume. The smoke therefore verifies the shared input
+domain, not all-input equivalence; it does not preprocess input or patch either
+library. The adapter supplies the upstream Writer's required stream `close()`
+without adding per-row work and honors the Fork's explicit mmap setting.
+All timing remains `exploratory` and non-decision-eligible.
 
 The manual `Performance evidence` workflow produces and finalizes broader
 exploratory artifacts on a hosted runner or controlled artifacts only on a

@@ -1,5 +1,10 @@
 #include <csv2_test/assertions.hpp>
-#include <csv2_test/test_support.hpp>
+#include <csv2_test/streams.hpp>
+
+#include <ios>
+#include <sstream>
+#include <string>
+#include <vector>
 
 using namespace csv2_test;
 

@@ -1,5 +1,21 @@
 #include <csv2_test/assertions.hpp>
-#include <csv2_test/test_support.hpp>
+#include <csv2_test/fixtures.hpp>
+#include <csv2_test/platform.hpp>
+#include <csv2_test/reader_support.hpp>
+#include <csv2_test/temporary_file.hpp>
+
+#include <cstddef>
+#include <fstream>
+#include <ios>
+#include <iterator>
+#include <limits>
+#include <string>
+#include <system_error>
+#include <vector>
+
+#if CSV2_HAS_FILESYSTEM
+#include <filesystem>
+#endif
 
 using namespace csv2_test;
 

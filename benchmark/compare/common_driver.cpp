@@ -33,6 +33,14 @@
 #error "CSV2_BENCHMARK_ENABLE_MODERN_WRITER_OPERATIONS must be 0 or 1"
 #endif
 
+#if defined(CSV2_HAS_MMAP)
+#define CSV2_COMMON_HAS_MMAP CSV2_HAS_MMAP
+#elif defined(__CSV2_HAS_MMAN_H__)
+#define CSV2_COMMON_HAS_MMAP __CSV2_HAS_MMAN_H__
+#else
+#define CSV2_COMMON_HAS_MMAP 0
+#endif
+
 namespace {
 
 using CommonReader = csv2::Reader<csv2::delimiter<','>, csv2::quote_character<'"'>,
@@ -92,6 +100,13 @@ std::uint64_t checksum_mix_count() noexcept {
   return 0;
 #endif
 }
+
+class BenchmarkOutputStream : public std::ostream {
+public:
+  explicit BenchmarkOutputStream(std::streambuf *buffer) : std::ostream(buffer) {}
+  // The upstream Writer closes its Stream; this memory stream owns no file.
+  void close() noexcept {}
+};
 
 class FixedOutputBuffer : public std::streambuf {
   std::vector<char> storage_;
@@ -401,7 +416,7 @@ void extract_decoded_rows(const CommonReader &reader, StringRows &rows) {
 bool prepare_reader(const Options &options, CommonReader &reader, std::string &storage) {
   if (options.source == "buffer")
     return read_file(options.input, storage) && reader.parse(storage);
-#if CSV2_HAS_MMAP
+#if CSV2_COMMON_HAS_MMAP
   if (options.source == "mmap")
     return reader.mmap(options.input);
 #endif
@@ -442,7 +457,7 @@ bool run_prepared(const Options &options, Observation &result, std::uint64_t &ch
 
 bool run_legacy_mmap(const Options &options, Observation &result, std::uint64_t &checksum,
                      std::int64_t &elapsed_ns) {
-#if CSV2_HAS_MMAP
+#if CSV2_COMMON_HAS_MMAP
   if (options.source != "mmap")
     return false;
   {
@@ -521,7 +536,7 @@ bool run_writer(const Options &options, Observation &result, std::uint64_t &chec
   if (!writer_capacity(file_size(options.input), sample, capacity))
     return false;
   FixedOutputBuffer buffer(capacity);
-  std::ostream output(&buffer);
+  BenchmarkOutputStream output(&buffer);
 #if CSV2_BENCHMARK_TIMER_SCOPE_AUDIT
   timed_checksum_mix_calls = 0;
   timed_reader_steps = 0;
@@ -531,7 +546,7 @@ bool run_writer(const Options &options, Observation &result, std::uint64_t &chec
   timed_phase = true;
 #endif
   if (options.operation == "legacy_writer_raw") {
-    csv2::Writer<csv2::delimiter<','>, std::ostream> writer(output);
+    csv2::Writer<csv2::delimiter<','>, BenchmarkOutputStream> writer(output);
     for (std::size_t run = 0; run < options.iterations; ++run) {
       buffer.reset();
       output.clear();
@@ -611,14 +626,14 @@ struct OperationContract {
 
 const OperationContract operation_contracts[] = {
     {"rows_cells", "traversal_only",
-#if CSV2_HAS_MMAP
+#if CSV2_COMMON_HAS_MMAP
      "buffer+mmap",
 #else
      "buffer",
 #endif
      "csv2.traversal.rows-cells.v1", "input_corpus"},
     {"legacy_writer_raw", "writer_only",
-#if CSV2_HAS_MMAP
+#if CSV2_COMMON_HAS_MMAP
      "buffer+mmap",
 #else
      "buffer",
@@ -626,35 +641,35 @@ const OperationContract operation_contracts[] = {
      "csv2.writer.legacy-raw.v1", "input_corpus"},
 #if CSV2_BENCHMARK_ENABLE_MODERN_WRITER_OPERATIONS
     {"writer_raw_direct", "writer_only",
-#if CSV2_HAS_MMAP
+#if CSV2_COMMON_HAS_MMAP
      "buffer+mmap",
 #else
      "buffer",
 #endif
      "csv2.writer.raw-direct.raw-fields.v1", "input_corpus"},
     {"writer_raw_streamable", "writer_only",
-#if CSV2_HAS_MMAP
+#if CSV2_COMMON_HAS_MMAP
      "buffer+mmap",
 #else
      "buffer",
 #endif
      "csv2.writer.raw-streamable.raw-fields.v1", "input_corpus"},
     {"writer_escaped_direct", "writer_only",
-#if CSV2_HAS_MMAP
+#if CSV2_COMMON_HAS_MMAP
      "buffer+mmap",
 #else
      "buffer",
 #endif
      "csv2.writer.escaped-direct.v1", "input_corpus"},
     {"writer_escaped_streamable", "writer_only",
-#if CSV2_HAS_MMAP
+#if CSV2_COMMON_HAS_MMAP
      "buffer+mmap",
 #else
      "buffer",
 #endif
      "csv2.writer.escaped-streamable.v1", "input_corpus"},
 #endif
-#if CSV2_HAS_MMAP
+#if CSV2_COMMON_HAS_MMAP
     {"legacy_mmap_rows_cells", "mmap_and_traversal", "mmap", "csv2.legacy.mmap-rows-cells.v1",
      "input_corpus"},
 #endif
@@ -700,7 +715,7 @@ int main(int argc, char **argv) {
         std::cout << ',';
       std::cout << operation_contracts[index].operation;
     }
-#if CSV2_HAS_MMAP
+#if CSV2_COMMON_HAS_MMAP
     std::cout << " sources=buffer,mmap";
 #else
     std::cout << " sources=buffer";
