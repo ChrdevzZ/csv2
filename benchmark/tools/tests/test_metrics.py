@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import tempfile
 import unittest
 import unittest.mock
@@ -58,6 +59,108 @@ class MetricsTests(unittest.TestCase):
                     self.assertEqual(report["compiler_identity"]["artifact"], owned["compiler"]["artifact"])
                     self.assertEqual(report["compiler_identity"]["compile_command_matches"], 1)
                     self.assertIsNone(report["post_build"])
+
+    def test_external_hooks_rebind_commands_and_preserve_drift_checks(self) -> None:
+        cases = (
+            ("same", "build", None),
+            ("matches", "post", None),
+            ("mismatch", "post", "declared compiler"),
+            ("drift", "build", "compile_commands changed during collection"),
+            ("compiler", "build", "compiler_executable changed during collection"),
+            ("report-alias", "post", "aliases compile commands"),
+            ("manifest-alias", "post", "aliases compile commands"),
+        )
+        for case, phase, error in cases:
+            with self.subTest(case=case), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory).resolve()
+                compiler = root / "cxx"
+                executable = root / "benchmark"
+                allocation = root / "benchmark_allocations"
+                dataset = root / "input.csv"
+                commands = root / "compile_commands.json"
+                output = root / "report.json"
+                manifest = root / "report.json.sha256.json"
+                for path in (compiler, executable, allocation, dataset):
+                    path.write_text("x", encoding="utf-8")
+                entry = {"arguments": [str(compiler), "-c", "source.cpp"]}
+                commands.write_text(json.dumps([entry]), encoding="utf-8")
+                before = metrics.artifacts.metadata(commands)
+                original_compiler = metrics.artifacts.metadata(compiler)
+                rebuilt = None
+
+                def invoke(command, **kwargs):
+                    nonlocal rebuilt
+                    stdout = ""
+                    if command == [phase]:
+                        if case.endswith("-alias"):
+                            target = output if case == "report-alias" else manifest
+                            if not target.exists():
+                                target.write_text("reserved", encoding="utf-8")
+                            commands.unlink()
+                            os.link(target, commands)
+                        else:
+                            entries = [entry] * (2 if case == "matches" else 1)
+                            if case == "mismatch":
+                                entries = [{"arguments": [str(executable), "-c", "source.cpp"]}]
+                            commands.write_text(json.dumps(entries), encoding="utf-8")
+                            changed_time = before["mtime_ns"] + 2_000_000_000
+                            os.utime(commands, ns=(changed_time, changed_time))
+                            rebuilt = metrics.artifacts.metadata(commands)
+                        if case == "compiler":
+                            compiler.write_text("replacement compiler", encoding="utf-8")
+                    elif command in (["build"], ["post"]):
+                        pass
+                    elif command == [str(compiler), "--version"]:
+                        stdout = "test compiler"
+                    elif "--csv2-verify" in command:
+                        stdout = (
+                            "protocol=csv2-current-v4 revision=candidate "
+                            "operation=traversal/rows-cells source=buffer dataset=input.csv "
+                            "semantic_case_id=csv2.traversal.rows-cells.v1 scope=traversal_only "
+                            "byte_basis=input_corpus checksum=1 bytes=1 rows=1 cells=1 "
+                            "allocations=0 allocated_bytes=0"
+                        )
+                    else:
+                        timing_output = next(value.split("=", 1)[1] for value in command
+                                             if value.startswith("--benchmark_out="))
+                        Path(timing_output).write_text(json.dumps({"benchmarks": [{
+                            "name": "csv2/traversal/rows-cells/buffer/input.csv/real_time",
+                            "real_time": 1, "time_unit": "s",
+                            "bytes_per_second": 1, "items_per_second": 1,
+                        }]}), encoding="utf-8")
+                        if case == "drift":
+                            commands.write_text("[]", encoding="utf-8")
+                    return unittest.mock.Mock(stdout=stdout, stderr="")
+
+                argv = [
+                    "collect_metrics", "--external-artifacts", "--executable", str(executable),
+                    "--compiler-executable", str(compiler), "--compile-commands", str(commands),
+                    "--revision", "candidate", "--operation", "traversal/rows-cells",
+                    "--input", str(dataset), "--runs", "1", "--build-command", "build",
+                    "--skip-pmu", "--skip-rss", "--skip-size", "--output", str(output),
+                ]
+                if phase == "post":
+                    argv.extend(["--post-build-command", "post"])
+                with unittest.mock.patch("sys.argv", argv), unittest.mock.patch.object(
+                    metrics, "run", side_effect=invoke
+                ):
+                    if error is None:
+                        metrics.main()
+                    else:
+                        with self.assertRaisesRegex(RuntimeError, error):
+                            metrics.main()
+                report = json.loads(output.read_text(encoding="utf-8"))
+                self.assertEqual(report["status"], "completed" if error is None else "failed")
+                self.assertEqual(report["compiler_identity"]["artifact"], original_compiler)
+                if error is None:
+                    self.assertNotEqual(before["mtime_ns"], rebuilt["mtime_ns"])
+                    if case == "same":
+                        self.assertEqual(before["sha256"], rebuilt["sha256"])
+                    self.assertEqual(report["artifacts"]["compile_commands"], rebuilt)
+                    self.assertEqual(report["compiler_identity"]["compile_command_matches"],
+                                     2 if case == "matches" else 1)
+                    saved_manifest = json.loads(manifest.read_text(encoding="utf-8"))
+                    self.assertEqual(saved_manifest["inputs"]["artifacts"], report["artifacts"])
 
     def test_darwin_optional_metrics_do_not_invoke_gnu_tools(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

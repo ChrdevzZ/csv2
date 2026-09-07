@@ -143,12 +143,7 @@ public:
   template <typename OutputIt> OutputIt copy_content_to(OutputIt output) const {
     if (start_ >= end_)
       return output;
-    auto bounds = trim_policy::trim(buffer_, start_, end_);
-    if (bounds.second - bounds.first >= 2 && buffer_[bounds.first] == quote_character::value &&
-        buffer_[bounds.second - 1] == quote_character::value) {
-      ++bounds.first;
-      --bounds.second;
-    }
+    const auto bounds = content_bounds_();
     for (size_t i = bounds.first; i < bounds.second; ++i) {
       *output = buffer_[i];
       ++output;

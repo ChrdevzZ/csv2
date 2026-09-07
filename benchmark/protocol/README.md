@@ -70,9 +70,12 @@ retained, and A/A still requires identical executable hashes.
 Byte-identical debug builds have been verified with GCC and Clang on Linux;
 this does not establish reproducibility for every compiler and target format.
 
-Owned builds are the default. `--external-artifacts` is an explicit legacy
-escape hatch restricted to `exploratory`; it can never participate in a
-decision-eligible evidence bundle.
+Owned builds are the default. `--external-artifacts` is an explicit mode
+restricted to `exploratory`; it can never participate in a decision-eligible
+evidence bundle. External build/post-build hooks are preparation: afterward,
+executables, datasets, and the compilation database are rebound, and compiler
+matching is recomputed. The declared compiler identity remains fixed. Once
+measurement starts, subsequent artifact drift is rejected.
 
 The common-driver build manifest records `instrumentation=none` and its ordered
 capability set. Legacy reader and Writer capabilities are always present;

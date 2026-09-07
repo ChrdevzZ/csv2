@@ -228,7 +228,10 @@ generator changes, and scale changes trigger regeneration; an unchanged build
 does not rewrite the corpus. The generator and committed fixture inventory must
 agree. The direct command above forces regeneration and audits the files actually
 written. Incremental timestamps only schedule work; evidence validation still
-checks the inventory and content hashes.
+checks the inventory and content hashes. Before writing, generation rejects
+unexpected CSV outputs and manifest paths that conflict with corpus outputs or
+generator inputs. Individual files are replaced atomically; a whole corpus is
+not a multi-file transaction under I/O failure or process interruption.
 
 ## Cross-revision common driver
 
