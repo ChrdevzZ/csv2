@@ -40,7 +40,7 @@ jobs:
       - name: Run CI policy tests
         run: |
           python3 -m unittest discover -s tools/ci -p 'test_*.py'
-          python3 -m unittest benchmark.tools.tests.test_case_manifest
+          python3 -B -m unittest discover -s benchmark/tools/tests -p 'test_*.py'
           python3 tools/vendor/test_update_verification_dependencies.py
 
       - name: Validate GitHub Actions workflows

@@ -3,6 +3,9 @@ name: Full verification
 on:
   workflow_call:
     inputs:
+      tooling_preflight:
+        type: boolean
+        default: false
       coverage_only:
         type: boolean
         default: false
@@ -105,7 +108,9 @@ jobs:
 
       - name: Run full CTest matrix
         run: >-
-          ctest --test-dir build --output-on-failure
+          ctest --test-dir build
+          ${{ (inputs.tooling_preflight || matrix.expected_id != 'GNU') && '-LE benchmark-tooling' || '' }}
+          --output-on-failure
           --no-tests=error
           --output-junit full-ctest.xml
 
@@ -208,7 +213,7 @@ jobs:
 
       - name: Run full CTest matrix
         run: >-
-          ctest --test-dir build -C Release --output-on-failure
+          ctest --test-dir build -C Release -LE benchmark-tooling --output-on-failure
           --no-tests=error
           --output-junit full-ctest.xml
 
@@ -265,7 +270,7 @@ jobs:
       - name: Build and test
         run: |
           cmake --build build --parallel
-          ctest --test-dir build --output-on-failure \
+          ctest --test-dir build -LE benchmark-tooling --output-on-failure \
             --no-tests=error \
             --output-junit full-ctest.xml
 

@@ -2,6 +2,10 @@ name: Fuzz and benchmark smoke
 
 on:
   workflow_call:
+    inputs:
+      tooling_preflight:
+        type: boolean
+        default: false
   schedule:
     - cron: "17 3 * * 1"
   workflow_dispatch:
@@ -91,8 +95,10 @@ jobs:
           cmake --build build-no-mmap --parallel \
             --target csv2_benchmark csv2_benchmark_allocations \
             csv2_benchmark_observer_audit \
+            csv2_benchmark_writer_allocations \
             csv2_common_benchmark csv2_common_benchmark_timer_audit
           ctest --test-dir build-no-mmap -L benchmark-checksum \
+            ${{ inputs.tooling_preflight && '-LE benchmark-tooling' || '' }} \
             --no-tests=error --output-on-failure \
             --output-junit benchmark-checksum.xml
 

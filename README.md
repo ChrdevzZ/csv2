@@ -375,8 +375,9 @@ C++11–23, modular/single-header, and variant matrix; C++26 is compile-only. De
 [`third_party/verification/README.md`](third_party/verification/README.md).
 
 The always-run `CI` workflow classifies the complete Git diff and ends in one
-stable `CI / gate`. Documentation-only changes run preflight and the Gate;
-unknown paths fail safe by selecting every owner applicable to the event. Automatic
+stable `CI / gate`. Documentation-only changes run preflight and the Gate.
+Preflight also owns the build-independent Python benchmark tooling suite.
+Unknown paths fail safe by selecting every owner applicable to the event. Automatic
 performance-protocol smoke is PR-only. Selected changes call the
 reusable Linux, Windows, macOS, fuzz, exact-head full, and
 performance-protocol workflows. Manual full and performance runs retain the

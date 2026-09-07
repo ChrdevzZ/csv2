@@ -144,7 +144,9 @@ def validate_common_build_command_contract(manifest: dict[str, object]) -> None:
     else:
         version = manifest["compiler"]["version"]
         config = ["--no-default-config", "--driver-mode=g++"] if "clang" in (version["stdout"] + version["stderr"]).lower() else []
-        tail = [*config, "-MD", "-MF", "{dependencies}",
+        tail = [*config, "-ffile-prefix-map={adapter_root}=/_csv2/adapter",
+                "-ffile-prefix-map={header_root}=/_csv2/source",
+                "-MD", "-MF", "{dependencies}",
                 *("-D" + value for value in definitions), "-I{include_root}",
                 "{adapter_source}", "-o", "{output}"]
     if normalized_argv != [compiler, *compiler_flags, *tail]:
@@ -654,6 +656,8 @@ def compile_common_driver(
             str(compiler),
             *compiler_flags,
             *implicit_config_flags,
+            f"-ffile-prefix-map={adapter_root}=/_csv2/adapter",
+            f"-ffile-prefix-map={header_root}=/_csv2/source",
             "-MD", "-MF", str(dependency_path),
             f"-D{revision_definition}",
             f"-D{instrumentation_definition}",
@@ -664,7 +668,8 @@ def compile_common_driver(
             str(temporary_output),
         ]
     try:
-        completed = run_fn(command, capture_output=True, text=True, timeout=600, env=build_environment)
+        completed = run_fn(command, capture_output=True, text=True, timeout=600,
+                           env=build_environment, cwd=adapter_root)
         if completed.returncode != 0:
             raise RuntimeError(
                 "common driver compilation failed\n"
@@ -689,7 +694,7 @@ def compile_common_driver(
                 trusted_roots = _system_include_roots(compiler, compiler_flags, implicit_config_flags, build_environment, run_fn)
             dependencies = owned_inputs.bind_dependencies(
                 dependency_paths, {"headers": header_export, "adapter": adapter_export},
-                cwd=Path.cwd(), required_sources={("adapter", "benchmark/compare/common_driver.cpp")},
+                cwd=adapter_root, required_sources={("adapter", "benchmark/compare/common_driver.cpp")},
                 trusted_roots=trusted_roots)
             dependencies["trusted_system_roots"] = sorted(str(root) for root in trusted_roots)
         except (OSError, ValueError, KeyError, TypeError) as error:

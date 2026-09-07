@@ -61,10 +61,17 @@ must remain isolated, and every owner must carry the requested optimized modern
 C++ flags. Portability checks also prove the configured default input and both
 zero- and positive-allocation behavior.
 
+CI preflight owns the complete build-independent Python tooling suite. Its
+local CTest entry also carries `benchmark-tooling`; full, no-mmap, and performance
+workflows exclude that label while retaining executable-specific checks and
+end-to-end evidence assembly. Standalone full, fuzz, and performance dispatches
+retain one tooling owner because they do not pass through preflight; extended
+full dispatch uses its GCC job. An unfiltered local CTest run includes the suite.
+
 Checks are split into `benchmark-portability` and `benchmark-exhaustive` CTest
 labels. Platform quick jobs run the representative portability slice; exact-head
-full runs both; the no-mmap fuzz/benchmark owner runs the complete checksum
-label. The registry-only case-manifest check never executes every operation;
+full runs both executable slices; the no-mmap fuzz/benchmark owner runs all
+executable checksum checks. The registry-only case-manifest check never executes every operation;
 the exhaustive companion retains the complete verify/dry-run sweep.
 
 ## Current-tree operation registry
@@ -153,6 +160,14 @@ borrowed parsing, reused extraction, strict validation/conversion/ranges, and
 direct Writer paths. `checks/expected_checksums.json` is executable test data:
 CI runs every listed operation and compares complete wire fields and the full
 decimal checksum; prefix matches are rejected.
+
+Each Writer verification invocation writes the prepared rows once. Its allocation
+count and allocated bytes cover that same single output; independent checksum
+oracles establish correctness. Older revisions that repeated the Writer inside
+one verification invocation accumulated allocations from both writes while
+reporting one output's rows and bytes. Those allocation measurements are not
+directly comparable with the corrected single-execution results and must not
+be normalized by dividing by two.
 
 ### Timing
 

@@ -60,6 +60,15 @@ linking arguments so the same Git objects retain one audited identity across
 separate A/A and A/B workspaces; those arguments remain visible in the build
 manifest.
 
+GNU/Clang common builds run from the exported adapter root and apply builder-owned
+`-ffile-prefix-map` arguments to both adapter and header roots. Debug information
+and file macros therefore use stable logical paths, including for `-g3`, across
+separate A/A and A/B workspaces. Actual and normalized commands are checked
+together; caller-supplied path mappings remain forbidden. Debug symbols are
+retained, and A/A still requires identical executable hashes.
+Byte-identical debug builds have been verified with GCC and Clang on Linux;
+this does not establish reproducibility for every compiler and target format.
+
 Owned builds are the default. `--external-artifacts` is an explicit legacy
 escape hatch restricted to `exploratory`; it can never participate in a
 decision-eligible evidence bundle.
@@ -100,6 +109,10 @@ and binds semantic verification, allocation verification, Google Benchmark
 samples, PMU counters, peak RSS, code size, and clean isolated build timing.
 Its verification and allocation fields are reconstructed from their recorded
 stdout, and their operation, revision, input, and semantic context must agree.
+Writer allocation accounting covers one execution of the prepared rows. Historical
+revisions that executed verification twice report cumulative allocations for two
+writes; revision and build identity must be considered before comparing those
+measurements with single-execution results.
 Saved commands and benchmark names must match the bound artifacts and selected
 operation. Timing and PMU summaries are rederived from saved samples, and each
 real-time sample must satisfy `seconds * bytes_per_second = input corpus size`
