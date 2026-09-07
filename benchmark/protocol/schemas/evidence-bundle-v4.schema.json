@@ -206,7 +206,7 @@
       "required": ["dataset", "semantic_case_id", "scope", "source", "byte_basis"],
       "properties": {
         "dataset": {"type": "string", "minLength": 1},
-        "semantic_case_id": {"type": "string", "pattern": "^csv2\\..+\\.v1$"},
+        "semantic_case_id": {"type": "string", "pattern": "^csv2\\.(?:writer\\.raw-(?:direct|streamable)\\.(?:raw-fields|decoded-content)|(?!writer\\.raw-(?:direct|streamable)(?:\\.|$)).+)\\.v1$"},
         "scope": {"type": "string", "minLength": 1},
         "source": {"enum": ["buffer", "mmap", "file"]},
         "byte_basis": {"const": "input_corpus"}

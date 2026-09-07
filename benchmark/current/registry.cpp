@@ -21,14 +21,15 @@ std::string semantic_case_id(const char *id) {
 
 void Registry::add(const char *id, unsigned sources, unsigned preparations, OperationScope scope,
                    Kernel timed_kernel, Kernel verification_kernel, bool expect_zero_allocations,
-                   Preflight preflight) {
-  if (!id || !*id || !timed_kernel || !verification_kernel || sources == source_none)
+                   Preflight preflight, const char *semantic_id) {
+  if (!id || !*id || !timed_kernel || !verification_kernel || sources == source_none ||
+      (semantic_id && !*semantic_id))
     throw std::invalid_argument("invalid benchmark operation registration");
   if (find(id))
     throw std::logic_error(std::string("duplicate benchmark operation: ") + id);
-  operations_.push_back(Operation{id, semantic_case_id(id), "input_corpus", sources, preparations,
-                                  scope, expect_zero_allocations, timed_kernel, verification_kernel,
-                                  preflight});
+  operations_.push_back(Operation{
+      id, semantic_id ? semantic_id : semantic_case_id(id), "input_corpus", sources, preparations,
+      scope, expect_zero_allocations, timed_kernel, verification_kernel, preflight});
 }
 
 const char *operation_scope_name(OperationScope scope) noexcept {

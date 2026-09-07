@@ -136,7 +136,9 @@ by operation, source, and dataset. Every kernel must define:
 - supported sources, preparation requirements, and explicit failure status.
 
 Add one stable entry to `benchmark/checks/case_manifest.json` for every new
-operation. The manifest gate lists the compiled registry, verifies the exact
+operation, with its expected semantic ID, scope, and byte basis. Keep those
+expectations independent of the registry being tested. The manifest gate lists
+the compiled registry, verifies the exact
 semantic wire, and starts a short dry run for each available operation; feature-
 conditional entries may remain absent from builds that lack the capability.
 Actual timing must select exactly one operation and one concrete compatible
@@ -205,8 +207,9 @@ installed as package metadata, including the licenses, are never docs-only.
 Repository-control files such as `.gitattributes` and `.gitignore`
 conservatively select all applicable owners. Automatic performance-protocol smoke
 is PR-only; job conditions, the Gate, and the run summary consume the same
-event-specific plan. CPack uses an explicit artifact policy rather
-than interpreting editor ignore globs. The Linux GCC owner builds both
+event-specific plan. Source packaging uses one explicit artifact policy and
+literal source paths, rather than interpreting editor ignores or source-root
+characters as globs. The Linux GCC owner builds both
 configured source formats and verifies their
 complete modular/single-header public surfaces and package metadata byte for
 byte against the checkout, path safety, content-equivalent inventories, and

@@ -425,6 +425,51 @@ class BuildTests(unittest.TestCase):
                       ("/O2", "/D", "NDEBUG", "/EHsc", "/arch:AVX2")]:
             builds._validate_common_compiler_flags(flags)
 
+    def test_msvc_option_and_macro_spelling_is_case_sensitive(self):
+        for flags in [("/O2", "/DNDEBUG"), ("/O2", "/D", "NDEBUG")]:
+            builds.owned_inputs.flags(flags, "msvc")
+            builds._validate_effective_release_flags(flags, "test")
+        for flags in [("/o2", "/DNDEBUG"), ("/O2", "/dNDEBUG"),
+                      ("/O2", "/Dndebug"), ("/O2", "/DNDEBUG", "/Od"),
+                      ("/O2", "/DNDEBUG", "/UNDEBUG")]:
+            with self.subTest(flags=flags), self.assertRaises(RuntimeError):
+                builds._validate_effective_release_flags(flags, "test")
+        definitions = builds._common_build_definitions(
+            ["/dCSV2_BENCHMARK_TIMER_SCOPE_AUDIT=0"])
+        self.assertEqual(definitions["CSV2_BENCHMARK_TIMER_SCOPE_AUDIT"], [])
+
+    def test_git_batch_reads_binary_empty_and_duplicate_blobs(self):
+        for algorithm in (hashlib.sha1, hashlib.sha256):
+            blobs = [b"", b"a\0b\nmissing\n"]
+            oids = [algorithm(b"blob " + str(len(blob)).encode() + b"\0" + blob).hexdigest()
+                    for blob in blobs]
+            wire = b"".join(oid.encode() + b" blob " + str(len(blob)).encode()
+                            + b"\n" + blob + b"\n" for oid, blob in zip(oids, blobs))
+            calls = []
+
+            def run(command, **kwargs):
+                calls.append(command)
+                self.assertEqual(kwargs["input"], ("\n".join(oids) + "\n").encode())
+                return subprocess.CompletedProcess(command, 0, wire, b"")
+
+            self.assertEqual(builds.read_git_blobs(REPOSITORY, [*oids, oids[0]], run_fn=run),
+                             dict(zip(oids, blobs)))
+            self.assertEqual(len(calls), 1)
+
+    def test_git_batch_rejects_inconsistent_object_frames(self):
+        blob = b"body\n"
+        oid = hashlib.sha1(b"blob 5\0" + blob).hexdigest()
+        valid = oid.encode() + b" blob 5\n" + blob + b"\n"
+        for wire in (valid[:-1], valid[:-3], valid + b"extra", b"",
+                     valid.replace(b" blob ", b" tree "),
+                     valid.replace(b"blob 5", b"blob 05"),
+                     valid.replace(blob, b"evil\n"),
+                     b"0" * 40 + valid[40:], oid.encode() + b" missing\n"):
+            def run(command, **kwargs):
+                return subprocess.CompletedProcess(command, 0, wire, b"")
+            with self.subTest(wire=wire), self.assertRaises(RuntimeError):
+                builds.read_git_blobs(REPOSITORY, [oid], run_fn=run)
+
     def test_dependency_binding_rejects_missing_and_outside_inputs(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

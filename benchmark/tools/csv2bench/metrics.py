@@ -7,7 +7,6 @@ import json
 import math
 import os
 import platform
-import re
 import shlex
 import shutil
 import subprocess
@@ -130,10 +129,6 @@ def timing_command(
     warmup_seconds: float,
     pmu: bool = False,
 ) -> list[str]:
-    # Google Benchmark uses std::regex. Python's re.escape emits ``\-``, which
-    # is rejected by some standard-library regex implementations outside a
-    # character class even though '-' is literal there.
-    prefix = re.escape(f"csv2/{operation}/{source}/").replace(r"\-", "-")
     command = [
         str(executable),
         "--csv2-input",
@@ -142,7 +137,7 @@ def timing_command(
         source,
         "--csv2-operation",
         operation,
-        f"--benchmark_filter=^{prefix}",
+        f"--benchmark_filter={protocol.timing_filter(operation, source)}",
         f"--benchmark_repetitions={runs}",
         f"--benchmark_min_time={minimum_time}",
         f"--benchmark_min_warmup_time={warmup_seconds}",

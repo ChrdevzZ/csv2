@@ -1,0 +1,111 @@
+cmake_minimum_required(VERSION 3.10)
+
+set(source [@CSV2_SOURCE_PACKAGE_QUOTE@[@CMAKE_CURRENT_SOURCE_DIR@]@CSV2_SOURCE_PACKAGE_QUOTE@])
+set(build [@CSV2_SOURCE_PACKAGE_QUOTE@[@CMAKE_CURRENT_BINARY_DIR@]@CSV2_SOURCE_PACKAGE_QUOTE@])
+set(package "@PROJECT_NAME@-@PROJECT_VERSION@")
+if(NOT DEFINED CSV2_SOURCE_PACKAGE_OUTPUT_DIRECTORY)
+  set(CSV2_SOURCE_PACKAGE_OUTPUT_DIRECTORY
+    [@CSV2_SOURCE_PACKAGE_QUOTE@[@CSV2_SOURCE_PACKAGE_OUTPUT_DIRECTORY@]@CSV2_SOURCE_PACKAGE_QUOTE@])
+endif()
+get_filename_component(source "${source}" REALPATH)
+get_filename_component(build "${build}" REALPATH)
+get_filename_component(output "${CSV2_SOURCE_PACKAGE_OUTPUT_DIRECTORY}"
+  ABSOLUTE BASE_DIR "${build}")
+file(MAKE_DIRECTORY "${output}")
+get_filename_component(output "${output}" REALPATH)
+
+function(csv2_regex_escape value result)
+  string(REGEX REPLACE "([][+.*()^$?|\\\\])" "\\\\\\1" escaped "${value}")
+  set("${result}" "${escaped}" PARENT_SCOPE)
+endfunction()
+
+if(CSV2_PACKAGE_SOURCE_WORKER)
+  csv2_regex_escape("${source}" source_regex)
+  foreach(path_variable IN ITEMS build output CSV2_PACKAGE_SOURCE_STAGE)
+    set(directory "${${path_variable}}")
+    set("${path_variable}_exclusion" "^$")
+    if(NOT directory STREQUAL source AND directory MATCHES "^${source_regex}/")
+      csv2_regex_escape("${directory}" directory_regex)
+      set("${path_variable}_exclusion" "^${directory_regex}(/|$)")
+    endif()
+  endforeach()
+  # In-source builds/output need exact generated names, not root exclusion.
+  set(in_source_exclusion "^$")
+  if(build STREQUAL source)
+    set(in_source_exclusion
+      "^${source_regex}/(Makefile|[^/]+[.]sln|[^/]+[.]vcxproj([.]filters)?|CPackConfig[.]cmake|CPackSourceConfig[.]cmake|csv2Config[.]cmake|csv2ConfigVersion[.]cmake|csv2[.]pc|csv2-package-source[.]cmake)$")
+  endif()
+  csv2_regex_escape("${package}" package_regex)
+  set(prefix "^${source_regex}(/[^/]+)*")
+  file(MAKE_DIRECTORY "${CSV2_PACKAGE_SOURCE_STAGE}/${package}")
+  # Pass each expression directly: CMake lists split unbalanced bracket paths,
+  # and combining all rules exceeds the regex engine's capture-group limit.
+  file(COPY "${source}/" DESTINATION "${CSV2_PACKAGE_SOURCE_STAGE}/${package}"
+    REGEX "${prefix}/[.]ccache($|/)" EXCLUDE
+    REGEX "${prefix}/[.]git[^/]*($|/)" EXCLUDE
+    REGEX "${prefix}/[.](codex_tmp|idea|temp|tmp|vs|vscode)($|/)" EXCLUDE
+    REGEX "${prefix}/(analysis-cppcheck-build-dir|build|coverage|out|test-output|test-results)($|/)" EXCLUDE
+    REGEX "${prefix}/(build-|cmake-build-|coverage-)[^/]*(/|$)" EXCLUDE
+    REGEX "${prefix}/(__pycache__|CMakeFiles|Testing|_deps)($|/)" EXCLUDE
+    REGEX "${prefix}/(CMakeCache[.]txt|CTestTestfile[.]cmake|cmake_install[.]cmake|install_manifest[.]txt)$" EXCLUDE
+    REGEX "${prefix}/(build[.]ninja|rules[.]ninja|[.]ninja_deps|[.]ninja_log)$" EXCLUDE
+    REGEX "${prefix}/[^/]+[.](a|dll|docstates|dylib|exe|iml|lib|nupkg|o|obj|pdb|so|suo|user|userosscache)$" EXCLUDE
+    REGEX "${prefix}/[^/]+[.]py[cod]$" EXCLUDE
+    REGEX "${prefix}/(Debug|Release|x64|x86|artifacts)($|/)" EXCLUDE
+    REGEX "${prefix}/[^/]+[.](gcda|gcno|profraw|tmp|log)$" EXCLUDE
+    REGEX "${prefix}/[^/]+-writer-output[.]csv$" EXCLUDE
+    REGEX "${prefix}/[^/]+~$" EXCLUDE
+    REGEX "${prefix}/(desktop[.]ini|[.]DS_Store)$" EXCLUDE
+    REGEX "${prefix}/[.]csv2-source-package[^/]*($|/)" EXCLUDE
+    REGEX "${prefix}/${package_regex}[.]tar[.](gz|xz)$" EXCLUDE
+    REGEX "${build_exclusion}" EXCLUDE
+    REGEX "${output_exclusion}" EXCLUDE
+    REGEX "${CSV2_PACKAGE_SOURCE_STAGE_exclusion}" EXCLUDE
+    REGEX "${in_source_exclusion}" EXCLUDE)
+  foreach(format IN ITEMS gz xz)
+    if(format STREQUAL "gz")
+      set(mode cfz)
+    else()
+      set(mode cfJ)
+    endif()
+    execute_process(
+      COMMAND "${CMAKE_COMMAND}" -E tar "${mode}"
+        "${CSV2_PACKAGE_SOURCE_STAGE}/${package}.tar.${format}"
+        --format=paxr -- "${package}"
+      WORKING_DIRECTORY "${CSV2_PACKAGE_SOURCE_STAGE}"
+      RESULT_VARIABLE result)
+    if(NOT result EQUAL 0)
+      message(FATAL_ERROR "Could not create ${format} source archive: ${result}")
+    endif()
+  endforeach()
+  return()
+endif()
+
+# Serialize publication for this output directory; each run owns only its stage.
+file(LOCK "${output}/.csv2-source-package.lock" GUARD PROCESS TIMEOUT 120)
+string(RANDOM LENGTH 16 ALPHABET 0123456789abcdef nonce)
+set(stage "${output}/.csv2-source-package-${nonce}")
+if(EXISTS "${stage}")
+  message(FATAL_ERROR "Source package staging directory already exists: ${stage}")
+endif()
+execute_process(COMMAND "${CMAKE_COMMAND}"
+  "-DCSV2_PACKAGE_SOURCE_WORKER=ON"
+  "-DCSV2_PACKAGE_SOURCE_STAGE=${stage}"
+  "-DCSV2_SOURCE_PACKAGE_OUTPUT_DIRECTORY=${output}"
+  -P "${CMAKE_CURRENT_LIST_FILE}"
+  RESULT_VARIABLE result)
+if(NOT result EQUAL 0)
+  file(REMOVE_RECURSE "${stage}")
+  message(FATAL_ERROR "Source packaging failed: ${result}")
+endif()
+foreach(format IN ITEMS gz xz)
+  execute_process(COMMAND "${CMAKE_COMMAND}" -E rename
+    "${stage}/${package}.tar.${format}" "${output}/${package}.tar.${format}"
+    RESULT_VARIABLE result)
+  if(NOT result EQUAL 0)
+    file(REMOVE_RECURSE "${stage}")
+    message(FATAL_ERROR "Could not publish ${format} source archive: ${result}")
+  endif()
+endforeach()
+file(REMOVE_RECURSE "${stage}")
+message(STATUS "Source archives: ${output}/${package}.tar.{gz,xz}")

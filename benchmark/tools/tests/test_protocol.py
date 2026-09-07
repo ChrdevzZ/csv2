@@ -7,7 +7,7 @@ from pathlib import Path
 import _support  # noqa: F401
 from _schema_subset import ValidationError as SchemaValidationError
 from _schema_subset import validate as validate_schema
-from csv2bench import builds, derivation, protocol
+from csv2bench import builds, derivation, metrics, protocol
 
 
 def artifact(revision: str | None = None) -> dict[str, object]:
@@ -287,7 +287,7 @@ def comparison_report() -> dict[str, object]:
 
 
 def fixed_metrics_report() -> dict[str, object]:
-    return {
+    report = {
         "schema": "csv2-fixed-machine-metrics-v7",
         "artifact_mode": "external",
         "build": None,
@@ -366,6 +366,35 @@ def fixed_metrics_report() -> dict[str, object]:
         },
         "timing_invocation": invocation(),
     }
+
+    report["artifacts"]["dataset"]["path"] = "/input.csv"
+    bind_metrics_invocations(report)
+    return report
+
+
+def bind_metrics_invocations(report):
+    """Build authentic saved invocations for synthetic complete-report fixtures."""
+    result = report["verification"]["result"]
+    for key, artifact_key in (("verification", "executable"), ("allocations", "allocation_executable")):
+        wire = dict(result)
+        if key == "allocations":
+            wire.update(allocations=str(report[key]["count"]), allocated_bytes=str(report[key]["bytes"]))
+        report[key]["invocation"] = {
+            "command": metrics.verify_command(Path(report["artifacts"][artifact_key]["path"]), report["operation"], Path(report["artifacts"]["dataset"]["path"]), report["source"]),
+            "stdout": " ".join(f"{key}={value}" for key, value in wire.items()), "stderr": "",
+        }
+    for key in ("timing", "pmu"):
+        if key not in report:
+            continue
+        timing = report[key]
+        name = f"csv2/{report["operation"]}/{report["source"]}/{result["dataset"]}/real_time"
+        timing["benchmark"] = name
+        for sample in timing["samples"]:
+            sample["name"] = name
+        report[key + "_invocation"] = {
+            "command": metrics.timing_command(Path(report["artifacts"]["executable"]["path"]), report["operation"], Path(report["artifacts"]["dataset"]["path"]), report["source"], Path("/benchmark.json"), report["runs"], "0.01s", 0.01, key == "pmu"),
+            "stdout": "", "stderr": "",
+        }
 
 
 def controlled_comparison_report() -> dict[str, object]:
@@ -665,10 +694,153 @@ def controlled_metrics_report() -> dict[str, object]:
     current_build["identity_digest"] = builds.current_build_identity_digest(current_build)
     current_build["digest"] = builds.document_digest(current_build)
     report["build"] = current_build
+    bind_metrics_invocations(report)
     return report
 
 
 class ProtocolTests(unittest.TestCase):
+    def test_fixed_metrics_rejects_inconsistent_primary_observations(self) -> None:
+        def scale_rate(report):
+            for sample in report["timing"]["samples"]:
+                sample["bytes_per_second"] *= 2
+            report["timing"]["bytes_per_second"]["median"] *= 2
+        mutations = {
+            "checksum": lambda r: r["verification"]["result"].update(checksum="2"),
+            "allocation count": lambda r: r["allocations"].update(count=2),
+            "allocation bytes": lambda r: r["allocations"].update(bytes=2),
+            "scaled rate": scale_rate,
+            "verification operation": lambda r: r["verification"]["invocation"]["command"].__setitem__(6, "traversal/rows"),
+            "allocation source": lambda r: r["allocations"]["invocation"].update(stdout=r["allocations"]["invocation"]["stdout"].replace("source=buffer", "source=mmap")),
+            "allocation checksum": lambda r: r["allocations"]["invocation"].update(stdout=r["allocations"]["invocation"]["stdout"].replace("checksum=1", "checksum=2")),
+            "dataset label": lambda r: r["verification"]["result"].update(dataset="other.csv"),
+            "benchmark name": lambda r: (r["timing"].update(benchmark="unrelated"), r["timing"]["samples"][0].update(name="unrelated")),
+            "timing executable": lambda r: r["timing_invocation"]["command"].__setitem__(0, "/other"),
+            "timing input": lambda r: r["timing_invocation"]["command"].__setitem__(2, "/other.csv"),
+            "timing duplicate option": lambda r: r["timing_invocation"]["command"].append("--benchmark_repetitions=1"),
+        }
+        protocol.validate_fixed_metrics_report(fixed_metrics_report())
+        for label, mutate in mutations.items():
+            with self.subTest(label=label):
+                report = fixed_metrics_report()
+                mutate(report)
+                with self.assertRaises(RuntimeError):
+                    protocol.validate_fixed_metrics_report(report)
+
+    def test_fixed_metrics_pmu_and_commands_bind_the_recorded_case(self) -> None:
+        for option, replacement in (
+            ("--benchmark_repetitions=", "1"),
+            ("--benchmark_filter=", "^other"),
+            ("--benchmark_out_format=", "csv"),
+            ("--benchmark_report_aggregates_only=", "true"),
+            ("--benchmark_perf_counters=", "cycles"),
+        ):
+            with self.subTest(option=option):
+                report = controlled_metrics_report()
+                command = report["pmu_invocation"]["command"]
+                index = next(i for i, value in enumerate(command) if value.startswith(option))
+                command[index] = option + replacement
+                with self.assertRaisesRegex(RuntimeError, "collection contract"):
+                    protocol.validate_fixed_metrics_report(report)
+        report = controlled_metrics_report()
+        for sample in report["pmu"]["samples"]:
+            sample["bytes_per_second"] = 2.0
+        report["pmu"]["bytes_per_second"]["median"] = 2.0
+        with self.assertRaisesRegex(RuntimeError, "input corpus bytes"):
+            protocol.validate_fixed_metrics_report(report)
+
+    def test_fixed_metrics_uses_input_bytes_and_portable_dataset_names(self) -> None:
+        for path, dataset in (
+            ("/corpus/a b.csv", "a_b.csv"),
+            (r"/corpus/a\b.csv", "b.csv"),
+            (r"C:\corpus\a b.csv", "a_b.csv"),
+            ("/corpus/中文.csv", "______.csv"),
+        ):
+            with self.subTest(path=path):
+                report = fixed_metrics_report()
+                report["artifacts"]["dataset"]["path"] = path
+                report["comparison_binding"]["dataset"] = dataset
+                report["verification"]["result"].update(dataset=dataset, bytes="7")
+                report["allocations"].update(count=3, bytes=17)
+                bind_metrics_invocations(report)
+                protocol.validate_fixed_metrics_report(report)
+        report = fixed_metrics_report()
+        report["timing"]["samples"][0]["bytes_per_second"] += 1e-10
+        report["timing"]["bytes_per_second"]["median"] += 1e-10
+        protocol.validate_fixed_metrics_report(report)
+
+    def test_raw_writer_semantics_are_canonical_in_both_directions(self) -> None:
+        schema_root = Path(__file__).resolve().parents[2] / "protocol"
+        fixed_schema = json.loads((schema_root / "schemas" / "fixed-machine-v7.schema.json").read_text())
+        for suffix in ("direct", "streamable"):
+            operation = "writer/raw-" + suffix
+            common_operation = "writer_raw_" + suffix
+            prefix = "csv2.writer.raw-" + suffix
+            raw_fields = prefix + ".raw-fields.v1"
+            decoded = prefix + ".decoded-content.v1"
+            report = fixed_metrics_report()
+            report["operation"] = operation
+            report["verification"]["result"].update(operation=operation, semantic_case_id=decoded, scope="writer_only")
+            report["comparison_binding"].update(semantic_case_id=decoded, scope="writer_only")
+            bind_metrics_invocations(report)
+            protocol.validate_fixed_metrics_report(report)
+            validate_schema(report, fixed_schema)
+            protocol.parse_common(f"protocol=csv2-common-v5 operation={common_operation} semantic_case_id={raw_fields}", {"operation", "semantic_case_id"})
+            for invalid in (prefix + ".v1", raw_fields, prefix + ".other.v1"):
+                with self.subTest(operation=operation, invalid=invalid):
+                    changed = json.loads(json.dumps(report))
+                    changed["verification"]["result"]["semantic_case_id"] = invalid
+                    changed["comparison_binding"]["semantic_case_id"] = invalid
+                    bind_metrics_invocations(changed)
+                    with self.assertRaisesRegex(RuntimeError, "semantic case ID"):
+                        protocol.validate_fixed_metrics_report(changed)
+                    with self.assertRaises(SchemaValidationError):
+                        validate_schema(changed, fixed_schema)
+            common = json.loads(
+                json.dumps(comparison_report())
+                .replace("rows_cells", common_operation)
+                .replace("traversal_only", "writer_only")
+                .replace("csv2.traversal.rows-cells.v1", raw_fields)
+                .replace("legacy-reader,legacy-writer", "legacy-reader,legacy-writer,modern-writer")
+            )
+            common_schema = json.loads((schema_root / "schemas" / "comparison-v7.schema.json").read_text())
+            protocol.validate_comparison_report(common)
+            validate_schema(common, common_schema)
+            for invalid in (prefix + ".v1", decoded):
+                changed = json.loads(json.dumps(common).replace(raw_fields, invalid))
+                with self.assertRaisesRegex(RuntimeError, "semantic case ID"):
+                    protocol.validate_comparison_report(changed)
+                with self.assertRaises(SchemaValidationError):
+                    validate_schema(changed, common_schema)
+            changed = json.loads(json.dumps(common).replace(common_operation, "rows_cells"))
+            with self.assertRaisesRegex(RuntimeError, "semantic case ID"):
+                protocol.validate_comparison_report(changed)
+            with self.assertRaises(SchemaValidationError):
+                validate_schema(changed, common_schema)
+            evidence_schema = json.loads((schema_root / "schemas" / "evidence-bundle-v4.schema.json").read_text())
+            for invalid in (prefix + ".v1", prefix + ".other.v1"):
+                changed = evidence_bundle()
+                changed["comparison_binding"]["semantic_case_id"] = invalid
+                with self.assertRaisesRegex(RuntimeError, "semantic case ID"):
+                    protocol.validate_evidence_bundle(changed)
+                with self.assertRaises(SchemaValidationError):
+                    validate_schema(changed, evidence_schema)
+            for invalid in (prefix + ".v1", decoded):
+                with self.assertRaisesRegex(RuntimeError, "semantic case ID"):
+                    protocol.parse_common(f"protocol=csv2-common-v5 operation={common_operation} semantic_case_id={invalid}", {"operation"})
+                with self.assertRaisesRegex(RuntimeError, "semantic case ID"):
+                    protocol.parse_operation_contracts(f"{common_operation}:writer_only:buffer:{invalid}:input_corpus")
+            for other_operation in ("traversal/rows-cells", operation + ".decoded-content"):
+                changed = json.loads(json.dumps(report))
+                changed["operation"] = other_operation
+                changed["verification"]["result"]["operation"] = other_operation
+                bind_metrics_invocations(changed)
+                with self.assertRaisesRegex(RuntimeError, "semantic case ID"):
+                    protocol.validate_fixed_metrics_report(changed)
+                with self.assertRaises(SchemaValidationError):
+                    validate_schema(changed, fixed_schema)
+            with self.assertRaisesRegex(RuntimeError, "semantic case ID"):
+                protocol.parse_common(f"protocol=csv2-common-v5 operation=rows_cells semantic_case_id={raw_fields}", {"operation"})
+
     def test_comparison_rejects_mutated_derived_truth(self) -> None:
         mutations = {
             "baseline median": lambda report: report["cases"][0]["baseline"].update(
@@ -1157,14 +1329,14 @@ class ProtocolTests(unittest.TestCase):
             "rows_cells:traversal_only:buffer+mmap:"
             "csv2.traversal.rows-cells.v1:input_corpus;"
             "writer_raw_direct:writer_only:buffer:"
-            "csv2.writer.raw-direct.v1:input_corpus"
+            "csv2.writer.raw-direct.raw-fields.v1:input_corpus"
         )
         self.assertEqual(contracts["rows_cells"][0], "traversal_only")
         self.assertEqual(contracts["rows_cells"][1], frozenset({"buffer", "mmap"}))
         with self.assertRaisesRegex(RuntimeError, "duplicate operation contract"):
             protocol.parse_operation_contracts(
-                "rows_cells:traversal_only:buffer:csv2.rows.v1:input_corpus;"
-                "rows_cells:traversal_only:mmap:csv2.rows.v1:input_corpus"
+                "rows_cells:traversal_only:buffer:csv2.traversal.rows-cells.v1:input_corpus;"
+                "rows_cells:traversal_only:mmap:csv2.traversal.rows-cells.v1:input_corpus"
             )
         with self.assertRaisesRegex(RuntimeError, "unsupported operation scope"):
             protocol.parse_operation_contracts(

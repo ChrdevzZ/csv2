@@ -156,6 +156,12 @@ jobs:
             throw "Sanitizer test execution failed with exit code $LASTEXITCODE"
           }
 
+      - name: Verify source archives with literal Windows paths
+        if: matrix.install && inputs.quick
+        run: >-
+          python -m unittest discover -s tools/ci
+          -p test_verify_source_archives.py -k SourcePackagingTests
+
       - name: Install package
         if: matrix.install && inputs.quick
         run: >-

@@ -69,7 +69,7 @@ def flags(arguments: Sequence[object], family: str | None = None) -> None:
             r"/(?:O[12dx]|DNDEBUG(?:=[01])?|UNDEBUG|std:c\+\+(?:14|17|20|latest)|"
             r"arch:(?:IA32|SSE|SSE2|AVX|AVX2|AVX512)|EHsc|GR-?|M[DT]d?|"
             r"fp:(?:precise|strict|fast)|W[0-4]|WX|nologo|Brepro|experimental:deterministic)",
-            flag, re.IGNORECASE)
+            flag)
         if not ((gnu and family != "msvc") or (msvc and family != "gnu")):
             raise RuntimeError(f"unsupported controlled compiler flag: {flag!r}")
         index += 1

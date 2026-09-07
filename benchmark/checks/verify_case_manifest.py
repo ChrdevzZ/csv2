@@ -21,20 +21,22 @@ def run(command: list[str]) -> subprocess.CompletedProcess[str]:
 
 def load_manifest(
     path: Path, source_root: Path
-) -> tuple[dict[str, tuple[str, Path]], set[str]]:
+) -> tuple[dict[str, tuple[str, Path, dict[str, str]]], set[str]]:
     document = json.loads(path.read_text(encoding="utf-8"))
     if (
         not isinstance(document, dict)
         or set(document) != {"schema", "cases"}
-        or document["schema"] != "csv2-benchmark-case-manifest-v2"
+        or document["schema"] != "csv2-benchmark-case-manifest-v3"
         or not isinstance(document["cases"], list)
         or not document["cases"]
     ):
         raise RuntimeError("benchmark case manifest is malformed")
-    result: dict[str, tuple[str, Path]] = {}
+    result: dict[str, tuple[str, Path, dict[str, str]]] = {}
     conditional: set[str] = set()
     for index, value in enumerate(document["cases"]):
-        required_fields = {"operation", "source", "dataset"}
+        required_fields = {
+            "operation", "source", "dataset", "semantic_case_id", "scope", "byte_basis"
+        }
         allowed_fields = required_fields | {"conditional"}
         if (
             not isinstance(value, dict)
@@ -46,6 +48,7 @@ def load_manifest(
         source = value["source"]
         dataset = value["dataset"]
         is_conditional = value.get("conditional", False)
+        contract = {key: value[key] for key in ("semantic_case_id", "scope", "byte_basis")}
         if (
             not isinstance(operation, str)
             or not operation
@@ -55,6 +58,9 @@ def load_manifest(
             or not dataset
             or "\\" in dataset
             or not isinstance(is_conditional, bool)
+            or any(not isinstance(item, str) or not item for item in contract.values())
+            or not contract["semantic_case_id"].startswith("csv2.")
+            or contract["byte_basis"] != "input_corpus"
         ):
             raise RuntimeError(f"benchmark case {index} has invalid metadata")
         root = source_root.resolve(strict=True)
@@ -65,44 +71,60 @@ def load_manifest(
             raise RuntimeError(f"benchmark case {index} escapes the source root") from error
         if not target.is_file():
             raise RuntimeError(f"benchmark case {index} dataset is not a file")
-        result[operation] = (source, target)
+        result[operation] = (source, target, contract)
         if is_conditional:
             conditional.add(operation)
     return result, conditional
 
 
-def registered_operations(executable: Path) -> dict[str, set[str]]:
+def wire_fields(stdout: str) -> dict[str, str]:
+    fields: dict[str, str] = {}
+    for field in stdout.split():
+        if "=" not in field:
+            raise RuntimeError(f"malformed wire field: {field!r}")
+        key, value = field.split("=", 1)
+        if not key or not value or key in fields:
+            raise RuntimeError(f"duplicate or empty wire field: {field!r}")
+        fields[key] = value
+    return fields
+
+
+def registered_operations(executable: Path) -> dict[str, dict[str, dict[str, str]]]:
     completed = run([str(executable), "--csv2-list"])
-    result: dict[str, set[str]] = {}
+    result: dict[str, dict[str, dict[str, str]]] = {}
     for line in completed.stdout.splitlines():
-        fields = line.split()
-        if not fields or not fields[0] or len(fields) < 2 or not fields[1].startswith("source="):
+        operation, separator, metadata = line.partition(" ")
+        if not operation or not separator:
             raise RuntimeError(f"malformed registry line: {line!r}")
-        result.setdefault(fields[0], set()).add(fields[1].split("=", 1)[1])
+        fields = wire_fields(metadata)
+        if set(fields) != {
+            "source", "scope", "semantic_case_id", "byte_basis", "zero_allocations"
+        }:
+            raise RuntimeError(f"malformed registry metadata: {line!r}")
+        source = fields.pop("source")
+        if source not in {"file", "buffer", "mmap"} or fields.pop(
+            "zero_allocations"
+        ) not in {"true", "false"}:
+            raise RuntimeError(f"invalid registry metadata: {line!r}")
+        sources = result.setdefault(operation, {})
+        if source in sources:
+            raise RuntimeError(f"duplicate registry operation/source: {operation}/{source}")
+        sources[source] = fields
     if not result:
         raise RuntimeError("current benchmark registry is empty")
     return result
 
 
-def verify_wire(stdout: str, operation: str, source: str) -> None:
-    fields: dict[str, str] = {}
-    for field in stdout.split():
-        if "=" not in field:
-            raise RuntimeError(f"malformed verification field: {field!r}")
-        key, value = field.split("=", 1)
-        if not key or key in fields:
-            raise RuntimeError(f"duplicate or empty verification field: {field!r}")
-        fields[key] = value
+def verify_wire(stdout: str, operation: str, source: str, contract: dict[str, str]) -> None:
+    fields = wire_fields(stdout)
     expected = {
         "protocol": "csv2-current-v4",
         "operation": operation,
         "source": source,
-        "byte_basis": "input_corpus",
+        **contract,
     }
     if any(fields.get(key) != value for key, value in expected.items()):
         raise RuntimeError(f"verification wire metadata mismatch for {operation}/{source}")
-    if not fields.get("semantic_case_id", "").startswith("csv2."):
-        raise RuntimeError(f"verification wire lacks semantic metadata for {operation}")
 
 
 def main() -> None:
@@ -133,15 +155,17 @@ def main() -> None:
             "case manifest contains unknown operations: " + ", ".join(stale)
         )
     for operation in sorted(operations):
-        source, _ = cases[operation]
+        source, _, contract = cases[operation]
         if source not in operations[operation]:
             raise RuntimeError(
                 f"stable case source is unsupported for {operation}: {source}"
             )
+        if any(metadata != contract for metadata in operations[operation].values()):
+            raise RuntimeError(f"registry contract differs from stable case for {operation}")
     if args.registry_only:
         return
     for operation in sorted(operations):
-        source, dataset = cases[operation]
+        source, dataset, contract = cases[operation]
         common = [
             str(executable),
             "--csv2-input",
@@ -152,7 +176,7 @@ def main() -> None:
             operation,
         ]
         verification = run([*common, "--csv2-verify"])
-        verify_wire(verification.stdout, operation, source)
+        verify_wire(verification.stdout, operation, source, contract)
         run([*common, "--benchmark_dry_run"])
 
 

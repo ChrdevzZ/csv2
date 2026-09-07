@@ -180,6 +180,12 @@
       "properties": {
         "result": {
           "type": "object",
+          "allOf": [
+            {"if": {"properties": {"operation": {"const": "writer/raw-direct"}}}, "then": {"properties": {"semantic_case_id": {"const": "csv2.writer.raw-direct.decoded-content.v1"}, "scope": {"const": "writer_only"}, "source": {"const": "buffer"}}}},
+            {"if": {"properties": {"semantic_case_id": {"const": "csv2.writer.raw-direct.decoded-content.v1"}}}, "then": {"properties": {"operation": {"const": "writer/raw-direct"}}}},
+            {"if": {"properties": {"operation": {"const": "writer/raw-streamable"}}}, "then": {"properties": {"semantic_case_id": {"const": "csv2.writer.raw-streamable.decoded-content.v1"}, "scope": {"const": "writer_only"}, "source": {"const": "buffer"}}}},
+            {"if": {"properties": {"semantic_case_id": {"const": "csv2.writer.raw-streamable.decoded-content.v1"}}}, "then": {"properties": {"operation": {"const": "writer/raw-streamable"}}}}
+          ],
           "required": [
             "protocol", "revision", "operation", "source", "dataset",
             "semantic_case_id", "scope", "byte_basis", "checksum",
@@ -191,7 +197,7 @@
             "operation": {"type": "string", "minLength": 1},
             "source": {"enum": ["buffer", "mmap", "file"]},
             "dataset": {"type": "string", "minLength": 1},
-            "semantic_case_id": {"type": "string", "pattern": "^csv2\\..+\\.v1$"},
+            "semantic_case_id": {"type": "string", "pattern": "^csv2\\.(?:writer\\.raw-(?:direct|streamable)\\.decoded-content|(?!writer\\.raw-(?:direct|streamable)(?:\\.|$)).+)\\.v1$"},
             "scope": {"type": "string", "minLength": 1},
             "byte_basis": {"const": "input_corpus"},
             "checksum": {"type": "string", "pattern": "^(0|[1-9][0-9]*)$"},
@@ -223,7 +229,7 @@
       "required": ["dataset", "semantic_case_id", "scope", "source", "byte_basis"],
       "properties": {
         "dataset": {"type": "string", "minLength": 1},
-        "semantic_case_id": {"type": "string", "pattern": "^csv2\\..+\\.v1$"},
+        "semantic_case_id": {"type": "string", "pattern": "^csv2\\.(?:writer\\.raw-(?:direct|streamable)\\.decoded-content|(?!writer\\.raw-(?:direct|streamable)(?:\\.|$)).+)\\.v1$"},
         "scope": {"type": "string", "minLength": 1},
         "source": {"enum": ["buffer", "mmap", "file"]},
         "byte_basis": {"const": "input_corpus"}
