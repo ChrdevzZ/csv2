@@ -263,7 +263,8 @@ class VerifySourceArchivesTests(unittest.TestCase):
 class SourcePackagingTests(unittest.TestCase):
     def run_cmake(self, *arguments: str, cwd: Path) -> subprocess.CompletedProcess[str]:
         result = subprocess.run(
-            ["cmake", *arguments], cwd=cwd, capture_output=True, text=True
+            ["cmake", *arguments], cwd=cwd, capture_output=True, text=True,
+            timeout=120,
         )
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         return result
@@ -284,7 +285,7 @@ class SourcePackagingTests(unittest.TestCase):
         for name in ("Csv2SourcePackaging.cmake", "csv2-package-source.cmake.in"):
             shutil.copy2(SOURCE_ROOT / "cmake" / name, source / "cmake" / name)
         for relative in (
-            "nested/[quoted].csv", "nested/数据 (a)+.txt",
+            "nested/[quoted].csv", "nested/数据 (A)+.txt",
             "nested/" + "long-" * 22 + "[数据].txt",
         ):
             target = source / relative
@@ -293,23 +294,24 @@ class SourcePackagingTests(unittest.TestCase):
             target.chmod(0o755)
         for relative in (
             ".ccache/cache-entry", "nested/.ccache/cache-entry",
-            "build-local/generated",
+            "build-local/generated", "nested/CMakeFiles/generated",
+            "nested/Debug/generated", "nested/.DS_Store",
         ):
             target = source / relative
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_bytes(b"must not ship")
 
     def test_literal_source_build_output_and_working_paths(self) -> None:
-        for source_parent in ("ordinary", "build-review", "out", "parent [x]+(y) 空格", "parent ]==]"):
+        for source_parent in ("ordinary", "build-review", "out", "Parent [x]+(y) 空格", "Parent ]==]"):
             with (
                 self.subTest(source_parent=source_parent),
                 tempfile.TemporaryDirectory() as directory,
             ):
                 root = Path(directory)
-                source = root / source_parent / "source"
-                build = source / "generated [b] ]=]"
-                output = source / "archives [a] ]===]"
-                cwd = root / "working [w]"
+                source = root / source_parent / "Source"
+                build = source / "Generated [b] ]=]"
+                output = source / "Archives [a] ]===]"
+                cwd = root / "Working [w]"
                 cwd.mkdir()
                 self.make_source(source)
                 self.run_cmake(
@@ -327,9 +329,9 @@ class SourcePackagingTests(unittest.TestCase):
                 verify_source_archives.verify_archives(archives, source_root=source)
                 first = verify_source_archives.archive_inventory(archives[0])
                 self.assertIn("nested/[quoted].csv", first[1])
-                self.assertIn("nested/数据 (a)+.txt", first[1])
+                self.assertIn("nested/数据 (A)+.txt", first[1])
                 self.assertFalse(any(
-                    name.startswith(("generated [b] ]=]/", "archives [a] ]===]/"))
+                    name.startswith(("Generated [b] ]=]/", "Archives [a] ]===]/"))
                     for name in first[1]
                 ))
                 self.assertIn("nested/" + "long-" * 22 + "[数据].txt", first[1])
@@ -345,8 +347,10 @@ class SourcePackagingTests(unittest.TestCase):
 
     def test_in_source_build_migration_concurrency_and_failure_cleanup(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
-            source = Path(directory) / "source [in]"
+            source = Path(directory) / "Source [in]"
             self.make_source(source)
+            for name in ("old.sln", "old.slnx"):
+                (source / name).write_text("obsolete", encoding="utf-8")
             (source / "CPackSourceConfig.cmake").write_text(
                 "obsolete", encoding="utf-8"
             )
@@ -361,7 +365,8 @@ class SourcePackagingTests(unittest.TestCase):
             ]
             verify_source_archives.verify_archives(archives, source_root=source)
             initial = verify_source_archives.archive_inventory(archives[0])
-            for name in ("Makefile", "CPackConfig.cmake", "csv2-package-source.cmake"):
+            for name in ("Makefile", "CPackConfig.cmake", "csv2-package-source.cmake",
+                         "old.sln", "old.slnx", "csv2.sln", "csv2.slnx"):
                 self.assertNotIn(name, initial[1])
             command = ["cmake", "-P", str(source / "csv2-package-source.cmake")]
             processes = [
@@ -382,7 +387,9 @@ class SourcePackagingTests(unittest.TestCase):
             archives[0].mkdir()
             sentinel = archives[0] / "sentinel"
             sentinel.write_bytes(b"preserve")
-            failed = subprocess.run(command, cwd=source, capture_output=True, text=True)
+            failed = subprocess.run(
+                command, cwd=source, capture_output=True, text=True, timeout=120
+            )
             self.assertNotEqual(failed.returncode, 0)
             self.assertEqual(sentinel.read_bytes(), b"preserve")
             self.assertFalse(list(source.glob(".csv2-source-package-*/")))

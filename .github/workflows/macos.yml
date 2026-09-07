@@ -78,6 +78,13 @@ jobs:
           --parallel 2 --no-tests=error
           --output-on-failure --output-junit benchmark-portability.xml
 
+      - name: Verify source archives with literal macOS paths
+        if: inputs.quick
+        timeout-minutes: 5
+        run: >-
+          python3 -m unittest discover -s tools/ci
+          -p test_verify_source_archives.py -k SourcePackagingTests
+
       - name: Install package
         if: inputs.quick
         run: cmake --install build --prefix build/install

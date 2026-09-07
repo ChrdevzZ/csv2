@@ -158,6 +158,7 @@ jobs:
 
       - name: Verify source archives with literal Windows paths
         if: matrix.install && inputs.quick
+        timeout-minutes: 5
         run: >-
           python -m unittest discover -s tools/ci
           -p test_verify_source_archives.py -k SourcePackagingTests
