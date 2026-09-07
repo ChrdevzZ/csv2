@@ -6,6 +6,7 @@
 #include <vector>
 
 #if CSV2_HAS_RANGES
+#include <algorithm>
 #include <ranges>
 #endif
 
