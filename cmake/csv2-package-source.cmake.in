@@ -19,45 +19,98 @@ function(csv2_regex_escape value result)
   set("${result}" "${escaped}" PARENT_SCOPE)
 endfunction()
 
+# cmFileCopier lowercases candidate paths on these hosts, but not REGEX rules.
+# Normalize matching values only; actual filesystem paths retain their spelling.
+function(csv2_match_value value result)
+  if(CMAKE_HOST_WIN32 OR CMAKE_HOST_APPLE OR
+     CMAKE_HOST_SYSTEM_NAME MATCHES "^CYGWIN")
+    string(TOLOWER "${value}" value)
+  endif()
+  set("${result}" "${value}" PARENT_SCOPE)
+endfunction()
+
+function(csv2_source_rule result rule)
+  csv2_match_value("^${source_regex}(/[^/]+)*${rule}" expression)
+  set("${result}" "${expression}" PARENT_SCOPE)
+endfunction()
+
 if(CSV2_PACKAGE_SOURCE_WORKER)
-  csv2_regex_escape("${source}" source_regex)
+  csv2_match_value("${source}" source_match)
+  csv2_match_value("${build}" build_match)
+  csv2_regex_escape("${source_match}" source_regex)
   foreach(path_variable IN ITEMS build output CSV2_PACKAGE_SOURCE_STAGE)
     set(directory "${${path_variable}}")
     set("${path_variable}_exclusion" "^$")
-    if(NOT directory STREQUAL source AND directory MATCHES "^${source_regex}/")
-      csv2_regex_escape("${directory}" directory_regex)
+    csv2_match_value("${directory}" directory_match)
+    if(NOT directory_match STREQUAL source_match AND
+       directory_match MATCHES "^${source_regex}/")
+      csv2_regex_escape("${directory_match}" directory_regex)
       set("${path_variable}_exclusion" "^${directory_regex}(/|$)")
     endif()
   endforeach()
   # In-source builds/output need exact generated names, not root exclusion.
   set(in_source_exclusion "^$")
-  if(build STREQUAL source)
-    set(in_source_exclusion
-      "^${source_regex}/(Makefile|[^/]+[.]sln|[^/]+[.]vcxproj([.]filters)?|CPackConfig[.]cmake|CPackSourceConfig[.]cmake|csv2Config[.]cmake|csv2ConfigVersion[.]cmake|csv2[.]pc|csv2-package-source[.]cmake)$")
+  if(build_match STREQUAL source_match)
+    csv2_match_value(
+      "^${source_regex}/(Makefile|[^/]+[.]slnx?|[^/]+[.]vcxproj([.]filters)?|CPackConfig[.]cmake|CPackSourceConfig[.]cmake|csv2Config[.]cmake|csv2ConfigVersion[.]cmake|csv2[.]pc|csv2-package-source[.]cmake)$"
+      in_source_exclusion)
   endif()
   csv2_regex_escape("${package}" package_regex)
-  set(prefix "^${source_regex}(/[^/]+)*")
+  csv2_source_rule(cache_exclusion
+    "/[.]ccache($|/)")
+  csv2_source_rule(repository_exclusion
+    "/[.]git[^/]*($|/)")
+  csv2_source_rule(editor_exclusion
+    "/[.](codex_tmp|idea|temp|tmp|vs|vscode)($|/)")
+  csv2_source_rule(work_directories_exclusion
+    "/(analysis-cppcheck-build-dir|build|coverage|out|test-output|test-results)($|/)")
+  csv2_source_rule(work_prefixes_exclusion
+    "/(build-|cmake-build-|coverage-)[^/]*(/|$)")
+  csv2_source_rule(generated_directories_exclusion
+    "/(__pycache__|CMakeFiles|Testing|_deps)($|/)")
+  csv2_source_rule(generated_files_exclusion
+    "/(CMakeCache[.]txt|CTestTestfile[.]cmake|cmake_install[.]cmake|install_manifest[.]txt)$")
+  csv2_source_rule(ninja_exclusion
+    "/(build[.]ninja|rules[.]ninja|[.]ninja_deps|[.]ninja_log)$")
+  csv2_source_rule(compiled_exclusion
+    "/[^/]+[.](a|dll|docstates|dylib|exe|iml|lib|nupkg|o|obj|pdb|so|suo|user|userosscache)$")
+  csv2_source_rule(python_exclusion
+    "/[^/]+[.]py[cod]$")
+  csv2_source_rule(platform_directories_exclusion
+    "/(Debug|Release|x64|x86|artifacts)($|/)")
+  csv2_source_rule(runtime_exclusion
+    "/[^/]+[.](gcda|gcno|profraw|tmp|log)$")
+  csv2_source_rule(writer_exclusion
+    "/[^/]+-writer-output[.]csv$")
+  csv2_source_rule(backup_exclusion
+    "/[^/]+~$")
+  csv2_source_rule(metadata_exclusion
+    "/(desktop[.]ini|[.]DS_Store)$")
+  csv2_source_rule(staging_exclusion
+    "/[.]csv2-source-package[^/]*($|/)")
+  csv2_source_rule(archives_exclusion
+    "/${package_regex}[.]tar[.](gz|xz)$")
   file(MAKE_DIRECTORY "${CSV2_PACKAGE_SOURCE_STAGE}/${package}")
-  # Pass each expression directly: CMake lists split unbalanced bracket paths,
+  # Keep expressions in scalar arguments: lists cannot represent unbalanced bracket paths,
   # and combining all rules exceeds the regex engine's capture-group limit.
   file(COPY "${source}/" DESTINATION "${CSV2_PACKAGE_SOURCE_STAGE}/${package}"
-    REGEX "${prefix}/[.]ccache($|/)" EXCLUDE
-    REGEX "${prefix}/[.]git[^/]*($|/)" EXCLUDE
-    REGEX "${prefix}/[.](codex_tmp|idea|temp|tmp|vs|vscode)($|/)" EXCLUDE
-    REGEX "${prefix}/(analysis-cppcheck-build-dir|build|coverage|out|test-output|test-results)($|/)" EXCLUDE
-    REGEX "${prefix}/(build-|cmake-build-|coverage-)[^/]*(/|$)" EXCLUDE
-    REGEX "${prefix}/(__pycache__|CMakeFiles|Testing|_deps)($|/)" EXCLUDE
-    REGEX "${prefix}/(CMakeCache[.]txt|CTestTestfile[.]cmake|cmake_install[.]cmake|install_manifest[.]txt)$" EXCLUDE
-    REGEX "${prefix}/(build[.]ninja|rules[.]ninja|[.]ninja_deps|[.]ninja_log)$" EXCLUDE
-    REGEX "${prefix}/[^/]+[.](a|dll|docstates|dylib|exe|iml|lib|nupkg|o|obj|pdb|so|suo|user|userosscache)$" EXCLUDE
-    REGEX "${prefix}/[^/]+[.]py[cod]$" EXCLUDE
-    REGEX "${prefix}/(Debug|Release|x64|x86|artifacts)($|/)" EXCLUDE
-    REGEX "${prefix}/[^/]+[.](gcda|gcno|profraw|tmp|log)$" EXCLUDE
-    REGEX "${prefix}/[^/]+-writer-output[.]csv$" EXCLUDE
-    REGEX "${prefix}/[^/]+~$" EXCLUDE
-    REGEX "${prefix}/(desktop[.]ini|[.]DS_Store)$" EXCLUDE
-    REGEX "${prefix}/[.]csv2-source-package[^/]*($|/)" EXCLUDE
-    REGEX "${prefix}/${package_regex}[.]tar[.](gz|xz)$" EXCLUDE
+    REGEX "${cache_exclusion}" EXCLUDE
+    REGEX "${repository_exclusion}" EXCLUDE
+    REGEX "${editor_exclusion}" EXCLUDE
+    REGEX "${work_directories_exclusion}" EXCLUDE
+    REGEX "${work_prefixes_exclusion}" EXCLUDE
+    REGEX "${generated_directories_exclusion}" EXCLUDE
+    REGEX "${generated_files_exclusion}" EXCLUDE
+    REGEX "${ninja_exclusion}" EXCLUDE
+    REGEX "${compiled_exclusion}" EXCLUDE
+    REGEX "${python_exclusion}" EXCLUDE
+    REGEX "${platform_directories_exclusion}" EXCLUDE
+    REGEX "${runtime_exclusion}" EXCLUDE
+    REGEX "${writer_exclusion}" EXCLUDE
+    REGEX "${backup_exclusion}" EXCLUDE
+    REGEX "${metadata_exclusion}" EXCLUDE
+    REGEX "${staging_exclusion}" EXCLUDE
+    REGEX "${archives_exclusion}" EXCLUDE
     REGEX "${build_exclusion}" EXCLUDE
     REGEX "${output_exclusion}" EXCLUDE
     REGEX "${CSV2_PACKAGE_SOURCE_STAGE_exclusion}" EXCLUDE
