@@ -644,9 +644,9 @@ def main() -> None:
             report["clean_build"] = time_build(args.build_command)
             if args.post_build_command:
                 report["post_build"] = run_post_build(args.post_build_command)
-            # A clean build may legitimately replace the executables and a
-            # generated corpus. Bind the report to the artifacts that are
-            # actually measured and repeat alias checks after replacement.
+            # Build hooks may replace executables, generated inputs and the
+            # compilation database. Bind the measured artifacts after all hooks
+            # and repeat alias checks; the declared compiler remains immutable.
             args.executable = artifacts.canonical_existing(
                 args.executable, "benchmark executable after build"
             )
@@ -671,6 +671,11 @@ def main() -> None:
                     ("compiler executable", args.compiler_executable)
                 )
             if args.compile_commands is not None:
+                if args.compiler_executable is None or compiler_identity is None:
+                    raise RuntimeError("--compile-commands requires --compiler-executable")
+                args.compile_commands = artifacts.canonical_existing(
+                    args.compile_commands, "compile commands after build"
+                )
                 rebuilt_protected.append(("compile commands", args.compile_commands))
             artifacts.reject_output_alias(args.output, rebuilt_protected)
             artifacts.reject_output_alias(args.manifest, rebuilt_protected)
@@ -679,6 +684,16 @@ def main() -> None:
                 args.allocation_executable, args.revision
             )
             identities["dataset"] = artifacts.metadata(args.input)
+            if args.compile_commands is not None:
+                commands_identity = artifacts.metadata(args.compile_commands)
+                compiler_matches = validate_compile_commands(
+                    args.compile_commands, args.compiler_executable
+                )
+                artifacts.verify_unchanged(
+                    commands_identity, "compile commands during post-build validation"
+                )
+                identities["compile_commands"] = commands_identity
+                compiler_identity["compile_command_matches"] = compiler_matches
             report["artifacts"] = identities
         verification, verification_invocation = verify(
             args.executable, args.operation, args.input, args.source, args.revision

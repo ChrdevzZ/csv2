@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import importlib.util
+import io
 import json
 import os
 import shutil
@@ -83,6 +84,72 @@ class DatasetGeneratorTests(unittest.TestCase):
                         with self.assertRaisesRegex(RuntimeError, "committed benchmark fixture inventory differs"):
                             generator.main()
                 self.assertFalse((root / "output").exists())
+
+    def test_generation_preflights_layout_and_preserves_existing_corpus(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "source"
+            shutil.copytree(MODULE_PATH.parent, source)
+            output = root / "corpus" / "fixtures"
+            manifest = output.parent / "manifest.json"
+
+            def run(scale: int, destination: Path = manifest) -> int:
+                with mock.patch.object(generator, "__file__", str(source / "generate.py")):
+                    with mock.patch.object(sys, "argv", [str(MODULE_PATH), "--output", str(output),
+                                                        "--manifest", str(destination), "--scale", str(scale)]):
+                        with mock.patch.object(sys, "stderr", io.StringIO()):
+                            return generator.main()
+
+            self.assertEqual(run(1), 0)
+            paths = list(output.glob("*.csv")) + [manifest, source / "generate.py"]
+            paths += list((source / "fixtures").glob("*.csv"))
+
+            def snapshot() -> dict[Path, tuple[bytes, int, int]]:
+                return {path: (path.read_bytes(), path.stat().st_mtime_ns, path.stat().st_ino)
+                        for path in paths}
+
+            baseline = snapshot()
+            destinations = [output / "short_unquoted.csv", output / "manifest.CSV", output,
+                            root, source / "generate.py", source / "fixtures" / "small_startup.csv",
+                            source / "fixtures" / "manifest.csv",
+                            output / "short_unquoted.csv" / "manifest.json",
+                            manifest / "child" / "manifest.json"]
+            if os.name != "nt":
+                alias = root / "corpus-alias"
+                alias.symlink_to(output, target_is_directory=True)
+                destinations.append(alias / "short_unquoted.csv")
+            for destination in destinations:
+                with self.subTest(manifest=destination):
+                    with self.assertRaises(SystemExit) as failure:
+                        run(2, destination)
+                    self.assertEqual(failure.exception.code, 2)
+                    self.assertEqual(snapshot(), baseline)
+            self.assertFalse((output / "manifest.CSV").exists())
+            stale = output / "stale.csv"
+            stale.write_bytes(b"stale\n")
+            paths.append(stale)
+            baseline = snapshot()
+            with self.assertRaises(SystemExit) as failure:
+                run(2)
+            self.assertEqual(failure.exception.code, 2)
+            self.assertEqual(snapshot(), baseline)
+            stale.unlink()
+            self.assertEqual(run(2), 0)
+            document = json.loads(manifest.read_text())
+            self.assertEqual(document["scale"], 2)
+            self.assertEqual({item["name"] for item in document["datasets"]},
+                             {path.name for path in output.glob("*.csv")})
+            for item in document["datasets"]:
+                contents = (output / item["name"]).read_bytes()
+                self.assertEqual(item["sha256"], hashlib.sha256(contents).hexdigest())
+                self.assertEqual(item["size"], len(contents))
+            output = root / "new-corpus" / "fixtures"
+            for destination in (output / "short_unquoted.csv" / "manifest.json", output.parent):
+                with self.subTest(new_manifest=destination):
+                    with self.assertRaises(SystemExit) as failure:
+                        run(2, destination)
+                    self.assertEqual(failure.exception.code, 2)
+                    self.assertFalse(output.parent.exists())
 
     def test_cmake_incremental_corpus(self) -> None:
         cmake = shutil.which("cmake")

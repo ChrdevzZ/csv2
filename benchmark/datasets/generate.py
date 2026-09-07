@@ -272,6 +272,28 @@ def main() -> int:
             "committed benchmark fixture inventory differs from generator: "
             f"missing={missing}, unexpected={unexpected}"
         )
+    output_root = arguments.output.resolve()
+    manifest_path = arguments.manifest.resolve()
+    source_fixtures = (Path(__file__).resolve().parent / "fixtures").resolve()
+    planned_files = {output_root / name for name in generated}
+    protected_files = {path.resolve() for path in planned_files}
+    protected_files.update((source_fixtures / name).resolve() for name in committed_names)
+    protected_files.add(Path(__file__).resolve())
+    if (
+        not {manifest_path, *manifest_path.parents}.isdisjoint(planned_files | protected_files)
+        or (manifest_path.parent in (output_root, source_fixtures)
+            and manifest_path.suffix.lower() == ".csv")
+        or manifest_path in (output_root, *output_root.parents)
+        or any(parent.exists() and not parent.is_dir() for parent in manifest_path.parents)
+        or manifest_path.is_dir()
+    ):
+        parser.error("manifest path conflicts with generator inputs or corpus outputs")
+    unexpected_outputs = sorted(
+        {path.name for path in arguments.output.glob("*.csv")} - set(generated)
+    )
+    if unexpected_outputs:
+        parser.error("unexpected benchmark datasets: " + ", ".join(unexpected_outputs))
+
     for name, (data, _) in generated.items():
         atomic_write(arguments.output / name, data)
 
