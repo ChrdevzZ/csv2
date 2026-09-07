@@ -107,6 +107,7 @@ class EvidenceBundleTests(unittest.TestCase):
 
         fixed = test_protocol.controlled_metrics_report()
         fixed["artifacts"]["dataset"] = artifacts.metadata(dataset_path)
+        test_protocol.bind_metrics_invocations(fixed)
         fixed["build"]["corpus_manifest"] = corpus_identity
         fixed["build"]["identity_digest"] = test_protocol.builds.current_build_identity_digest(
             fixed["build"]
@@ -221,10 +222,13 @@ class EvidenceBundleTests(unittest.TestCase):
     def test_fixed_metrics_must_bind_one_comparison_semantic_case(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             values = self.components(Path(directory))
-            values[2]["comparison_binding"]["semantic_case_id"] = "csv2.other.v1"
-            values[2]["verification"]["result"]["semantic_case_id"] = (
-                "csv2.other.v1"
-            )
+            fixed = values[2]
+            fixed["operation"] = "writer/raw-direct"
+            fixed["verification"]["result"]["operation"] = fixed["operation"]
+            for context in (fixed["comparison_binding"], fixed["verification"]["result"]):
+                context["semantic_case_id"] = "csv2.writer.raw-direct.decoded-content.v1"
+                context["scope"] = "writer_only"
+            test_protocol.bind_metrics_invocations(fixed)
             with mock.patch.object(
                 evidence.builds, "validate_build_manifest"
             ), mock.patch.object(

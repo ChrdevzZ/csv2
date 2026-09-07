@@ -179,8 +179,8 @@ calibration or warmup.
 The executable uses real time. Mmap operations disappear completely from an
 explicit `-DCSV2_HAS_MMAP=0` build. `checks/case_manifest.json` assigns every
 registered operation at least one stable verify and dry-run case; CI rejects
-missing registrations, unsupported sources, and unknown non-conditional
-entries.
+missing registrations, unsupported sources, unknown non-conditional entries,
+and deviations from the manifest's explicit semantic ID, scope, and byte basis.
 
 ## Deterministic corpus
 
@@ -225,8 +225,12 @@ paths perform no Reader traversal or checksum mixing while timed. The `--describ
 wire assigns every
 operation an explicit semantic case ID, scope, byte basis, and supported source
 set. `rows_cells` is
-`traversal_only`; Writer operations are `writer_only` and consume pointer/length
-row views prepared before timing; `legacy_mmap_rows_cells` is explicitly
+`traversal_only`; Writer operations are `writer_only`. Modern raw common-driver
+operations consume pointer/length views of original CSV fields prepared before
+timing, including their quotes and escaping. Current-tree raw Writer operations
+consume decoded prepared content; their semantic IDs therefore differ and
+cannot be bound across harnesses. See the [representation contracts](protocol/README.md#reports).
+`legacy_mmap_rows_cells` is explicitly
 `mmap_and_traversal`. Direct and streamable Writer variants must agree on
 checksum, rows, and cells. Each operation performs an untimed semantic
 checksum; a mismatch prevents a performance decision.

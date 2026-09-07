@@ -13,6 +13,7 @@ reject unknown and older versions; there is no implicit migration path.
 | complete evidence | `csv2-performance-evidence-bundle-v4` | cross-checked final decision gate |
 | artifact manifest | `csv2-artifact-manifest-v4` | component/evidence inputs and output digests |
 | machine profile | `csv2-machine-profile-v1` | reviewed identity and operating constraints for controlled evidence |
+| current case inventory | `csv2-benchmark-case-manifest-v3` | independent expected operation, source, dataset, and semantic contract |
 
 Wire output is one whitespace-separated line of unique `key=value` fields.
 Integer checksums are canonical decimal `uint64_t`; they never pass through a
@@ -44,10 +45,13 @@ are allowed only in objects explicitly marked extensible.
   effective and must leave `NDEBUG` defined; a later debug optimization or
   undefinition override invalidates the build.
 
-The tools re-read Git objects and all build inputs before completion. A build
-identity digest omits incidental workspace paths but includes every semantic
-input and output. Baseline and candidate common drivers must use equivalent
-normalized commands apart from the declared revision/include/output slots.
+The tools batch-read Git blobs with exact object-type, size, framing, and OID
+checks, and recheck exported files and build inputs before completion.
+Common-driver comparison identities normalize the source and output location
+slots needed for A/A and A/B compatibility. Current-tree provenance remains
+bound to its isolated build workspace; it is not a relocatable cache identity.
+Baseline and candidate common drivers must use equivalent normalized commands
+apart from the declared revision/include/output slots.
 MSVC common-driver builds add deterministic path mapping and reproducible
 linking arguments so the same Git objects retain one audited identity across
 separate A/A and A/B workspaces; those arguments remain visible in the build
@@ -70,6 +74,8 @@ reserved definitions.
 Response files and forced preprocessor inputs are not accepted in owned common
 driver compiler flags because the manifest cannot audit their hidden contents;
 preprocessor pass-through options are rejected for the same reason.
+MSVC options and macro names retain compiler case sensitivity: `/O2 /DNDEBUG`
+is valid; `/o2 /dNDEBUG` is not an equivalent spelling.
 
 ## Reports
 
@@ -89,7 +95,13 @@ datasets, affinity, flags, run count, warmups, and iterations.
 `csv2-fixed-machine-metrics-v7` embeds the owned current-tree build manifest
 and binds semantic verification, allocation verification, Google Benchmark
 samples, PMU counters, peak RSS, code size, and clean isolated build timing.
-Its timing summaries are rederived from saved samples. A
+Its verification and allocation fields are reconstructed from their recorded
+stdout, and their operation, revision, input, and semantic context must agree.
+Saved commands and benchmark names must match the bound artifacts and selected
+operation. Timing and PMU summaries are rederived from saved samples, and each
+real-time sample must satisfy `seconds * bytes_per_second = input corpus size`
+within floating-point rounding tolerance. The input size is the dataset
+artifact size, which can differ from the operation's verified output bytes. A
 `comparison_binding` names the exact dataset, semantic case ID, scope, source,
 and byte basis that must match one and only one A/B case. Controlled reports
 require cycles, instructions, branch misses, RSS, size, positive warmup, at
@@ -100,6 +112,20 @@ Every current and common wire carries a stable `semantic_case_id`, `scope`,
 of either harness's operation spelling. A binding is rejected when any field
 differs, so a metric for setup plus traversal cannot substantiate a
 traversal-only comparison.
+
+Raw Writer IDs explicitly distinguish input representations:
+
+| Operation | Common driver: original CSV fields | Current driver: decoded content |
+| --- | --- | --- |
+| raw-direct | `csv2.writer.raw-direct.raw-fields.v1` | `csv2.writer.raw-direct.decoded-content.v1` |
+| raw-streamable | `csv2.writer.raw-streamable.raw-fields.v1` | `csv2.writer.raw-streamable.decoded-content.v1` |
+
+The common raw paths preserve original quotes and escaping through borrowed
+pointer/length references. Current raw paths consume decoded prepared strings.
+They cannot substantiate each other's measurements. The ambiguous IDs
+`csv2.writer.raw-direct.v1` and `csv2.writer.raw-streamable.v1` are retired and
+rejected even in otherwise current-version reports. No silent reinterpretation
+or cross-harness checksum equality substitutes for this contract.
 
 Component report lifecycle is `running` to `completed` or `failed`. A completed,
 owned, controlled component satisfying its semantic gates sets

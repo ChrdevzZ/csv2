@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Validate CPack source archives without extracting untrusted paths."""
+"""Validate source archives without extracting untrusted paths."""
 
 from __future__ import annotations
 
@@ -14,6 +14,9 @@ from pathlib import Path, PurePosixPath
 
 REQUIRED_METADATA = (
     "CMakeLists.txt",
+    "cmake/Csv2SourcePackaging.cmake",
+    "cmake/verification/Csv2VerificationOptions.cmake",
+    "cmake/csv2-package-source.cmake.in",
     "LICENSE",
     "LICENSE.mio",
     "README.md",
@@ -84,7 +87,15 @@ GENERATED_BUILD_NAMES = {
 
 
 def safe_parts(member_name: str, archive: Path) -> tuple[str, ...]:
-    if not member_name or "\\" in member_name or "\0" in member_name:
+    if (
+        not member_name
+        or "\\" in member_name
+        or ":" in member_name
+        or any(
+            ord(character) < 32 or 127 <= ord(character) <= 159
+            for character in member_name
+        )
+    ):
         raise RuntimeError(f"unsafe member path in {archive}: {member_name!r}")
     path = PurePosixPath(member_name)
     if path.is_absolute() or ".." in path.parts or not path.parts:
@@ -210,11 +221,13 @@ def extract_archive(path: Path, extract_root: Path, package_root: str) -> Path:
         raise RuntimeError(
             f"source archive extraction destination exists: {destination}"
         )
-    destination.mkdir(parents=True)
     try:
         with tarfile.open(path, "r:*") as archive:
             normalized_paths: set[str] = set()
-            for member in archive.getmembers():
+            members = archive.getmembers()
+            outputs: list[Path] = []
+            root = destination.resolve()
+            for member in members:
                 parts = safe_parts(member.name, path)
                 normalized = PurePosixPath(*parts).as_posix()
                 if normalized in normalized_paths:
@@ -224,14 +237,21 @@ def extract_archive(path: Path, extract_root: Path, package_root: str) -> Path:
                 normalized_paths.add(normalized)
                 if parts[0] != package_root:
                     raise RuntimeError(f"multiple package roots in {path}")
-                output = destination.joinpath(*parts)
-                if member.isdir():
-                    output.mkdir(parents=True, exist_ok=True)
-                    continue
-                if not member.isfile():
+                if not member.isdir() and not member.isfile():
                     raise RuntimeError(
                         f"unsupported non-regular member in {path}: {member.name}"
                     )
+                output = destination.joinpath(*parts)
+                if not output.resolve().is_relative_to(root):
+                    raise RuntimeError(f"unsafe extraction destination: {member.name}")
+                outputs.append(output)
+            destination.mkdir(parents=True)
+            for member, output in zip(members, outputs):
+                if not output.resolve().is_relative_to(root):
+                    raise RuntimeError(f"unsafe extraction destination: {member.name}")
+                if member.isdir():
+                    output.mkdir(parents=True, exist_ok=True)
+                    continue
                 extracted = archive.extractfile(member)
                 if extracted is None:
                     raise RuntimeError(f"could not read archive member: {member.name}")
@@ -315,7 +335,7 @@ def main(arguments: Iterable[str] | None = None) -> int:
     except RuntimeError as error:
         print(f"source archive verification failed: {error}", file=sys.stderr)
         return 1
-    print(f"verified {len(args.archives)} equivalent CPack source archives")
+    print(f"verified {len(args.archives)} equivalent source archives")
     for path in extracted:
         print(f"extracted verified source tree: {path}")
     return 0

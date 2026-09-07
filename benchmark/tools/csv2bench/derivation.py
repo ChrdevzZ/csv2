@@ -221,7 +221,9 @@ def validate_comparison_case(
         )
 
 
-def validate_timing_summary(timing: Mapping[str, object], label: str) -> None:
+def validate_timing_summary(
+    timing: Mapping[str, object], label: str, *, input_bytes: int | None = None
+) -> None:
     samples = timing.get("samples")
     if not isinstance(samples, list) or not samples:
         raise RuntimeError(f"{label}.samples must be a non-empty array")
@@ -241,6 +243,10 @@ def validate_timing_summary(timing: Mapping[str, object], label: str) -> None:
             if isinstance(value, bool) or not isinstance(value, (int, float)):
                 raise RuntimeError(f"{label}.samples[{index}].{field} must be numeric")
             destination.append(float(value))
+    if input_bytes is not None:
+        for index, (duration, rate) in enumerate(zip(seconds, bytes_per_second)):
+            if not math.isclose(duration * rate, input_bytes, rel_tol=1e-9, abs_tol=1e-6):
+                raise RuntimeError(f"{label}.samples[{index}] throughput differs from input corpus bytes")
     for field, values in (("bytes_per_second", bytes_per_second), ("seconds", seconds)):
         median, mad = statistics.median_mad(values)
         summary = timing.get(field)

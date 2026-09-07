@@ -399,6 +399,41 @@ foreach(csv2_common_writer_operation IN ITEMS
     TIER portability)
 endforeach()
 
+# Raw-field and decoded-content writers intentionally produce different bytes.
+# These expectations describe literal fixture/output bytes, not another driver.
+set(csv2_representation_fixture
+  "${csv2_SOURCE_DIR}/benchmark/checks/fixtures/writer_representation.csv")
+foreach(csv2_writer_form IN ITEMS direct streamable)
+  csv2_add_benchmark_check(csv2.benchmark.current.writer_representation.${csv2_writer_form}
+    COMMAND ${CMAKE_COMMAND}
+      -DCSV2_BENCHMARK_EXECUTABLE=$<TARGET_FILE:csv2_benchmark>
+      -DCSV2_BENCHMARK_INPUT=${csv2_representation_fixture}
+      -DCSV2_BENCHMARK_SOURCE=buffer
+      -DCSV2_BENCHMARK_OPERATION=writer/raw-${csv2_writer_form}
+      -DCSV2_EXPECTED_SEMANTIC_CASE_ID=csv2.writer.raw-${csv2_writer_form}.decoded-content.v1
+      -DCSV2_EXPECTED_SCOPE=writer_only
+      -DCSV2_EXPECTED_BYTE_BASIS=input_corpus
+      -DCSV2_EXPECTED_CHECKSUM=6787285681050815190
+      -DCSV2_EXPECTED_BYTES=8
+      -DCSV2_EXPECTED_ROWS=2
+      -DCSV2_EXPECTED_CELLS=2
+      -P ${CMAKE_CURRENT_SOURCE_DIR}/verify_wire.cmake
+    TIER portability)
+  csv2_add_benchmark_check(csv2.benchmark.common.writer_representation.${csv2_writer_form}
+    COMMAND ${CMAKE_COMMAND}
+      -DCSV2_BENCHMARK_EXECUTABLE=$<TARGET_FILE:csv2_common_benchmark>
+      -DCSV2_BENCHMARK_INPUT=${csv2_representation_fixture}
+      -DCSV2_BENCHMARK_OPERATION=writer_raw_${csv2_writer_form}
+      -DCSV2_EXPECTED_SEMANTIC_CASE_ID=csv2.writer.raw-${csv2_writer_form}.raw-fields.v1
+      -DCSV2_EXPECTED_CHECKSUM=10850464182905031630
+      -DCSV2_EXPECTED_BYTES=13
+      -DCSV2_EXPECTED_ROWS=4
+      -DCSV2_EXPECTED_CELLS=4
+      -DCSV2_EXPECTED_ROW_BYTES=22
+      -P ${CMAKE_CURRENT_SOURCE_DIR}/verify_common_wire.cmake
+    TIER portability)
+endforeach()
+
 if(csv2_benchmark_has_mmap)
   csv2_add_benchmark_check(csv2.benchmark.current.mmap
     COMMAND csv2_benchmark --csv2-input ${csv2_check_fixture}

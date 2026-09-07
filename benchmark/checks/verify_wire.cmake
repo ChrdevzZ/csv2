@@ -25,7 +25,7 @@ else()
   endif()
 endif()
 
-foreach(field IN ITEMS PROTOCOL CHECKSUM ROWS CELLS ALLOCATIONS)
+foreach(field IN ITEMS PROTOCOL CHECKSUM ROWS CELLS ALLOCATIONS SEMANTIC_CASE_ID SCOPE BYTE_BASIS BYTES)
   set(expected_variable "CSV2_EXPECTED_${field}")
   if(DEFINED ${expected_variable})
     string(TOLOWER "${field}" field_name)

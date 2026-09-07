@@ -631,14 +631,14 @@ const OperationContract operation_contracts[] = {
 #else
      "buffer",
 #endif
-     "csv2.writer.raw-direct.v1", "input_corpus"},
+     "csv2.writer.raw-direct.raw-fields.v1", "input_corpus"},
     {"writer_raw_streamable", "writer_only",
 #if CSV2_HAS_MMAP
      "buffer+mmap",
 #else
      "buffer",
 #endif
-     "csv2.writer.raw-streamable.v1", "input_corpus"},
+     "csv2.writer.raw-streamable.raw-fields.v1", "input_corpus"},
     {"writer_escaped_direct", "writer_only",
 #if CSV2_HAS_MMAP
      "buffer+mmap",

@@ -55,14 +55,14 @@ def _common_build_definitions(arguments: Sequence[object]) -> dict[str, list[str
         if not isinstance(argument, str):
             raise RuntimeError("common-driver build command contains a non-string argument")
         payload: str | None = None
-        if argument == "-D" or argument.lower() == "/d":
+        if argument in ("-D", "/D"):
             index += 1
             if index >= len(arguments) or not isinstance(arguments[index], str):
                 raise RuntimeError("common-driver build command has an incomplete definition")
             payload = str(arguments[index])
         elif argument.startswith("-D"):
             payload = argument[2:]
-        elif argument.lower().startswith("/d"):
+        elif argument.startswith("/D"):
             payload = argument[2:]
         if payload:
             name, separator, value = payload.partition("=")
@@ -134,10 +134,10 @@ def validate_common_build_command_contract(manifest: dict[str, object]) -> None:
         "CSV2_BENCHMARK_ENABLE_MODERN_WRITER_OPERATIONS=" + expected_modern[0],
     ]
     if msvc:
-        lower_flags = {flag.lower() for flag in compiler_flags}
-        tail = [* ([] if "/experimental:deterministic" in lower_flags else ["/experimental:deterministic"]),
+        flag_set = set(compiler_flags)
+        tail = [* ([] if "/experimental:deterministic" in flag_set else ["/experimental:deterministic"]),
                 "/pathmap:{adapter_root}=/_csv2/adapter", "/pathmap:{header_root}=/_csv2/source",
-                * ([] if "/brepro" in lower_flags else ["/Brepro"]),
+                * ([] if "/Brepro" in flag_set else ["/Brepro"]),
                 "/sourceDependencies", "{dependencies}",
                 *("/D" + value for value in definitions), "/I{include_root}",
                 "{adapter_source}", "/Fe:{output}", "/Fo:{object}"]
@@ -209,15 +209,50 @@ def _git(
     arguments: Sequence[str],
     *,
     run_fn: Run = subprocess.run,
+    input_bytes: bytes | None = None,
 ) -> bytes:
     command = ["git", "-C", str(repository), *arguments]
-    completed = run_fn(command, capture_output=True, timeout=30)
+    completed = run_fn(command, capture_output=True, timeout=30,
+                       **({"input": input_bytes} if input_bytes is not None else {}))
     if completed.returncode != 0:
         stderr = completed.stderr.decode("utf-8", errors="replace")
         raise RuntimeError(
             f"Git command failed ({completed.returncode}): {json.dumps(command)}\n{stderr}"
         )
     return bytes(completed.stdout)
+
+
+def read_git_blobs(
+    repository: Path, object_ids: Sequence[str], *, run_fn: Run = subprocess.run
+) -> dict[str, bytes]:
+    """Read immutable blobs in one process, checking framing and object hashes."""
+    unique = list(dict.fromkeys(_object_id(oid, "Git blob") for oid in object_ids))
+    if not unique:
+        return {}
+    wire = _git(repository, ["--no-replace-objects", "cat-file", "--batch"],
+                run_fn=run_fn, input_bytes=("\n".join(unique) + "\n").encode("ascii"))
+    result: dict[str, bytes] = {}
+    offset = 0
+    for oid in unique:
+        end = wire.find(b"\n", offset)
+        header = wire[offset:end] if end >= offset else b""
+        match = re.fullmatch(rb"([0-9a-f]{40}|[0-9a-f]{64}) blob (0|[1-9][0-9]{0,19})", header)
+        if match is None or match[1].decode("ascii") != oid:
+            raise RuntimeError("Git batch returned an invalid blob header")
+        size = int(match[2])
+        start = end + 1
+        stop = start + size
+        if stop >= len(wire) or wire[stop:stop + 1] != b"\n":
+            raise RuntimeError("Git batch returned a truncated blob or missing terminator")
+        blob = wire[start:stop]
+        digest = hashlib.sha1 if len(oid) == 40 else hashlib.sha256
+        if digest(b"blob " + str(size).encode("ascii") + b"\0" + blob).hexdigest() != oid:
+            raise RuntimeError("Git batch blob content differs from its object ID")
+        result[oid] = blob
+        offset = stop + 1
+    if offset != len(wire):
+        raise RuntimeError("Git batch returned unexpected trailing data")
+    return result
 
 
 def resolve_commit(repository: Path, reference: str, *, run_fn: Run = subprocess.run) -> str:
@@ -360,6 +395,7 @@ def export_git_tree(
     files: list[dict[str, object]] = []
     target_keys: set[str] = set()
     try:
+        blobs = read_git_blobs(repository, [entry["oid"] for entry in entries], run_fn=run_fn)
         for entry in entries:
             target = export_target(root, entry["path"])
             target_key = os.path.normcase(str(target.resolve(strict=False)))
@@ -369,7 +405,7 @@ def export_git_tree(
             target.parent.mkdir(parents=True, exist_ok=True)
             if not target.parent.resolve(strict=True).is_relative_to(root):
                 raise RuntimeError(f"Git export parent escapes staging root: {entry['path']}")
-            blob = _git(repository, ["cat-file", "blob", entry["oid"]], run_fn=run_fn)
+            blob = blobs[entry["oid"]]
             with target.open("xb") as output:
                 output.write(blob)
                 output.flush()
@@ -425,7 +461,6 @@ def verify_git_export(manifest: dict[str, object]) -> None:
     values = manifest.get("files")
     if not isinstance(values, list) or not values:
         raise RuntimeError("Git export manifest has no files")
-    expected_files: set[Path] = set()
     for index, value in enumerate(values):
         if not isinstance(value, dict):
             raise RuntimeError(f"Git export file {index} is not an object")
@@ -433,6 +468,10 @@ def verify_git_export(manifest: dict[str, object]) -> None:
         source = source_entries.get(path)
         if source is None or any(value.get(field) != source[field] for field in ("mode", "type", "oid")):
             raise RuntimeError(f"Git export file is not bound to the commit tree: {path}")
+    blobs = read_git_blobs(repository, [value["oid"] for value in values])
+    expected_files: set[Path] = set()
+    for value in values:
+        path = value["path"]
         target = export_target(root, path)
         if target.is_symlink() or not target.is_file():
             raise RuntimeError(f"Git export file is missing or not regular: {path}")
@@ -440,7 +479,7 @@ def verify_git_export(manifest: dict[str, object]) -> None:
         digest = artifacts.sha256_file(target)
         if value.get("size") != size or value.get("sha256") != digest:
             raise RuntimeError(f"Git export file changed after extraction: {path}")
-        blob = _git(repository, ["cat-file", "blob", str(value["oid"])])
+        blob = blobs[value["oid"]]
         if len(blob) != size or hashlib.sha256(blob).hexdigest() != digest:
             raise RuntimeError(f"Git export file differs from its Git blob: {path}")
         expected_files.add(target.resolve(strict=True))
@@ -586,16 +625,16 @@ def compile_common_driver(
         + ("1" if enable_modern_writer_operations else "0")
     )
     if msvc:
-        lower_flags = {flag.lower() for flag in compiler_flags}
+        flag_set = set(compiler_flags)
         reproducibility_flags = [
             *(
                 []
-                if "/experimental:deterministic" in lower_flags
+                if "/experimental:deterministic" in flag_set
                 else ["/experimental:deterministic"]
             ),
             f"/pathmap:{adapter_root}=/_csv2/adapter",
             f"/pathmap:{header_root}=/_csv2/source",
-            *([] if "/brepro" in lower_flags else ["/Brepro"]),
+            *([] if "/Brepro" in flag_set else ["/Brepro"]),
         ]
         command = [
             str(compiler),
@@ -1041,24 +1080,23 @@ def _validate_effective_release_flags(
     while index < len(arguments):
         argument = arguments[index]
         _validate_transparent_compiler_argument(argument, label)
-        lowered = argument.lower()
         if re.fullmatch(r"-O(?:[0-9]+|fast|g|s|z)?", argument):
             optimization = argument
-        elif re.fullmatch(r"/O(?:1|2|d|x)", argument, re.IGNORECASE):
-            optimization = lowered
+        elif re.fullmatch(r"/O(?:1|2|d|x)", argument):
+            optimization = argument
 
         macro_action: bool | None = None
         macro_payload: str | None = None
-        if argument in ("-D", "-U") or lowered in ("/d", "/u"):
-            macro_action = argument == "-D" or lowered == "/d"
+        if argument in ("-D", "-U", "/D", "/U"):
+            macro_action = argument in ("-D", "/D")
             index += 1
             if index < len(arguments):
                 macro_payload = arguments[index]
         elif argument.startswith(("-D", "-U")) and len(argument) > 2:
             macro_action = argument.startswith("-D")
             macro_payload = argument[2:]
-        elif lowered.startswith(("/d", "/u")) and len(argument) > 2:
-            macro_action = lowered.startswith("/d")
+        elif argument.startswith(("/D", "/U")) and len(argument) > 2:
+            macro_action = argument.startswith("/D")
             macro_payload = argument[2:]
         if (
             macro_action is not None
@@ -1068,7 +1106,7 @@ def _validate_effective_release_flags(
             ndebug = macro_action
         index += 1
 
-    if optimization not in {"-O2", "-O3", "/o2"}:
+    if optimization not in {"-O2", "-O3", "/O2"}:
         raise RuntimeError(f"{label} lacks an effective optimized compile flag")
     if ndebug is not True:
         raise RuntimeError(f"{label} lacks effective NDEBUG")
@@ -1761,7 +1799,7 @@ def _current_dependencies(
                 object_path = tokens[tokens.index("-o") + 1]
             else:
                 outputs = [token[3:].lstrip(":").strip('"')
-                           for token in tokens if token.lower().startswith("/fo")]
+                           for token in tokens if token.startswith("/Fo")]
                 if len(outputs) != 1:
                     raise RuntimeError("owned compile command lacks unique object output")
                 object_path = outputs[0]

@@ -148,6 +148,12 @@
     },
     "case": {
       "type": "object",
+      "allOf": [
+        {"if": {"properties": {"operation": {"const": "writer_raw_direct"}}}, "then": {"properties": {"semantic_case_id": {"const": "csv2.writer.raw-direct.raw-fields.v1"}, "scope": {"const": "writer_only"}}}},
+        {"if": {"properties": {"semantic_case_id": {"const": "csv2.writer.raw-direct.raw-fields.v1"}}}, "then": {"properties": {"operation": {"const": "writer_raw_direct"}}}},
+        {"if": {"properties": {"operation": {"const": "writer_raw_streamable"}}}, "then": {"properties": {"semantic_case_id": {"const": "csv2.writer.raw-streamable.raw-fields.v1"}, "scope": {"const": "writer_only"}}}},
+        {"if": {"properties": {"semantic_case_id": {"const": "csv2.writer.raw-streamable.raw-fields.v1"}}}, "then": {"properties": {"operation": {"const": "writer_raw_streamable"}}}}
+      ],
       "required": [
         "dataset", "operation", "source", "semantic_case_id", "scope",
         "byte_basis", "semantic_signature", "baseline",
@@ -159,7 +165,7 @@
         "dataset": {"type": "string", "minLength": 1},
         "operation": {"type": "string", "minLength": 1},
         "source": {"enum": ["buffer", "mmap"]},
-        "semantic_case_id": {"type": "string", "pattern": "^csv2\\..+\\.v1$"},
+        "semantic_case_id": {"type": "string", "pattern": "^csv2\\.(?:writer\\.raw-(?:direct|streamable)\\.raw-fields|(?!writer\\.raw-(?:direct|streamable)(?:\\.|$)).+)\\.v1$"},
         "scope": {"type": "string", "minLength": 1},
         "byte_basis": {"const": "input_corpus"},
         "semantic_signature": {
@@ -212,6 +218,12 @@
         "throughput_gib_per_second": {"type": "number", "exclusiveMinimum": 0},
         "result": {
           "type": "object",
+          "allOf": [
+            {"if": {"properties": {"operation": {"const": "writer_raw_direct"}}}, "then": {"properties": {"semantic_case_id": {"const": "csv2.writer.raw-direct.raw-fields.v1"}, "scope": {"const": "writer_only"}}}},
+            {"if": {"properties": {"semantic_case_id": {"const": "csv2.writer.raw-direct.raw-fields.v1"}}}, "then": {"properties": {"operation": {"const": "writer_raw_direct"}}}},
+            {"if": {"properties": {"operation": {"const": "writer_raw_streamable"}}}, "then": {"properties": {"semantic_case_id": {"const": "csv2.writer.raw-streamable.raw-fields.v1"}, "scope": {"const": "writer_only"}}}},
+            {"if": {"properties": {"semantic_case_id": {"const": "csv2.writer.raw-streamable.raw-fields.v1"}}}, "then": {"properties": {"operation": {"const": "writer_raw_streamable"}}}}
+          ],
           "required": [
             "protocol", "revision", "operation", "scope", "source",
             "semantic_case_id", "byte_basis", "bytes",
@@ -227,7 +239,7 @@
             "operation": {"type": "string", "minLength": 1},
             "scope": {"type": "string", "minLength": 1},
             "source": {"enum": ["buffer", "mmap"]},
-            "semantic_case_id": {"type": "string", "pattern": "^csv2\\..+\\.v1$"},
+            "semantic_case_id": {"type": "string", "pattern": "^csv2\\.(?:writer\\.raw-(?:direct|streamable)\\.raw-fields|(?!writer\\.raw-(?:direct|streamable)(?:\\.|$)).+)\\.v1$"},
             "byte_basis": {"const": "input_corpus"},
             "bytes": {"type": "string", "pattern": "^(0|[1-9][0-9]*)$"},
             "iterations": {"type": "string", "pattern": "^(0|[1-9][0-9]*)$"},

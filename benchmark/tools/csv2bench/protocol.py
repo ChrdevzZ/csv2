@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 import math
+import re
 from typing import Iterable
 
 from . import COMPARISON_SCHEMA, CURRENT_PROTOCOL, EVIDENCE_SCHEMA, METRICS_SCHEMA
 from . import COMMON_PROTOCOL
-from . import derivation
+from . import derivation, owned_inputs
 
 UINT64_MAX = (1 << 64) - 1
 COMMON_OPERATION_CAPABILITIES = {
@@ -20,6 +21,57 @@ COMMON_OPERATION_CAPABILITIES = {
     "writer_escaped_streamable": "modern-writer",
 }
 COMMON_CAPABILITY_ORDER = ("legacy-reader", "legacy-writer", "modern-writer")
+
+
+COMMON_SEMANTIC_IDS = {
+    "rows_cells": "csv2.traversal.rows-cells.v1",
+    "legacy_mmap_rows_cells": "csv2.legacy.mmap-rows-cells.v1",
+    "legacy_writer_raw": "csv2.writer.legacy-raw.v1",
+    "writer_raw_direct": "csv2.writer.raw-direct.raw-fields.v1",
+    "writer_raw_streamable": "csv2.writer.raw-streamable.raw-fields.v1",
+    "writer_escaped_direct": "csv2.writer.escaped-direct.v1",
+    "writer_escaped_streamable": "csv2.writer.escaped-streamable.v1",
+}
+CURRENT_RAW_SEMANTIC_IDS = {
+    "writer/raw-direct": "csv2.writer.raw-direct.decoded-content.v1",
+    "writer/raw-streamable": "csv2.writer.raw-streamable.decoded-content.v1",
+}
+RETIRED_SEMANTIC_IDS = {
+    "csv2.writer.raw-direct.v1", "csv2.writer.raw-streamable.v1",
+}
+
+
+def validate_semantic_id(operation: str, semantic_id: str, *, common: bool) -> None:
+    if not isinstance(operation, str) or not operation or not isinstance(semantic_id, str):
+        raise RuntimeError("semantic case ID and operation must be non-empty strings")
+    if common:
+        expected = COMMON_SEMANTIC_IDS.get(operation)
+    else:
+        expected = CURRENT_RAW_SEMANTIC_IDS.get(
+            operation, "csv2." + operation.replace("/", ".") + ".v1"
+        )
+    if (not common and semantic_id.startswith(("csv2.writer.raw-direct.", "csv2.writer.raw-streamable."))
+            and CURRENT_RAW_SEMANTIC_IDS.get(operation) != semantic_id):
+        expected = None
+    if semantic_id != expected:
+        raise RuntimeError(f"semantic case ID differs from operation contract: {operation}")
+
+
+def current_dataset_name(path: str) -> str:
+    # Match the C++ byte-wise safe_component under the default C locale.
+    owned_inputs.recorded_path(path)
+    # Context::filename_from_path recognizes both separators on every platform.
+    name = path.replace("\\", "/").rsplit("/", 1)[-1]
+    return "".join(
+        chr(byte) if (48 <= byte <= 57 or 65 <= byte <= 90 or 97 <= byte <= 122
+                      or byte in b"-_.") else "_"
+        for byte in name.encode("utf-8")
+    ) or "unnamed"
+
+
+def timing_filter(operation: str, source: str) -> str:
+    # ECMAScript std::regex does not portably accept Python's escaped hyphen.
+    return "^" + re.escape(f"csv2/{operation}/{source}/").replace(r"\-", "-")
 
 
 def parse_key_value_line(output: str, required: Iterable[str]) -> dict[str, str]:
@@ -51,6 +103,10 @@ def require_protocol(values: dict[str, str], expected: str) -> None:
 def parse_common(output: str, required: Iterable[str]) -> dict[str, str]:
     result = parse_key_value_line(output, {"protocol", *required})
     require_protocol(result, COMMON_PROTOCOL)
+    if "operation_contracts" in result:
+        parse_operation_contracts(result["operation_contracts"])
+    if "semantic_case_id" in result:
+        validate_semantic_id(result.get("operation", ""), result["semantic_case_id"], common=True)
     return result
 
 
@@ -71,6 +127,7 @@ def parse_operation_contracts(
             raise RuntimeError(f"unsupported operation scope: {scope}")
         if not semantic_case_id.startswith("csv2.") or not semantic_case_id.endswith(".v1"):
             raise RuntimeError(f"unsupported semantic case ID: {semantic_case_id}")
+        validate_semantic_id(operation, semantic_case_id, common=True)
         if byte_basis != "input_corpus":
             raise RuntimeError(f"unsupported byte basis: {byte_basis}")
         source_entries = encoded_sources.split("+")
@@ -140,6 +197,7 @@ def parse_current(output: str) -> dict[str, str]:
     require_protocol(result, CURRENT_PROTOCOL)
     if not result["semantic_case_id"].startswith("csv2."):
         raise RuntimeError("benchmark semantic case ID is invalid")
+    validate_semantic_id(result["operation"], result["semantic_case_id"], common=False)
     if not result["scope"].endswith("_only"):
         raise RuntimeError("benchmark scope is invalid")
     if result["byte_basis"] != "input_corpus":
@@ -354,6 +412,55 @@ def _invocation(value: object, label: str) -> dict[str, object]:
     return invocation
 
 
+
+def _current_invocation(
+    value: object, label: str, document: dict[str, object], *,
+    allocation: bool = False, timing: bool = False, pmu: bool = False,
+) -> dict[str, object]:
+    invocation = _invocation(value, label)
+    artifacts = document["artifacts"]
+    executable = artifacts["allocation_executable" if allocation else "executable"]["path"]
+    prefix = [executable, "--csv2-input", artifacts["dataset"]["path"],
+              "--csv2-source", document["source"], "--csv2-operation", document["operation"]]
+    command = invocation["command"]
+    if not timing:
+        if command != [*prefix, "--csv2-verify"]:
+            raise RuntimeError(f"{label}.command differs from verification context")
+        return invocation
+    if command[:len(prefix)] != prefix:
+        raise RuntimeError(f"{label}.command differs from timing context")
+    options = {}
+    for argument in command[len(prefix):]:
+        key, separator, value = argument.partition("=")
+        if not separator or not value or key in options:
+            raise RuntimeError(f"{label}.command has malformed or duplicate options")
+        options[key] = value
+    expected = {
+        "--benchmark_filter": timing_filter(document["operation"], document["source"]),
+        "--benchmark_repetitions": str(document["runs"]),
+        "--benchmark_enable_random_interleaving": "true",
+        "--benchmark_report_aggregates_only": "false",
+        "--benchmark_display_aggregates_only": "false",
+        "--benchmark_out_format": "json",
+    }
+    if pmu:
+        expected["--benchmark_perf_counters"] = "cycles,instructions,branch-misses"
+    variable = {"--benchmark_min_time", "--benchmark_min_warmup_time", "--benchmark_out"}
+    if set(options) != expected.keys() | variable or any(
+        options[key] != value for key, value in expected.items()
+    ):
+        raise RuntimeError(f"{label}.command differs from benchmark collection contract")
+    minimum = options["--benchmark_min_time"]
+    if not re.fullmatch(r"(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+)(?:[eE][+-]?[0-9]+)?s?|[1-9][0-9]*x", minimum):
+        raise RuntimeError(f"{label}.command has invalid minimum time")
+    if not minimum.endswith("x") and finite_nonnegative(minimum.rstrip("s"), label) <= 0:
+        raise RuntimeError(f"{label}.command minimum time must be positive")
+    warmup = finite_nonnegative(options["--benchmark_min_warmup_time"], label)
+    if document["evidence_level"] == "controlled" and warmup <= 0:
+        raise RuntimeError(f"{label}.command controlled warmup must be positive")
+    return invocation
+
+
 def _number(
     value: object, label: str, *, minimum: float = 0.0, positive: bool = False
 ) -> float:
@@ -399,7 +506,8 @@ def _sample_statistics(
 
 
 def _timing(
-    value: object, label: str, expected_runs: int, *, require_pmu: bool = False
+    value: object, label: str, expected_runs: int, *, require_pmu: bool = False,
+    input_bytes: int | None = None, benchmark_name: str | None = None,
 ) -> dict[str, object]:
     timing = _object(value, label)
     _required(
@@ -408,6 +516,8 @@ def _timing(
         label,
     )
     _string(timing["benchmark"], f"{label}.benchmark")
+    if benchmark_name is not None and timing["benchmark"] != benchmark_name:
+        raise RuntimeError(f"{label}.benchmark differs from registered case")
     if _integer(timing["runs"], f"{label}.runs", 1) != expected_runs:
         raise RuntimeError(f"{label}.runs is inconsistent")
     samples = _array(timing["samples"], f"{label}.samples")
@@ -444,7 +554,7 @@ def _timing(
             positive=summary_name == "seconds",
         )
         _number(summary["mad"], f"{summary_label}.mad")
-    derivation.validate_timing_summary(timing, label)
+    derivation.validate_timing_summary(timing, label, input_bytes=input_bytes)
     return timing
 
 
@@ -1337,6 +1447,8 @@ def validate_fixed_metrics_report(report: object) -> None:
             "rows", "cells", "allocations", "allocated_bytes",
         }
         _required(result, current_fields, "fixed-machine report.verification.result")
+        _closed(result, current_fields, "fixed-machine report.verification.result")
+        validate_semantic_id(result["operation"], result["semantic_case_id"], common=False)
         if result["protocol"] != CURRENT_PROTOCOL:
             raise RuntimeError("fixed-machine verification protocol is invalid")
         if result["revision"] != executable["revision"]:
@@ -1369,7 +1481,16 @@ def validate_fixed_metrics_report(report: object) -> None:
                 raise RuntimeError(
                     f"fixed-machine comparison binding differs for {field}"
                 )
-        _invocation(verification["invocation"], "fixed-machine report.verification.invocation")
+        verification_invocation = _current_invocation(
+            verification["invocation"], "fixed-machine report.verification.invocation", document
+        )
+        if parse_current(verification_invocation["stdout"]) != result:
+            raise RuntimeError("fixed-machine verification result differs from saved stdout")
+        dataset_name = current_dataset_name(identities["dataset"]["path"])
+        if result["dataset"] != dataset_name:
+            raise RuntimeError("fixed-machine verification dataset differs from input artifact")
+        benchmark_name = f"csv2/{document['operation']}/{document['source']}/{dataset_name}/real_time"
+        input_bytes = identities["dataset"]["size"]
         allocations = _object(document["allocations"], "fixed-machine report.allocations")
         _required(
             allocations,
@@ -1378,11 +1499,21 @@ def validate_fixed_metrics_report(report: object) -> None:
         )
         _integer(allocations["count"], "fixed-machine report.allocations.count")
         _integer(allocations["bytes"], "fixed-machine report.allocations.bytes")
-        _invocation(
-            allocations["invocation"], "fixed-machine report.allocations.invocation"
+        allocation_invocation = _current_invocation(
+            allocations["invocation"], "fixed-machine report.allocations.invocation", document,
+            allocation=True,
         )
-        _timing(document["timing"], "fixed-machine report.timing", runs)
-        _invocation(document["timing_invocation"], "fixed-machine report.timing_invocation")
+        allocation_result = parse_current(allocation_invocation["stdout"])
+        for field in current_fields - {"allocations", "allocated_bytes"}:
+            if allocation_result[field] != result[field]:
+                raise RuntimeError(f"fixed-machine allocation verification differs for {field}")
+        if (allocations["count"] != int(allocation_result["allocations"])
+                or allocations["bytes"] != int(allocation_result["allocated_bytes"])):
+            raise RuntimeError("fixed-machine allocation totals differ from saved stdout")
+        _timing(document["timing"], "fixed-machine report.timing", runs,
+                input_bytes=input_bytes, benchmark_name=benchmark_name)
+        _current_invocation(document["timing_invocation"], "fixed-machine report.timing_invocation",
+                            document, timing=True)
         if document["clean_build"] is not None:
             _clean_build(document["clean_build"], "fixed-machine report.clean_build")
         if document.get("post_build") is not None:
@@ -1392,11 +1523,11 @@ def validate_fixed_metrics_report(report: object) -> None:
                 document["pmu"],
                 "fixed-machine report.pmu",
                 runs,
-                require_pmu=True,
+                require_pmu=True, input_bytes=input_bytes, benchmark_name=benchmark_name,
             )
-            _invocation(
-                document.get("pmu_invocation"),
-                "fixed-machine report.pmu_invocation",
+            _current_invocation(
+                document.get("pmu_invocation"), "fixed-machine report.pmu_invocation",
+                document, timing=True, pmu=True,
             )
         if document.get("peak_rss") is not None:
             _peak_rss(document["peak_rss"], "fixed-machine report.peak_rss")
@@ -1591,6 +1722,12 @@ def validate_evidence_bundle(bundle: object) -> None:
     _closed(binding, binding_fields, "performance evidence bundle.comparison_binding")
     for field in binding_fields:
         _string(binding[field], f"performance evidence bundle.comparison_binding.{field}")
+    semantic_id = binding["semantic_case_id"]
+    if semantic_id in RETIRED_SEMANTIC_IDS:
+        raise RuntimeError("performance evidence bundle uses a retired semantic case ID")
+    if (semantic_id.startswith(("csv2.writer.raw-direct.", "csv2.writer.raw-streamable."))
+            and semantic_id not in {*COMMON_SEMANTIC_IDS.values(), *CURRENT_RAW_SEMANTIC_IDS.values()}):
+        raise RuntimeError("performance evidence bundle uses an unsupported raw semantic case ID")
     if binding["byte_basis"] != "input_corpus":
         raise RuntimeError("performance evidence bundle byte basis is invalid")
 

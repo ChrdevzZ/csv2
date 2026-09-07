@@ -134,29 +134,5 @@ if(CSV2_IS_TOP_LEVEL)
   install(FILES LICENSE LICENSE.mio
           DESTINATION ${CMAKE_INSTALL_DATAROOTDIR}/licenses/csv2)
 
-  # CPack consumes regular expressions, not gitignore globs. Keep packaging
-  # policy explicit so editor preferences cannot silently change artifacts.
-  # Use [.] for literal dots because CPack serializes these expressions through
-  # a generated CMake configuration before evaluating them.
-  set(CPACK_SOURCE_IGNORE_FILES
-    "/[.]ccache($|/)"
-    "/[.]git[^/]*($|/)"
-    "/[.](codex_tmp|idea|temp|tmp|vs|vscode)($|/)"
-    "/(analysis-cppcheck-build-dir|build|coverage|out|test-output|test-results)($|/)"
-    "/(build-|cmake-build-|coverage-)[^/]*/"
-    "/(__pycache__|CMakeFiles|Testing|_deps)($|/)"
-    "/(CMakeCache[.]txt|CTestTestfile[.]cmake|cmake_install[.]cmake|install_manifest[.]txt)$"
-    "/(build[.]ninja|rules[.]ninja|[.]ninja_deps|[.]ninja_log)$"
-    "/[^/]+[.](a|dll|docstates|dylib|exe|iml|lib|nupkg|o|obj|pdb|so|suo|user|userosscache)$"
-    "/[^/]+[.]py[cod]$"
-    "/(Debug|Release|x64|x86|artifacts)($|/)"
-    "/[^/]+[.](gcda|gcno|profraw|tmp|log)$"
-    "/[^/]+-writer-output[.]csv$"
-    "/[^/]+~$"
-    "/(desktop[.]ini|[.]DS_Store)$"
-  )
-  set(CPACK_SOURCE_PACKAGE_FILE_NAME "${PROJECT_NAME}-${PROJECT_VERSION}")
-  set(CPACK_GENERATOR "TGZ;TXZ")
-  set(CPACK_SOURCE_GENERATOR "TGZ;TXZ")
-  include(CPack)
+  include(cmake/Csv2SourcePackaging.cmake)
 endif()

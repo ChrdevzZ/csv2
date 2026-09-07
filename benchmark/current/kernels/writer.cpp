@@ -82,9 +82,11 @@ void register_writer_operations(Registry &registry) {
   const unsigned direct = prepare_reader | prepare_decoded_rows | prepare_output;
   const unsigned streamable = direct | prepare_streamable_rows;
   registry.add("writer/raw-direct", source_buffer, direct, OperationScope::writer_only,
-               raw_direct<false>, raw_direct<true>, true);
+               raw_direct<false>, raw_direct<true>, true, nullptr,
+               "csv2.writer.raw-direct.decoded-content.v1");
   registry.add("writer/raw-streamable", source_buffer, streamable, OperationScope::writer_only,
-               raw_streamable<false>, raw_streamable<true>);
+               raw_streamable<false>, raw_streamable<true>, false, nullptr,
+               "csv2.writer.raw-streamable.decoded-content.v1");
   registry.add("writer/escaped-direct", source_buffer, direct, OperationScope::writer_only,
                escaped_direct<false>, escaped_direct<true>, true);
   registry.add("writer/escaped-streamable", source_buffer, streamable, OperationScope::writer_only,

@@ -19,7 +19,7 @@
       "dataset": "benchmark/datasets/fixtures/quote_heavy.csv",
       "operation": "writer/raw-direct",
       "source": "buffer",
-      "semantic_case_id": "csv2.writer.raw-direct.v1",
+      "semantic_case_id": "csv2.writer.raw-direct.decoded-content.v1",
       "scope": "writer_only",
       "byte_basis": "input_corpus",
       "checksum": "12859166230996484343",

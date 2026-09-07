@@ -415,6 +415,30 @@ Configure with `-DCMAKE_PREFIX_PATH=/absolute/path/to/csv2-prefix`. Unix-like in
 The package installs modular headers, CMake/pkg-config metadata, and licenses. It excludes tests, fuzzers, benchmarks,
 third-party verification libraries, and their tools. The generated single header is distributed separately.
 
+To create both source distributions from a configured build:
+
+```bash
+cmake -S . -B "build [local]"
+cmake --build "build [local]" --target package_source
+```
+
+The target writes `csv2-1.8.0.tar.gz` and `csv2-1.8.0.tar.xz` to the build
+directory. It uses CMake's literal-path copy and archive commands, so source,
+build, and output paths may contain spaces or brackets. Source packaging needs
+only CMake 3.10 or later; Git, Python, and a system tar executable are not required.
+For a separate output directory, configure
+`CSV2_SOURCE_PACKAGE_OUTPUT_DIRECTORY` or invoke the generated script directly:
+
+```bash
+cmake "-DCSV2_SOURCE_PACKAGE_OUTPUT_DIRECTORY=/path/archives [local]" \
+  -P "build [local]/csv2-package-source.cmake"
+```
+
+One staging tree supplies both formats. The source policy excludes compiler
+caches, generated build/output directories, and repository control files.
+The generated script replaces the former `cpack --config CPackSourceConfig.cmake`
+source entry point; binary CPack packaging and normal installation remain available.
+
 ## Generating Single Header
 
 The original amalgamation workflow remains available:
