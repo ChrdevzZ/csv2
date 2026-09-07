@@ -136,6 +136,14 @@ jobs:
       benchmarks: ${{ needs.classify.outputs.benchmark == 'true' }}
       extended: false
 
+  coverage:
+    name: CI / coverage
+    if: needs.classify.outputs.full == 'true'
+    needs: [classify, preflight]
+    uses: ./.github/workflows/full.yml
+    with:
+      coverage_only: true
+
   perf:
     name: CI / performance protocol
     if: needs.classify.outputs.perf == 'true'

@@ -245,11 +245,14 @@ uses separate Reader/Writer artifact prefixes.
 Pull requests that select the full owner run the exact-head GCC 14 full profile.
 Pull requests that select the performance owner also run an exploratory
 end-to-end protocol smoke. Manual `full.yml`
-dispatches add Clang/libc++, Windows, macOS, coverage, and extended fuzzing;
-set `coverage_only=true` on `full.yml` to run only the minitest-backed C++20
-modular coverage slice. It validates raw profiles, first-party LCOV records,
-and the HTML report independently of the aggregate Gate. Compiler caches live
-in runner temporary storage and are excluded from source packages.
+dispatches add Clang/libc++, Windows, macOS, coverage, and extended fuzzing.
+Automatic runs that select the full owner also start the independent,
+non-blocking C++20 modular coverage slice with minitest. Set `coverage_only=true` on `full.yml`
+to select this slice alone for manual runs. It validates raw profiles,
+first-party LCOV records, and the HTML report independently of the aggregate
+Gate. Coverage and full-matrix calls have separate concurrency groups.
+Compiler caches live in runner temporary storage and are excluded from source
+packages.
 Manual `perf.yml` dispatches retain exploratory and controlled machine-profile
 runs. Controlled dispatches accept only repository-owner requests from the
 default branch with explicit 40-character baseline and candidate SHAs, then
