@@ -69,3 +69,6 @@ __pycache__/
 *~
 .DS_Store
 desktop.ini
+
+# Local compiler cache (CI uses runner temporary storage).
+/.ccache/

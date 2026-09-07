@@ -7,11 +7,11 @@ reject unknown and older versions; there is no implicit migration path.
 | --- | --- | --- |
 | common driver wire | `csv2-common-v5` | one self-described C++11 comparison result with explicit instrumentation and capabilities |
 | current verify wire | `csv2-current-v4` | exact checksum, allocation, and semantic identity |
-| build manifest | `csv2-benchmark-build-v1` | immutable source and audited build identity |
-| comparison report | `csv2-benchmark-report-v6` | paired A/A or A/B primary observations and derived results |
-| fixed-machine metrics | `csv2-fixed-machine-metrics-v6` | bound timing, PMU, RSS, size, and provenance |
-| complete evidence | `csv2-performance-evidence-bundle-v3` | cross-checked final decision gate |
-| artifact manifest | `csv2-artifact-manifest-v3` | component/evidence inputs and output digests |
+| build manifest | `csv2-benchmark-build-v2` | immutable source and audited build identity |
+| comparison report | `csv2-benchmark-report-v7` | paired A/A or A/B primary observations and derived results |
+| fixed-machine metrics | `csv2-fixed-machine-metrics-v7` | bound timing, PMU, RSS, size, and provenance |
+| complete evidence | `csv2-performance-evidence-bundle-v4` | cross-checked final decision gate |
+| artifact manifest | `csv2-artifact-manifest-v4` | component/evidence inputs and output digests |
 | machine profile | `csv2-machine-profile-v1` | reviewed identity and operating constraints for controlled evidence |
 
 Wire output is one whitespace-separated line of unique `key=value` fields.
@@ -28,7 +28,7 @@ are allowed only in objects explicitly marked extensible.
 
 ## Build ownership and identity
 
-`csv2-benchmark-build-v1` has two kinds:
+`csv2-benchmark-build-v2` has two kinds:
 
 - `common-driver` exports the exact header tree and the candidate adapter from
   immutable Git blobs, rejects links and unsafe paths, and records every blob
@@ -73,7 +73,7 @@ preprocessor pass-through options are rejected for the same reason.
 
 ## Reports
 
-`csv2-benchmark-report-v6` embeds both common-driver build manifests, exact
+`csv2-benchmark-report-v7` embeds both common-driver build manifests, exact
 artifacts and descriptions, operation scope/source contracts, datasets, host,
 compiler context, complete Python runner bundle, launch order, raw samples,
 and derived statistics. Its validator reparses every saved stdout wire,
@@ -86,7 +86,7 @@ hash on both sides; A/B requires distinct commits. A/B accepts only a completed
 A/A report with the same candidate build identity, runner/adapter bundle,
 datasets, affinity, flags, run count, warmups, and iterations.
 
-`csv2-fixed-machine-metrics-v6` embeds the owned current-tree build manifest
+`csv2-fixed-machine-metrics-v7` embeds the owned current-tree build manifest
 and binds semantic verification, allocation verification, Google Benchmark
 samples, PMU counters, peak RSS, code size, and clean isolated build timing.
 Its timing summaries are rederived from saved samples. A
@@ -103,7 +103,7 @@ traversal-only comparison.
 
 Component report lifecycle is `running` to `completed` or `failed`. A completed,
 owned, controlled component satisfying its semantic gates sets
-`controlled_complete=true`, but every v6 comparison or metrics report keeps
+`controlled_complete=true`, but every v7 comparison or metrics report keeps
 `decision_eligible=false`. This prevents an A/A, A/B, or fixed-metrics file from
 claiming a final verdict in isolation.
 
@@ -113,7 +113,7 @@ and the generated corpus manifest. It rehashes every input and corpus member,
 then requires matching candidate revisions and source trees, compiler identity,
 machine profile and affinity, candidate build identity, calibration reference,
 and exact semantic comparison binding. The resulting
-`csv2-performance-evidence-bundle-v3` may set
+`csv2-performance-evidence-bundle-v4` may set
 `decision_eligible=true` only when all three inputs are controlled-complete;
 an exploratory bundle always sets it to false. Protocol validity proves the
 recorded artifact and measurement relationship; it does not independently
@@ -130,7 +130,7 @@ profile embedded in all three component reports; a matching filename or digest
 field alone is insufficient.
 
 Every completed component and final evidence bundle is accompanied by
-`csv2-artifact-manifest-v3`. Writers reject direct, symlink, and hardlink
+`csv2-artifact-manifest-v4`. Writers reject direct, symlink, and hardlink
 output aliases and use unique, flushed and fsynced same-directory temporary
 files. Component reports publish before their bound SHA-256 manifest. The
 finalizer reverses that commit order: it stages the bundle, publishes the
@@ -157,3 +157,36 @@ Corpus validation closes each strict diagnostic to `code`, `byte_offset`,
 `row`, and `column` and checks it against the dataset's valid/invalid state.
 Malformed or internally inconsistent diagnostics cannot enter a finalized
 bundle even when the corpus file hashes themselves are correct.
+
+## Controlled build inputs (build v2)
+
+Build v2 requires `input_policy` and `dependencies`; build v1 is rejected.
+Comparison v7, fixed-machine v7, artifact-manifest v4, and evidence-bundle v4
+carry this stronger contract. `csv2-compile-dependencies-v2` records consumed
+first-party paths and SHA-256 values against immutable Git exports, compiler
+system inputs and roots, and every current-tree owned translation unit.
+Missing, stale, incomplete, shadowed, or outside dependency evidence fails the
+build before measurements. The common driver uses full GCC/Clang `-MD`
+dependencies or MSVC `/sourceDependencies`; current-tree builds read Ninja's
+actual object compilation dependency database, including shared core objects.
+A separate preprocessing search-path probe identifies trusted compiler/SDK roots;
+it does not substitute for the dependencies from the real compilation.
+
+Caller flags use a compiler-family allowlist. Supported configurations include
+optimization levels, `NDEBUG` definitions (split or joined), C++ standards,
+GCC/Clang `-march`/`-mtune`/`-mcpu` and common SSE/AVX switches, `-stdlib`,
+exceptions/RTTI/frame-pointer/aliasing/fast-math controls, LTO, debugging and
+basic warnings; MSVC supports `/O`, `/std`, `/arch`, `/EHsc`, `/GR`, runtime,
+floating-point, warnings, and reproducibility switches. Unknown options fail
+closed. Input/search paths, forced includes, response/config files, compiler
+plugins/specs, preprocessor passthrough, and caller `CSV2_*` definitions are
+rejected. Release current-tree builds additionally require effective optimized
+flags and `NDEBUG`. Clang receives tool-owned `--no-default-config` and
+`--driver-mode=g++`, including when `clang++` resolves to the `clang` binary.
+
+Compiler injection environment variables (including include overrides,
+`CL`/`_CL_`, compiler search overrides, and CMake toolchain injection) are removed.
+Required SDK environment is preserved; SDK, library-search, tool-path and related
+values are bound into the identity. The compiler executable, linker and installed
+standard library/SDK remain a trusted toolchain boundary, not a hermetic SDK
+snapshot. These provenance checks run during build/validation, never measured loops.

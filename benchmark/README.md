@@ -247,9 +247,9 @@ contents cannot be bound by the command manifest.
 
 `run_suite.py` is a compatibility wrapper around `tools/csv2bench/runner.py`.
 Owned mode is the default: the tool resolves commits, exports and builds both
-drivers, embeds `csv2-benchmark-build-v1` manifests, revalidates all Git/build/
-dataset/tool inputs, rejects output aliases, and atomically publishes a v6
-report plus its v3 artifact manifest. External executables require
+drivers, embeds `csv2-benchmark-build-v2` manifests, revalidates all Git/build/
+dataset/tool inputs, rejects output aliases, and atomically publishes a v7
+report plus its v4 artifact manifest. External executables require
 `--external-artifacts` and are restricted to exploratory evidence.
 
 First generate the owned current-tree corpus with the fixed-metrics command
@@ -372,7 +372,7 @@ scope, source, and byte basis match the fixed-metrics `comparison_binding`.
 Its output and sibling manifest paths must not already exist.
 Individual comparison and fixed-metrics reports expose
 `controlled_complete`, but always keep `decision_eligible=false`. Only the
-resulting `csv2-performance-evidence-bundle-v3` can be decision-eligible.
+resulting `csv2-performance-evidence-bundle-v4` can be decision-eligible.
 
 ## Evidence classes and protocols
 
@@ -388,11 +388,11 @@ resulting `csv2-performance-evidence-bundle-v3` can be decision-eligible.
   content with all embedded bindings.
 
 The fixed contracts are `csv2-common-v5`, `csv2-current-v4`,
-`csv2-benchmark-build-v1`, `csv2-benchmark-report-v6`,
-`csv2-fixed-machine-metrics-v6`, `csv2-performance-evidence-bundle-v3`,
-`csv2-artifact-manifest-v3`, and `csv2-machine-profile-v1`. Older or unknown
+`csv2-benchmark-build-v2`, `csv2-benchmark-report-v7`,
+`csv2-fixed-machine-metrics-v7`, `csv2-performance-evidence-bundle-v4`,
+`csv2-artifact-manifest-v4`, and `csv2-machine-profile-v1`. Older or unknown
 versions are rejected rather than converted. Every completed component and
-evidence JSON has a sibling v3 SHA-256 artifact manifest. See
+evidence JSON has a sibling v4 SHA-256 artifact manifest. See
 [`protocol/README.md`](protocol/README.md) for the wire boundary and schemas.
 
 Pull requests that touch verification infrastructure run a small exact-head
@@ -417,3 +417,9 @@ Controlled execution is additionally restricted to a repository-owner manual
 dispatch from the default branch with explicit full baseline/candidate SHAs and
 the `csv2-perf` Environment; compiler caches remain disabled on that path.
 This Stage B infrastructure change makes no library performance claim.
+
+Owned builds accept only controlled code-generation flags and bind sanitized
+compiler environment plus same-compilation first-party dependency evidence.
+Unknown flags and options that redirect inputs are rejected. See
+[the build v2 input contract](protocol/README.md#controlled-build-inputs-build-v2)
+for supported option families and the trusted compiler/SDK boundary.

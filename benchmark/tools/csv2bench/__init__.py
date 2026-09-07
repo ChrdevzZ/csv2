@@ -2,11 +2,11 @@
 
 COMMON_PROTOCOL = "csv2-common-v5"
 CURRENT_PROTOCOL = "csv2-current-v4"
-COMPARISON_SCHEMA = "csv2-benchmark-report-v6"
-METRICS_SCHEMA = "csv2-fixed-machine-metrics-v6"
-BUILD_SCHEMA = "csv2-benchmark-build-v1"
-ARTIFACT_MANIFEST_SCHEMA = "csv2-artifact-manifest-v3"
-EVIDENCE_SCHEMA = "csv2-performance-evidence-bundle-v3"
+COMPARISON_SCHEMA = "csv2-benchmark-report-v7"
+METRICS_SCHEMA = "csv2-fixed-machine-metrics-v7"
+BUILD_SCHEMA = "csv2-benchmark-build-v2"
+ARTIFACT_MANIFEST_SCHEMA = "csv2-artifact-manifest-v4"
+EVIDENCE_SCHEMA = "csv2-performance-evidence-bundle-v4"
 
 __all__ = [
     "COMMON_PROTOCOL",

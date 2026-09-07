@@ -12,6 +12,7 @@ from pathlib import PurePosixPath
 
 
 OWNERS = ("quick", "benchmark", "fuzz", "perf", "full")
+EVENTS = ("pull_request", "push", "merge_group", "workflow_dispatch")
 CONTENT_PATH_PREFIXES = (
     "include/",
     "single_include/",
@@ -132,6 +133,15 @@ def git_changed_files(base: str, head: str, *, merge_base: bool) -> list[str]:
     ]
 
 
+def required_plan(selected: dict[str, bool], event: str) -> dict[str, bool]:
+    """Apply event eligibility after every path-classification fallback."""
+    if event not in EVENTS:
+        raise ValueError(f"unsupported CI event: {event}")
+    plan = dict(selected)
+    plan["perf"] = plan["perf"] and event == "pull_request"
+    return plan
+
+
 def emit(plan: dict[str, bool]) -> None:
     lines = [f"{name}={'true' if plan[name] else 'false'}" for name in OWNERS]
     print("\n".join(lines))
@@ -144,6 +154,7 @@ def emit(plan: dict[str, bool]) -> None:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
+    parser.add_argument("--event", choices=EVENTS, default="pull_request")
     parser.add_argument("--base")
     parser.add_argument("--head")
     parser.add_argument("--merge-base", action="store_true")
@@ -163,14 +174,14 @@ def main() -> int:
     args = parse_args()
     if args.paths_from_stdin:
         paths = [line.removesuffix("\n") for line in sys.stdin if line != "\n"]
-        emit(classify_paths(paths))
+        emit(required_plan(classify_paths(paths), args.event))
         return 0
     try:
         paths = git_changed_files(args.base, args.head, merge_base=args.merge_base)
     except (OSError, subprocess.CalledProcessError, UnicodeError):
-        emit(every_owner(True))
+        emit(required_plan(every_owner(True), args.event))
         return 0
-    emit(classify_paths(paths))
+    emit(required_plan(classify_paths(paths), args.event))
     return 0
 
 

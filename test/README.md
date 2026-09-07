@@ -158,7 +158,8 @@ full/perf profiles and CI require it through `CSV2_REQUIRE_PYTHON_AUDITS`.
 The always-run CI classifier assigns runtime changes to the cross-platform
 quick owners and the exact-head full owner. Benchmark-only changes can call the
 same platform workflows with runtime compilation disabled, while sanitizer
-rows run only for quick-owned changes. Unknown paths select all owners. Git
+rows run only for quick-owned changes. Unknown paths select all owners applicable to the triggering event; automatic
+performance-protocol smoke is PR-only. Git
 renames are compared as delete/add pairs, PRs use merge-base semantics, pushes
 use before/after semantics, and content-bearing fixture/corpus directories are
 never treated as documentation based only on a filename extension.

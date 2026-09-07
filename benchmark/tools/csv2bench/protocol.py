@@ -553,7 +553,7 @@ def _common_build(value: object, label: str) -> dict[str, object]:
         "schema", "kind", "generated_at_utc", "revision", "header_export",
         "adapter_export", "instrumentation", "capabilities", "compiler",
         "compiler_flags", "argv", "normalized_argv", "build_log", "output",
-        "identity_digest", "digest",
+        "identity_digest", "digest", "input_policy", "dependencies",
     }
     _required(build, fields, label)
     _closed(build, fields, label)
@@ -569,6 +569,8 @@ def _common_build(value: object, label: str) -> dict[str, object]:
     revision = _hex_digest(build["revision"], f"{label}.revision", (40, 64))
     headers = _git_export(build["header_export"], f"{label}.header_export")
     adapter = _git_export(build["adapter_export"], f"{label}.adapter_export")
+    audited_builds._verify_input_policy(build)
+    audited_builds.owned_inputs.verify_dependencies(build["dependencies"], {"headers": headers, "adapter": adapter}, {("adapter", "benchmark/compare/common_driver.cpp")})
     if headers["commit"] != revision:
         raise RuntimeError(f"{label} revision differs from its headers")
     if any(
@@ -664,7 +666,7 @@ def _current_build(value: object, label: str) -> dict[str, object]:
         "normalized_configure_argv",
         "build_argv", "configure_log", "build_log", "file_api", "compile_commands",
         "targets", "corpus_manifest", "source_root", "build_root", "identity_digest",
-        "digest",
+        "digest", "input_policy", "dependencies",
     }
     _required(build, fields, label)
     _closed(build, fields, label)
@@ -673,6 +675,8 @@ def _current_build(value: object, label: str) -> dict[str, object]:
     _string(build["generated_at_utc"], f"{label}.generated_at_utc")
     revision = _hex_digest(build["revision"], f"{label}.revision", (40, 64))
     source = _git_export(build["source_export"], f"{label}.source_export")
+    audited_builds._verify_input_policy(build)
+    audited_builds._verify_current_dependencies(build)
     if source["commit"] != revision or source["selections"] != ["<full-tree>"]:
         raise RuntimeError(f"{label} is not bound to a full candidate tree")
     for tool_name in ("compiler", "cmake", "ninja"):
@@ -692,6 +696,7 @@ def _current_build(value: object, label: str) -> dict[str, object]:
     for placeholder in ("{source_root}", "{build_root}", "{compiler}", "{revision}"):
         if placeholder not in normalized:
             raise RuntimeError(f"{label} configure command lacks {placeholder}")
+    audited_builds.validate_current_build_command_contract(build)
     expected_flag_argument = "-DCMAKE_CXX_FLAGS_RELEASE=" + " ".join(compiler_flags)
     if expected_flag_argument not in build["configure_argv"]:
         raise RuntimeError(f"{label} configure command differs from compiler_flags")

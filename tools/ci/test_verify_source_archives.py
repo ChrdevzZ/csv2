@@ -62,7 +62,7 @@ class VerifySourceArchivesTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             archive = Path(directory) / "csv2-1.8.0.tar.gz"
             files = required_files()
-            files["benchmark/protocol/schemas/build-v1.schema.json"] = b"{}\n"
+            files["benchmark/protocol/schemas/build-v2.schema.json"] = b"{}\n"
             write_archive(archive, files)
             verify_source_archives.verify_archives(
                 [archive], source_root=SOURCE_ROOT
@@ -142,6 +142,8 @@ class VerifySourceArchivesTests(unittest.TestCase):
 
     def test_rejects_local_work_products_and_repository_control_files(self) -> None:
         forbidden = (
+            ".ccache/a/cache-entry",
+            "test/.ccache/CACHEDIR.TAG",
             ".gitattributes",
             ".github/workflows/ci.yml",
             "build/CMakeCache.txt",
