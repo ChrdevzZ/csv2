@@ -121,8 +121,10 @@
         "configure_argv",
         "normalized_configure_argv",
         "build_argv",
+        "corpus_argv",
         "configure_log",
         "build_log",
+        "corpus_log",
         "file_api",
         "compile_commands",
         "targets",
@@ -172,11 +174,17 @@
         "build_argv": {
           "$ref": "#/$defs/argv"
         },
+        "corpus_argv": {
+          "$ref": "#/$defs/argv"
+        },
         "configure_log": {
           "$ref": "#/$defs/timed_process_result"
         },
         "build_log": {
           "$ref": "#/$defs/timed_process_result"
+        },
+        "corpus_log": {
+          "$ref": "#/$defs/process_result"
         },
         "file_api": {
           "type": "object"

@@ -775,6 +775,7 @@ def _current_build(value: object, label: str) -> dict[str, object]:
         "compiler", "compiler_flags", "cmake", "ninja", "configure_argv",
         "normalized_configure_argv",
         "build_argv", "configure_log", "build_log", "file_api", "compile_commands",
+        "corpus_argv", "corpus_log",
         "targets", "corpus_manifest", "source_root", "build_root", "identity_digest",
         "digest", "input_policy", "dependencies",
     }
@@ -796,7 +797,7 @@ def _current_build(value: object, label: str) -> dict[str, object]:
         isinstance(flag, str) and flag for flag in compiler_flags
     ):
         raise RuntimeError(f"{label}.compiler_flags is malformed")
-    for field in ("configure_argv", "normalized_configure_argv", "build_argv"):
+    for field in ("configure_argv", "normalized_configure_argv", "build_argv", "corpus_argv"):
         values = _array(build[field], f"{label}.{field}")
         if not values or not all(isinstance(item, str) and item for item in values):
             raise RuntimeError(f"{label}.{field} is malformed")
@@ -816,6 +817,13 @@ def _current_build(value: object, label: str) -> dict[str, object]:
         if _integer(log["returncode"], f"{label}.{log_name}.returncode") != 0:
             raise RuntimeError(f"{label}.{log_name} did not succeed")
         _number(log["seconds"], f"{label}.{log_name}.seconds", positive=True)
+    corpus_log = _object(build["corpus_log"], f"{label}.corpus_log")
+    _required(corpus_log, {"returncode", "stdout", "stderr"}, f"{label}.corpus_log")
+    _closed(corpus_log, {"returncode", "stdout", "stderr"}, f"{label}.corpus_log")
+    if _integer(corpus_log["returncode"], f"{label}.corpus_log.returncode") != 0:
+        raise RuntimeError(f"{label}.corpus_log did not succeed")
+    for field in ("stdout", "stderr"):
+        _string(corpus_log[field], f"{label}.corpus_log.{field}", allow_empty=True)
     _artifact(build["compile_commands"], f"{label}.compile_commands", revision=False)
     _artifact(build["corpus_manifest"], f"{label}.corpus_manifest", revision=False)
     targets = _object(build["targets"], f"{label}.targets")
@@ -1414,6 +1422,14 @@ def validate_fixed_metrics_report(report: object) -> None:
     if executable["revision"] != allocation["revision"]:
         raise RuntimeError("fixed-machine executable revisions are inconsistent")
     if current_build is not None:
+        expected_clean_build = {
+            "command": current_build["build_argv"],
+            **{field: current_build["build_log"][field] for field in ("seconds", "stdout", "stderr")},
+        }
+        if document["clean_build"] != expected_clean_build:
+            raise RuntimeError("fixed-machine clean_build differs from the owned build")
+        if document["post_build"] is not None:
+            raise RuntimeError("owned fixed-machine post_build must be null; build success is recorded in build")
         expected_flags = " ".join(current_build["compiler_flags"])
         if document["compiler_flags"] != expected_flags:
             raise RuntimeError("fixed-machine compiler_flags differ from the owned build")
@@ -1613,11 +1629,10 @@ def validate_fixed_metrics_report(report: object) -> None:
         if status == "completed":
             _required(
                 document,
-                {"pmu", "pmu_invocation", "peak_rss", "code_size", "post_build"},
+                {"pmu", "pmu_invocation", "peak_rss", "code_size"},
                 "completed controlled fixed-machine report",
             )
             _clean_build(document["clean_build"], "fixed-machine report.clean_build")
-            _invocation(document["post_build"], "fixed-machine report.post_build")
             _timing(
                 document["pmu"],
                 "fixed-machine report.pmu",

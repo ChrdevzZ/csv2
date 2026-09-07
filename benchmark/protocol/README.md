@@ -107,6 +107,20 @@ datasets, affinity, flags, run count, warmups, and iterations.
 `csv2-fixed-machine-metrics-v7` embeds the owned current-tree build manifest
 and binds semantic verification, allocation verification, Google Benchmark
 samples, PMU counters, peak RSS, code size, and clean isolated build timing.
+The collector reuses the canonical compiler artifact selected by the owned
+builder, whether the CLI supplied a program name or an absolute path.
+`build_argv` and `build_log` cover compilation and linking of the two benchmark
+executables and their declared dependencies. Corpus generation follows in
+`corpus_argv` and `corpus_log`, outside the clean-build interval; its manifest
+remains bound to the build. Both commands are checked against the controlled
+contract. `clean_build` must match the recorded build command, duration, and
+output. Owned `post_build` is null: successful build and preparation records
+already reside in the build manifest. External exploratory collection retains
+its optional real post-build hook.
+Earlier combined build-and-corpus durations are not directly comparable, and
+subtracting a separately measured generator duration cannot recover the original
+compilation interval. These internal command contracts reject older combined
+records; no report conversion or parallel compatibility route is provided.
 Its verification and allocation fields are reconstructed from their recorded
 stdout, and their operation, revision, input, and semantic context must agree.
 Writer allocation accounting covers one execution of the prepared rows. Historical

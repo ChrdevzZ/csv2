@@ -918,6 +918,7 @@ def build_common_pair(
 ) -> dict[str, object]:
     """Build both comparison artifacts from immutable objects and one shared adapter."""
     repository = artifacts.canonical_existing(repository, "Git repository")
+    compiler = _compiler_path(compiler)
     workspace = workspace.expanduser().resolve(strict=False)
     workspace.mkdir(parents=True, exist_ok=False)
     adapter = export_git_tree(
@@ -1619,12 +1620,15 @@ def build_current_tree(
         "--target",
         "csv2_benchmark",
         "csv2_benchmark_allocations",
-        "csv2_benchmark_corpus",
         "--parallel",
     ]
     built_started = __import__("time").perf_counter()
     built = _run_text(build_command, run_fn=run_fn)
     build_seconds = __import__("time").perf_counter() - built_started
+    corpus_command = [
+        cmake_path, "--build", str(build_root), "--target", "csv2_benchmark_corpus",
+    ]
+    corpus = _run_text(corpus_command, run_fn=run_fn)
     audit = audit_current_codemodel(
         source_root, build_root, compiler, revision, compiler_flags, run_fn=run_fn
     )
@@ -1666,6 +1670,7 @@ def build_current_tree(
         "configure_argv": configure,
         "normalized_configure_argv": normalized_configure,
         "build_argv": build_command,
+        "corpus_argv": corpus_command,
         "configure_log": {
             "returncode": 0,
             "seconds": configure_seconds,
@@ -1677,6 +1682,11 @@ def build_current_tree(
             "seconds": build_seconds,
             "stdout": built.stdout,
             "stderr": built.stderr,
+        },
+        "corpus_log": {
+            "returncode": 0,
+            "stdout": corpus.stdout,
+            "stderr": corpus.stderr,
         },
         "file_api": audit,
         "compile_commands": compile_commands,
@@ -1712,6 +1722,16 @@ def verify_current_build_manifest(manifest: dict[str, object]) -> None:
         raise RuntimeError("current-tree compiler flags are malformed")
     _validate_effective_release_flags(compiler_flags, "current-tree build")
     validate_current_build_command_contract(manifest)
+    corpus_log = manifest.get("corpus_log")
+    if (
+        not isinstance(corpus_log, dict)
+        or set(corpus_log) != {"returncode", "stdout", "stderr"}
+        or type(corpus_log["returncode"]) is not int
+        or corpus_log["returncode"] != 0
+        or not isinstance(corpus_log["stdout"], str)
+        or not isinstance(corpus_log["stderr"], str)
+    ):
+        raise RuntimeError("current-tree corpus log is malformed or unsuccessful")
 
     source = manifest.get("source_export")
     if not isinstance(source, dict):
@@ -1956,6 +1976,10 @@ def validate_current_build_command_contract(manifest: dict[str, object]) -> None
         raise RuntimeError("current-tree configure command violates its controlled contract")
     if manifest["build_argv"] != [
         cmake, "--build", build_root, "--target", "csv2_benchmark",
-        "csv2_benchmark_allocations", "csv2_benchmark_corpus", "--parallel",
+        "csv2_benchmark_allocations", "--parallel",
     ]:
         raise RuntimeError("current-tree build command violates its controlled contract")
+    if manifest.get("corpus_argv") != [
+        cmake, "--build", build_root, "--target", "csv2_benchmark_corpus",
+    ]:
+        raise RuntimeError("current-tree corpus command violates its controlled contract")

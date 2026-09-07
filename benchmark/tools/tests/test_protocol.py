@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 import json
 import unittest
 from pathlib import Path
@@ -555,13 +556,6 @@ def controlled_metrics_report() -> dict[str, object]:
     }
     report["artifacts"]["compiler_executable"] = json.loads(json.dumps(compiler))
     report["artifacts"]["compile_commands"] = artifact()
-    report["clean_build"] = {
-        "command": ["cmake", "--build", "build"],
-        "seconds": 1.0,
-        "stdout": "",
-        "stderr": "",
-    }
-    report["post_build"] = invocation()
     report["pmu"] = json.loads(json.dumps(report["timing"]))
     for sample in report["pmu"]["samples"]:
         sample["pmu"] = {
@@ -695,16 +689,52 @@ def controlled_metrics_report() -> dict[str, object]:
     )
     current_build["build_argv"] = [
         current_build["cmake"]["artifact"]["path"], "--build", current_build["build_root"], "--target",
-        "csv2_benchmark", "csv2_benchmark_allocations", "csv2_benchmark_corpus", "--parallel",
+        "csv2_benchmark", "csv2_benchmark_allocations", "--parallel",
     ]
+    current_build["corpus_argv"] = [
+        current_build["cmake"]["artifact"]["path"], "--build", current_build["build_root"],
+        "--target", "csv2_benchmark_corpus",
+    ]
+    current_build["corpus_log"] = {"returncode": 0, "stdout": "generated", "stderr": ""}
     current_build["identity_digest"] = builds.current_build_identity_digest(current_build)
     current_build["digest"] = builds.document_digest(current_build)
     report["build"] = current_build
+    report["clean_build"] = {
+        "command": list(current_build["build_argv"]),
+        **{field: current_build["build_log"][field] for field in ("seconds", "stdout", "stderr")},
+    }
     bind_metrics_invocations(report)
     return report
 
 
 class ProtocolTests(unittest.TestCase):
+    def test_owned_metrics_bind_build_cost_and_preparation(self) -> None:
+        report = controlled_metrics_report()
+        protocol.validate_fixed_metrics_report(report)
+        self.assertIsNone(report["post_build"])
+        for field, value in (("command", ["other-build"]), ("seconds", 2.0),
+                             ("stdout", "other output"), ("stderr", "other errors")):
+            with self.subTest(field=field):
+                changed = copy.deepcopy(report)
+                changed["clean_build"][field] = value
+                with self.assertRaisesRegex(RuntimeError, "clean_build differs"):
+                    protocol.validate_fixed_metrics_report(changed)
+        for field, value in (("returncode", 1), ("stdout", None), ("stderr", 1)):
+            with self.subTest(corpus_field=field):
+                changed = copy.deepcopy(report)
+                changed["build"]["corpus_log"][field] = value
+                changed["build"]["digest"] = builds.document_digest(
+                    {k: v for k, v in changed["build"].items() if k != "digest"}
+                )
+                with self.assertRaisesRegex(RuntimeError, "corpus_log"):
+                    protocol.validate_fixed_metrics_report(changed)
+        report["post_build"] = invocation()
+        with self.assertRaisesRegex(RuntimeError, "post_build must be null"):
+            protocol.validate_fixed_metrics_report(report)
+        external = fixed_metrics_report()
+        external["post_build"] = invocation()
+        protocol.validate_fixed_metrics_report(external)
+
     def test_fixed_metrics_rejects_inconsistent_primary_observations(self) -> None:
         def scale_rate(report):
             for sample in report["timing"]["samples"]:

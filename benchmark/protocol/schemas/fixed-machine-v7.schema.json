@@ -328,10 +328,9 @@
         "required": ["evidence_level", "status"]
       },
       "then": {
-        "required": ["pmu", "pmu_invocation", "peak_rss", "code_size", "post_build"],
+        "required": ["pmu", "pmu_invocation", "peak_rss", "code_size"],
         "properties": {
           "clean_build": {"$ref": "#/$defs/build"},
-          "post_build": {"$ref": "#/$defs/invocation"},
           "pmu": {"$ref": "#/$defs/pmu_timing"},
           "peak_rss": {"$ref": "#/$defs/peak_rss"},
           "code_size": {
@@ -345,7 +344,11 @@
         "properties": {"artifact_mode": {"const": "owned"}},
         "required": ["artifact_mode"]
       },
-      "then": {"properties": {"build": {"type": "object"}}},
+      "then": {"properties": {
+        "build": {"type": "object"},
+        "clean_build": {"$ref": "#/$defs/build"},
+        "post_build": {"type": "null"}
+      }},
       "else": {
         "properties": {
           "build": {"type": "null"},
