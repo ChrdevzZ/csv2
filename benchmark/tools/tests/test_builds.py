@@ -412,6 +412,8 @@ class BuildTests(unittest.TestCase):
         for suffix in [("-I/tmp/shadow",), ("-I", "/tmp/shadow"),
                        ("-isystem/tmp/shadow",), ("-Xclang=-include",),
                        ("--config=/tmp/config",), ("--config", "/tmp/config"),
+                       ("-ffile-prefix-map=/tmp=/_csv2",), ("-fdebug-prefix-map=/tmp=/_csv2",),
+                       ("-fmacro-prefix-map=/tmp=/_csv2",),
                        ("-B/tmp/tools",), ("/Ishadow",), ("-D", "CSV2_HAS_MMAP=0"),
                        ("-fplugin=shadow.so",), ("extra.cpp",), ("-specs=x",)]:
             flags = ["-O3", "-DNDEBUG", *suffix]
@@ -537,6 +539,61 @@ class BuildTests(unittest.TestCase):
         self.assertIn("/Brepro", normalized)
         self.assertIn("/pathmap:{header_root}=/_csv2/source", normalized)
         self.assertIn("/pathmap:{adapter_root}=/_csv2/adapter", normalized)
+
+    def test_gnu_debug_builds_are_reproducible_across_roots_and_working_directories(self) -> None:
+        compiler = shutil.which("g++") or shutil.which("clang++")
+        if compiler is None:
+            self.skipTest("a GNU-compatible C++ compiler is unavailable")
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            repository = root / "repository"
+            repository.mkdir()
+            files = {
+                "include/csv2/reader.hpp": "inline const char *header_file() { return __FILE__; }\n",
+                "benchmark/compare/common_driver.cpp": (
+                    "#include <cstdio>\n#include <csv2/reader.hpp>\n"
+                    "int main() { std::puts(__FILE__); std::puts(header_file()); }\n"
+                ),
+            }
+            for name, content in files.items():
+                path = repository / name
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text(content, encoding="utf-8")
+            for arguments in (("init",), ("add", "."), ("commit", "-m", "fixture")):
+                subprocess.run(
+                    ["git", "-C", str(repository), "-c", "user.name=CSV2 Test",
+                     "-c", "user.email=csv2@example.invalid", "-c", "commit.gpgsign=false",
+                     *arguments], check=True, capture_output=True,
+                )
+            manifests = []
+            original_cwd = Path.cwd()
+            try:
+                for side in ("baseline", "candidate"):
+                    workspace = root / side
+                    headers = builds.export_git_tree(repository, "HEAD", workspace / "headers", ("include",))
+                    adapter = builds.export_git_tree(
+                        repository, "HEAD", workspace / "adapter", ("benchmark/compare/common_driver.cpp",)
+                    )
+                    caller = workspace / "caller"
+                    caller.mkdir()
+                    os.chdir(caller)
+                    manifest = builds.compile_common_driver(
+                        header_export=headers, adapter_export=adapter,
+                        compiler=Path(compiler), compiler_flags=("-std=c++11", "-O2", "-g3"),
+                        output=workspace / "driver.exe",
+                    )
+                    manifests.append(manifest)
+            finally:
+                os.chdir(original_cwd)
+            baseline, candidate = manifests
+            self.assertEqual(baseline["normalized_argv"], candidate["normalized_argv"])
+            self.assertEqual(baseline["output"]["sha256"], candidate["output"]["sha256"])
+            self.assertEqual(baseline["identity_digest"], candidate["identity_digest"])
+            output = subprocess.check_output([baseline["output"]["path"]], text=True)
+            self.assertEqual(output.splitlines(), [
+                "/_csv2/adapter/benchmark/compare/common_driver.cpp",
+                "/_csv2/source/include/csv2/reader.hpp",
+            ])
 
     def test_git_paths_reject_cross_platform_escape_forms(self) -> None:
         self.assertEqual(
@@ -707,6 +764,19 @@ class BuildTests(unittest.TestCase):
             self.assertIn("{output}", " ".join(manifest["normalized_argv"]))
             self.assertEqual(manifest["build_log"]["returncode"], 0)
             self.assertRegex(manifest["digest"], r"^[0-9a-f]{64}$")
+
+            for prefix in ("-ffile-prefix-map={adapter_root}=", "-ffile-prefix-map={header_root}="):
+                for mutation in ("missing", "redirected"):
+                    with self.subTest(prefix=prefix, mutation=mutation):
+                        changed = copy.deepcopy(manifest)
+                        index = next(i for i, value in enumerate(changed["normalized_argv"]) if value.startswith(prefix))
+                        for field in ("argv", "normalized_argv"):
+                            if mutation == "missing":
+                                changed[field].pop(index)
+                            else:
+                                changed[field][index] = changed[field][index].rsplit("=", 1)[0] + "=/outside"
+                        with self.assertRaisesRegex(RuntimeError, "controlled command contract"):
+                            builds.validate_common_build_command_contract(changed)
 
             for malformed in (None, {}, {**manifest["dependencies"], "files": [None]},
                               {**manifest["dependencies"], "files": [{"export": "headers", "path": "../escape", "sha256": "a" * 64}]}):

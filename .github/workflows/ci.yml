@@ -126,6 +126,8 @@ jobs:
     if: needs.classify.outputs.fuzz == 'true'
     needs: [classify, preflight]
     uses: ./.github/workflows/fuzz-benchmark.yml
+    with:
+      tooling_preflight: true
 
   full:
     name: CI / full
@@ -133,6 +135,7 @@ jobs:
     needs: [classify, preflight]
     uses: ./.github/workflows/full.yml
     with:
+      tooling_preflight: true
       benchmarks: ${{ needs.classify.outputs.benchmark == 'true' }}
       extended: false
 
@@ -150,6 +153,7 @@ jobs:
     needs: [classify, preflight]
     uses: ./.github/workflows/perf.yml
     with:
+      tooling_preflight: true
       protocol_smoke: true
 
   gate:

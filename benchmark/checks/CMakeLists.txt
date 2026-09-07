@@ -3,6 +3,21 @@ set(csv2_check_fixture
 set(csv2_quote_fixture
   "${csv2_SOURCE_DIR}/benchmark/datasets/fixtures/quote_heavy.csv")
 
+add_executable(csv2_benchmark_writer_allocations
+  writer_allocations.cpp ../current/support/allocation.cpp)
+target_link_libraries(csv2_benchmark_writer_allocations PRIVATE
+  csv2_benchmark_core csv2_benchmark_build_config csv2::csv2 benchmark::benchmark)
+target_compile_definitions(csv2_benchmark_writer_allocations PRIVATE
+  CSV2_BENCHMARK_ENABLE_ALLOCATION_TRACKING=1
+  CSV2_HAS_MMAP=${csv2_benchmark_mmap_value}
+  $<$<PLATFORM_ID:Windows>:NOMINMAX>)
+csv2_set_test_standard(csv2_benchmark_writer_allocations
+  ${csv2_current_benchmark_standard})
+csv2_enable_test_options(csv2_benchmark_writer_allocations)
+csv2_add_benchmark_check(csv2.benchmark.current.allocations.writer_single_execution
+  COMMAND csv2_benchmark_writer_allocations
+    ${csv2_SOURCE_DIR}/benchmark/datasets/fixtures/long_field.csv)
+
 csv2_add_benchmark_check(csv2.benchmark.current.protocol
   COMMAND csv2_benchmark --csv2-input ${csv2_check_fixture}
     --csv2-source buffer --csv2-operation traversal/rows-cells --csv2-verify

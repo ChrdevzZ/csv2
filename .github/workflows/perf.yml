@@ -3,6 +3,9 @@ name: Performance evidence
 on:
   workflow_call:
     inputs:
+      tooling_preflight:
+        type: boolean
+        default: false
       protocol_smoke:
         type: boolean
         default: true
@@ -117,7 +120,8 @@ jobs:
             --output build-perf-smoke/reports/current-metrics.json
           cmake --build build-perf-smoke/current-owned/build --parallel
           ctest --test-dir build-perf-smoke/current-owned/build \
-            -L benchmark-checksum --no-tests=error --output-on-failure \
+            -L benchmark-checksum ${{ inputs.tooling_preflight && '-LE benchmark-tooling' || '' }} \
+            --no-tests=error --output-on-failure \
             --output-junit "$GITHUB_WORKSPACE/build-perf-smoke/reports/benchmark-checksum.xml"
 
       - name: Run owned candidate A/A and base-to-head A/B
@@ -245,7 +249,8 @@ jobs:
         run: |
           cmake --build build-perf/current-owned/build --parallel
           ctest --test-dir build-perf/current-owned/build \
-            -L benchmark-checksum --no-tests=error --output-on-failure \
+            -L benchmark-checksum ${{ inputs.tooling_preflight && '-LE benchmark-tooling' || '' }} \
+            --no-tests=error --output-on-failure \
             --output-junit "$GITHUB_WORKSPACE/build-perf/reports/benchmark-checksum.xml"
 
       - name: Collect exploratory owned A/A and A/B reports
@@ -422,7 +427,8 @@ jobs:
         run: |
           cmake --build build-perf/current-owned/build --parallel
           ctest --test-dir build-perf/current-owned/build \
-            -L benchmark-checksum --no-tests=error --output-on-failure \
+            -L benchmark-checksum ${{ inputs.tooling_preflight && '-LE benchmark-tooling' || '' }} \
+            --no-tests=error --output-on-failure \
             --output-junit "$GITHUB_WORKSPACE/build-perf/reports/benchmark-checksum.xml"
 
       - name: Collect controlled owned A/A and A/B reports

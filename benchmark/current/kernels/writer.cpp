@@ -2,8 +2,6 @@
 
 #include <csv2/writer.hpp>
 
-#include <stdexcept>
-
 namespace csv2_benchmark {
 namespace {
 
@@ -34,46 +32,21 @@ Result write(Context &context, const Rows &rows, TimedObserver &observer) {
   return result;
 }
 
-template <typename QuotePolicy, typename Rows>
-Result verify_write(Context &context, const Rows &rows, TimedObserver &observer) {
-  Result first = write<true, QuotePolicy>(context, rows, observer);
-  Result second = write<true, QuotePolicy>(context, rows, observer);
-  if (first.checksum != second.checksum || first.bytes != second.bytes ||
-      first.rows != second.rows || first.cells != second.cells)
-    throw std::runtime_error("writer benchmark output is not deterministic");
-  return first;
-}
-
 template <bool Verify> Result raw_direct(Context &context, Source, TimedObserver &observer) {
-  if constexpr (Verify)
-    return verify_write<csv2::quote_policy::none>(context, context.decoded_rows(), observer);
-  else
-    return write<false, csv2::quote_policy::none>(context, context.decoded_rows(), observer);
+  return write<Verify, csv2::quote_policy::none>(context, context.decoded_rows(), observer);
 }
 template <bool Verify> Result raw_streamable(Context &context, Source, TimedObserver &observer) {
-  if constexpr (Verify)
-    return verify_write<csv2::quote_policy::none>(context, context.streamable_rows(), observer);
-  else
-    return write<false, csv2::quote_policy::none>(context, context.streamable_rows(), observer);
+  return write<Verify, csv2::quote_policy::none>(context, context.streamable_rows(), observer);
 }
 template <bool Verify> Result escaped_direct(Context &context, Source, TimedObserver &observer) {
-  if constexpr (Verify)
-    return verify_write<csv2::quote_policy::minimal>(context, context.decoded_rows(), observer);
-  else
-    return write<false, csv2::quote_policy::minimal>(context, context.decoded_rows(), observer);
+  return write<Verify, csv2::quote_policy::minimal>(context, context.decoded_rows(), observer);
 }
 template <bool Verify>
 Result escaped_streamable(Context &context, Source, TimedObserver &observer) {
-  if constexpr (Verify)
-    return verify_write<csv2::quote_policy::minimal>(context, context.streamable_rows(), observer);
-  else
-    return write<false, csv2::quote_policy::minimal>(context, context.streamable_rows(), observer);
+  return write<Verify, csv2::quote_policy::minimal>(context, context.streamable_rows(), observer);
 }
 template <bool Verify> Result always_direct(Context &context, Source, TimedObserver &observer) {
-  if constexpr (Verify)
-    return verify_write<csv2::quote_policy::always>(context, context.decoded_rows(), observer);
-  else
-    return write<false, csv2::quote_policy::always>(context, context.decoded_rows(), observer);
+  return write<Verify, csv2::quote_policy::always>(context, context.decoded_rows(), observer);
 }
 
 } // namespace

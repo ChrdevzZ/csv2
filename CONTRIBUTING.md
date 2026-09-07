@@ -225,6 +225,11 @@ modular consumers, and compiles its single-header contract. The
 stable branch-protection context is `CI / gate`; individual matrix jobs are
 implementation details and must not become required contexts.
 
+Preflight runs the complete build-independent benchmark Python tooling suite once.
+Its `benchmark-tooling` CTest label lets other CI owners omit that duplicate
+execution while local unfiltered CTest still runs it. Standalone full, fuzz, and
+performance dispatches retain one owner; the extended full matrix uses GCC.
+
 Linux, Windows, and macOS own representative platform behavior. Benchmark
 changes additionally select their `benchmark-portability` slice. Exact-head
 GCC full owns the canonical exhaustive runtime/benchmark matrix, the fuzz
