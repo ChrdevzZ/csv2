@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Compatibility entry point for fixed-machine CSV2 metrics collection."""
+"""Command-line entry point for fixed-machine CSV2 metrics collection."""
 
 from __future__ import annotations
 

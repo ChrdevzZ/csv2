@@ -605,6 +605,49 @@ class BuildTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "already exists"):
                 builds.export_git_tree(REPOSITORY, "HEAD", existing, ("include",))
 
+    def test_git_export_ignores_replacements_throughout_object_chain(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            repository = root / "repository"
+            repository.mkdir()
+
+            def git(*arguments):
+                return subprocess.check_output(
+                    ["git", "-C", str(repository), *arguments],
+                    stderr=subprocess.PIPE, text=True, timeout=30,
+                ).strip()
+
+            git("init", "-q")
+            git("config", "user.name", "CSV2 export test")
+            git("config", "user.email", "csv2-test@example.invalid")
+            header = repository / "header.hpp"
+            revisions = []
+            for content in ("original\n", "replacement\n"):
+                header.write_text(content, encoding="utf-8")
+                git("add", "header.hpp")
+                git("-c", "commit.gpgsign=false", "commit", "-qm", content.strip())
+                revisions.append(tuple(git("rev-parse", ref) for ref in (
+                    "HEAD", "HEAD^{tree}", "HEAD:header.hpp")))
+            original, replacement = revisions
+            pristine = builds.export_git_tree(repository, original[0], root / "pristine")
+            forged = builds.export_git_tree(repository, replacement[0], root / "forged")
+            forged["commit"] = original[0]
+            forged.pop("digest")
+            forged["digest"] = builds.document_digest(forged)
+            for kind, source, target in zip(("commit", "tree", "blob"), original, replacement):
+                with self.subTest(kind=kind):
+                    git("replace", source, target)
+                    try:
+                        exported = builds.export_git_tree(repository, original[0], root / kind)
+                        self.assertEqual(exported["tree"], original[1])
+                        self.assertEqual((root / kind / "header.hpp").read_bytes(), b"original\n")
+                        builds.verify_git_export(pristine)
+                        builds.verify_git_export(exported)
+                        with self.assertRaises(RuntimeError):
+                            builds.verify_git_export(forged)
+                    finally:
+                        git("replace", "-d", source)
+
     def test_export_verification_rejects_content_drift_and_extra_files(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

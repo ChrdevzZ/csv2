@@ -83,12 +83,7 @@ else()
     DEPENDS ${csv2_sanitizer_smoke_dependencies})
 endif()
 
-# Preserve the two historical build target names used by downstream CI while
-# the executable and CTest identities follow the new matrix naming contract.
+# Preserve the upstream build target name.
 if(TARGET csv2_runtime_modular_cxx11_normal)
   add_custom_target(csv2_test DEPENDS csv2_runtime_modular_cxx11_normal)
-endif()
-if(TARGET csv2_runtime_single_cxx11_normal)
-  add_custom_target(csv2_single_header_test
-    DEPENDS csv2_runtime_single_cxx11_normal)
 endif()

@@ -211,7 +211,7 @@ def _git(
     run_fn: Run = subprocess.run,
     input_bytes: bytes | None = None,
 ) -> bytes:
-    command = ["git", "-C", str(repository), *arguments]
+    command = ["git", "--no-replace-objects", "-C", str(repository), *arguments]
     completed = run_fn(command, capture_output=True, timeout=30,
                        **({"input": input_bytes} if input_bytes is not None else {}))
     if completed.returncode != 0:
@@ -229,7 +229,7 @@ def read_git_blobs(
     unique = list(dict.fromkeys(_object_id(oid, "Git blob") for oid in object_ids))
     if not unique:
         return {}
-    wire = _git(repository, ["--no-replace-objects", "cat-file", "--batch"],
+    wire = _git(repository, ["cat-file", "--batch"],
                 run_fn=run_fn, input_bytes=("\n".join(unique) + "\n").encode("ascii"))
     result: dict[str, bytes] = {}
     offset = 0

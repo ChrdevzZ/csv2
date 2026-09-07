@@ -1,5 +1,8 @@
 #include <csv2_test/assertions.hpp>
-#include <csv2_test/test_support.hpp>
+#include <csv2_test/reader_support.hpp>
+
+#include <iterator>
+#include <string>
 
 using namespace csv2_test;
 

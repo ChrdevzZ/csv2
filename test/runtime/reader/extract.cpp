@@ -1,5 +1,17 @@
 #include <csv2_test/assertions.hpp>
-#include <csv2_test/test_support.hpp>
+#include <csv2_test/reader_support.hpp>
+#include <csv2_test/sinks.hpp>
+
+#include <cstddef>
+#include <deque>
+#include <iterator>
+#include <list>
+#include <string>
+#include <vector>
+
+#if CSV2_HAS_MEMORY_RESOURCE
+#include <memory_resource>
+#endif
 
 using namespace csv2_test;
 

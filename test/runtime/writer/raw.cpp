@@ -1,5 +1,19 @@
 #include <csv2_test/assertions.hpp>
-#include <csv2_test/test_support.hpp>
+#include <csv2_test/streams.hpp>
+
+#include <forward_list>
+#include <iterator>
+#include <list>
+#include <sstream>
+#include <string>
+#include <vector>
+
+#if CSV2_HAS_RANGES
+#include <ranges>
+#endif
+#if CSV2_HAS_STRING_VIEW
+#include <string_view>
+#endif
 
 using namespace csv2_test;
 

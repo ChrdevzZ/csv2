@@ -91,7 +91,7 @@ jobs:
             -DCSV2_BUILD_BENCHMARKS=OFF \
             -DCSV2_REQUIRE_PYTHON_AUDITS=ON
           cmake --build build-reduced --target \
-            csv2_test csv2_single_header_test \
+            csv2_test csv2_runtime_single_cxx11_normal \
             csv2_standard_contract_module_cxx11 \
             csv2_standard_contract_single_cxx11 --parallel
 

@@ -4,6 +4,7 @@ The test tree validates the same public behavior through modular headers and
 the generated single header without changing CSV2's C++11 consumer contract.
 The repository root remains compatible with CMake 3.10; this subdirectory is
 parsed only when tests or fuzzers are enabled and requires CMake 3.16.
+Tests and fuzzers require an out-of-source build directory.
 
 ## Layout
 
@@ -18,10 +19,11 @@ test/
 ├── fuzz/        Reader and Writer round-trip fuzz targets and seed corpora
 ```
 
-`test/support/include/csv2_test/test_support.hpp` is a compatibility umbrella.
-New support code belongs in the focused header that owns it: `sinks.hpp`,
+Runtime sources include the focused headers they use directly: `sinks.hpp`,
 `streams.hpp`, `string_like.hpp`, `temporary_file.hpp`, `platform.hpp`, or
-`reader_support.hpp`. The `csv2_test_support` target supplies only test support
+`reader_support.hpp`, plus their standard-library dependencies. `csv2_headers.hpp`
+checks the configured header and feature isolation after including CSV2.
+The `csv2_test_support` target supplies only test support
 code, include paths, and fixture definitions; it does not install, export, or
 propagate into `csv2::csv2`.
 

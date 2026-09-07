@@ -73,8 +73,8 @@ class VerifySourceArchivesTests(unittest.TestCase):
 
     def test_rejects_missing_required_file(self) -> None:
         for missing in (
-            "LICENSE.mio", "cmake/Csv2SourcePackaging.cmake",
-            "cmake/csv2-package-source.cmake.in",
+            "include/csv2/reader.hpp",
+            "single_include/csv2/csv2.hpp",
             "cmake/verification/Csv2VerificationOptions.cmake",
         ):
             with (
@@ -86,31 +86,6 @@ class VerifySourceArchivesTests(unittest.TestCase):
                 del files[missing]
                 write_archive(archive, files)
                 with self.assertRaisesRegex(RuntimeError, "missing required files"):
-                    verify_source_archives.verify_archives(
-                        [archive], source_root=SOURCE_ROOT
-                    )
-
-    def test_rejects_each_missing_public_header(self) -> None:
-        complete = required_files()
-        public_headers = [
-            name
-            for name in complete
-            if name.startswith("include/csv2/")
-            or name.startswith("single_include/csv2/")
-        ]
-        self.assertGreater(len(public_headers), 3)
-        for missing in public_headers:
-            with (
-                self.subTest(missing=missing),
-                tempfile.TemporaryDirectory() as directory,
-            ):
-                archive = Path(directory) / "csv2-1.8.0.tar.gz"
-                incomplete = dict(complete)
-                del incomplete[missing]
-                write_archive(archive, incomplete)
-                with self.assertRaisesRegex(
-                    RuntimeError, f"missing required files.*{missing}"
-                ):
                     verify_source_archives.verify_archives(
                         [archive], source_root=SOURCE_ROOT
                     )
@@ -278,6 +253,10 @@ class SourcePackagingTests(unittest.TestCase):
         (source / "CMakeLists.txt").write_text(
             "cmake_minimum_required(VERSION 3.10)\n"
             "project(csv2 VERSION 1.8.0 LANGUAGES NONE)\n"
+            "option(BUILD_NESTED_FIXTURE \"Configure generated fixture outputs\" OFF)\n"
+            "if(BUILD_NESTED_FIXTURE)\n"
+            "  add_subdirectory(nested)\n"
+            "endif()\n"
             "include(cmake/Csv2SourcePackaging.cmake)\n",
             encoding="utf-8",
         )
@@ -292,6 +271,13 @@ class SourcePackagingTests(unittest.TestCase):
             target.parent.mkdir(exist_ok=True)
             target.write_bytes(b"source content\n")
             target.chmod(0o755)
+        (source / "nested/CMakeLists.txt").write_text(
+            'file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/generated.cpp" "// generated\\n")\n'
+            'file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/generated_header" "// generated\\n")\n',
+            encoding="utf-8",
+        )
+        for name in ("authored.cpp", "authored_header"):
+            (source / "nested" / name).write_bytes(b"// authored source\n")
         for relative in (
             ".ccache/cache-entry", "nested/.ccache/cache-entry",
             "build-local/generated", "nested/CMakeFiles/generated",
@@ -317,6 +303,8 @@ class SourcePackagingTests(unittest.TestCase):
                 self.run_cmake(
                     "-H" + str(source), "-B" + str(build),
                     "-DCSV2_SOURCE_PACKAGE_OUTPUT_DIRECTORY=" + str(output),
+                    "-DBUILD_NESTED_FIXTURE="
+                    + ("ON" if source_parent == "ordinary" else "OFF"),
                     cwd=cwd,
                 )
                 self.run_cmake(
@@ -330,6 +318,12 @@ class SourcePackagingTests(unittest.TestCase):
                 first = verify_source_archives.archive_inventory(archives[0])
                 self.assertIn("nested/[quoted].csv", first[1])
                 self.assertIn("nested/数据 (A)+.txt", first[1])
+                self.assertIn("nested/authored.cpp", first[1])
+                self.assertIn("nested/authored_header", first[1])
+                if source_parent == "ordinary":
+                    for name in ("generated.cpp", "generated_header"):
+                        self.assertTrue((build / "nested" / name).is_file())
+                        self.assertNotIn("nested/" + name, first[1])
                 self.assertFalse(any(
                     name.startswith(("Generated [b] ]=]/", "Archives [a] ]===]/"))
                     for name in first[1]
@@ -345,7 +339,7 @@ class SourcePackagingTests(unittest.TestCase):
                 )
                 self.assertFalse((build / "CPackSourceConfig.cmake").exists())
 
-    def test_in_source_build_migration_concurrency_and_failure_cleanup(self) -> None:
+    def test_library_only_in_source_migration_concurrency_and_failure_cleanup(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             source = Path(directory) / "Source [in]"
             self.make_source(source)

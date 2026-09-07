@@ -46,7 +46,10 @@ are allowed only in objects explicitly marked extensible.
   undefinition override invalidates the build.
 
 The tools batch-read Git blobs with exact object-type, size, framing, and OID
-checks, and recheck exported files and build inputs before completion.
+checks, and recheck exported files and build inputs before completion. Every
+Git read disables replacement objects, including commit resolution, tree
+traversal, blob export, and manifest verification, so local replacement refs
+cannot change the content attributed to a recorded revision.
 Common-driver comparison identities normalize the source and output location
 slots needed for A/A and A/B compatibility. Current-tree provenance remains
 bound to its isolated build workspace; it is not a relocatable cache identity.
