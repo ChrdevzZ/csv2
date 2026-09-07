@@ -20,9 +20,10 @@ Integer checksums are canonical decimal `uint64_t`; they never pass through a
 floating-point benchmark counter. A failed or unsupported kernel returns a
 nonzero process status and does not emit a success wire.
 
-JSON producers validate both the closed schemas in `schemas/` and the
-standard-library semantic rules in `tools/csv2bench/protocol.py`. The semantic
-layer enforces lifecycle, revision, owned-build, calibration, affinity,
+JSON producers validate reports with the standard-library rules in
+`tools/csv2bench/protocol.py`. Contract tests also exercise the published closed
+schemas in `schemas/` through an offline subset validator. The runtime validator
+enforces lifecycle, revision, owned-build, calibration, affinity,
 sample-count, verification, allocation, timing, PMU, RSS, code-size, and build
 evidence relationships that are awkward to express in JSON Schema. New fields
 are allowed only in objects explicitly marked extensible.
@@ -136,6 +137,10 @@ artifact size, which can differ from the operation's verified output bytes. A
 and byte basis that must match one and only one A/B case. Controlled reports
 require cycles, instructions, branch misses, RSS, size, positive warmup, at
 least 20 repetitions, exact affinity, and complete invocation records.
+GNU peak-RSS and section-size collection is Linux-only. On other platforms,
+including macOS, exploratory reports record `peak_rss: null` and code size as
+filesystem `file_bytes` with `method: "filesystem"`. These fallbacks do not satisfy
+controlled evidence requirements. Errors from supported Linux tools remain fatal.
 
 Every current and common wire carries a stable `semantic_case_id`, `scope`,
 `source`, and `byte_basis`. These fields state what was measured independently

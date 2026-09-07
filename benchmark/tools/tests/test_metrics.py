@@ -59,6 +59,73 @@ class MetricsTests(unittest.TestCase):
                     self.assertEqual(report["compiler_identity"]["compile_command_matches"], 1)
                     self.assertIsNone(report["post_build"])
 
+    def test_darwin_optional_metrics_do_not_invoke_gnu_tools(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            executable = Path(directory) / "benchmark"
+            executable.write_bytes(b"executable fixture")
+            with unittest.mock.patch.object(
+                metrics.platform, "system", return_value="Darwin"
+            ), unittest.mock.patch.object(Path, "is_file", return_value=True), unittest.mock.patch.object(
+                metrics.shutil, "which", return_value="/usr/bin/size"
+            ), unittest.mock.patch.object(metrics, "run", side_effect=AssertionError("GNU tool invoked")) as run:
+                with self.subTest(metric="peak_rss"):
+                    self.assertIsNone(metrics.collect_peak_rss(unittest.mock.Mock()))
+                with self.subTest(metric="code_size"):
+                    self.assertEqual(metrics.collect_code_size(executable), {
+                        "file_bytes": executable.stat().st_size, "method": "filesystem"
+                    })
+                self.assertEqual(run.call_count, 0)
+
+    def test_linux_peak_rss_preserves_gnu_backend_failures(self) -> None:
+        args = unittest.mock.Mock(
+            executable=Path("benchmark"), input=Path("input.csv"),
+            operation="traversal/rows", source="buffer", minimum_time="0.1s"
+        )
+
+        def collect(command, *, environment):
+            self.assertEqual(command[:3], ["/usr/bin/time", "-v", "-o"])
+            self.assertEqual(environment["LC_ALL"], "C")
+            Path(command[3]).write_text(output, encoding="utf-8")
+            return unittest.mock.Mock(stdout="", stderr="")
+
+        with unittest.mock.patch.object(
+            metrics.platform, "system", return_value="Linux"
+        ), unittest.mock.patch.object(Path, "is_file", return_value=True):
+            output = "Maximum resident set size (kbytes): 1234\n"
+            with unittest.mock.patch.object(metrics, "run", side_effect=collect):
+                self.assertEqual(metrics.collect_peak_rss(args)["kib"], 1234)
+                output = "unsupported output\n"
+                with self.assertRaisesRegex(RuntimeError, "did not report peak RSS"):
+                    metrics.collect_peak_rss(args)
+            with unittest.mock.patch.object(
+                metrics, "run", side_effect=RuntimeError("benchmark failed")
+            ):
+                with self.assertRaisesRegex(RuntimeError, "benchmark failed"):
+                    metrics.collect_peak_rss(args)
+
+    def test_linux_code_size_preserves_gnu_backend_failures(self) -> None:
+        with unittest.mock.patch.object(
+            metrics.platform, "system", return_value="Linux"
+        ), unittest.mock.patch.object(metrics.shutil, "which", return_value="/usr/bin/size"):
+            with unittest.mock.patch.object(metrics, "run", return_value=unittest.mock.Mock(
+                stdout="text data bss dec hex filename\n10 20 30 60 3c benchmark\n"
+            )) as run:
+                result = metrics.collect_code_size(Path("benchmark"))
+                self.assertEqual(result["text_bytes"], 10)
+                self.assertEqual(result["total_bytes"], 60)
+                self.assertEqual(run.call_args.args[0], [
+                    "/usr/bin/size", "--format=berkeley", "benchmark"
+                ])
+                self.assertEqual(run.call_args.kwargs["environment"]["LC_ALL"], "C")
+                run.return_value.stdout = "unsupported output\n"
+                with self.assertRaisesRegex(RuntimeError, "unexpected size tool output"):
+                    metrics.collect_code_size(Path("benchmark"))
+            with unittest.mock.patch.object(
+                metrics, "run", side_effect=RuntimeError("size failed")
+            ):
+                with self.assertRaisesRegex(RuntimeError, "size failed"):
+                    metrics.collect_code_size(Path("benchmark"))
+
     def test_verify_command_uses_current_v4_cli(self) -> None:
         command = metrics.verify_command(
             Path("bench"), "traversal/rows", Path("input.csv"), "buffer"

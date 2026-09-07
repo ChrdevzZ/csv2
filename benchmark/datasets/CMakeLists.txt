@@ -25,9 +25,9 @@ if(csv2_benchmark_enable_generated_corpus)
     list(APPEND csv2_corpus_outputs
       "${csv2_generated_corpus_directory}/${csv2_fixture_name}")
   endforeach()
-  set(csv2_corpus_parameters "${CMAKE_CURRENT_BINARY_DIR}/corpus-scale.txt")
+  set(csv2_corpus_parameters "${CMAKE_CURRENT_BINARY_DIR}/corpus-inputs.txt")
   file(GENERATE OUTPUT "${csv2_corpus_parameters}"
-    CONTENT "${CSV2_BENCHMARK_CORPUS_SCALE}\n")
+    CONTENT "${CSV2_BENCHMARK_CORPUS_SCALE}\n${csv2_corpus_fixture_names}\n")
   add_custom_command(
     OUTPUT ${csv2_corpus_outputs}
     COMMAND ${CSV2_PYTHON_EXECUTABLE} -B ${CMAKE_CURRENT_SOURCE_DIR}/generate.py

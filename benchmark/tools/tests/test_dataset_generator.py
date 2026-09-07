@@ -8,6 +8,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -114,23 +115,42 @@ class DatasetGeneratorTests(unittest.TestCase):
                 compile_corpus()
                 self.assertEqual(identities, {path: (path.stat().st_mtime_ns, path.stat().st_ino) for path in outputs})
                 self.assertEqual(contents, {path: path.read_bytes() for path in outputs})
-                for path in (outputs[0], outputs[-2], outputs[-1]):
+                fixture = source / "datasets" / "fixtures" / "small_startup.csv"
+                fixture_contents = fixture.read_bytes()
+                fixture.unlink()
+                result = subprocess.run(
+                    [cmake, "--build", str(build), "--target", "csv2_benchmark_corpus"],
+                    text=True, capture_output=True)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("committed benchmark fixture inventory differs", result.stdout + result.stderr)
+                self.assertEqual(identities, {path: (path.stat().st_mtime_ns, path.stat().st_ino) for path in outputs})
+                self.assertEqual(contents, {path: path.read_bytes() for path in outputs})
+                fixture.write_bytes(fixture_contents)
+                outputs[0].unlink()
+                compile_corpus()
+                self.assertEqual(contents, {path: path.read_bytes() for path in outputs})
+                for path in (outputs[-2], outputs[-1]):
                     path.unlink()
                     compile_corpus()
                     self.assertEqual(path.read_bytes(), contents[path])
                 run("-S", str(source), "-B", str(build), "-DCSV2_BENCHMARK_CORPUS_SCALE=2")
                 compile_corpus()
                 self.assertEqual(json.loads((corpus / "manifest.json").read_text())["scale"], 2)
+                contents = {path: path.read_bytes() for path in outputs}
                 script = source / "datasets" / "generate.py"
-                script.write_text(script.read_text().replace('"kind": "small-startup"', '"kind": "changed-generator"'), encoding="utf-8")
-                # Explicit dependency ordering avoids sleeps on coarse timestamp filesystems.
+                with script.open("a", encoding="utf-8") as stream:
+                    stream.write("\n# Incremental dependency probe.\n")
+                # Only the script is newer than outputs; parameters cannot trigger this build.
+                stamp = time.time_ns()
+                os.utime(build / "datasets" / "corpus-inputs.txt", ns=(stamp - 4_000_000_000,) * 2)
                 for path in outputs:
-                    os.utime(path, (1, 1))
-                os.utime(build / "datasets" / "corpus-scale.txt", (0, 0))
+                    os.utime(path, ns=(stamp - 2_000_000_000,) * 2)
+                os.utime(script, ns=(stamp,) * 2)
+                identities = {path: (path.stat().st_mtime_ns, path.stat().st_ino) for path in outputs}
                 compile_corpus()
-                manifest = json.loads((corpus / "manifest.json").read_text())
-                startup = next(item for item in manifest["datasets"] if item["name"] == "small_startup.csv")
-                self.assertEqual(startup["parameters"]["kind"], "changed-generator")
+                for path in outputs:
+                    self.assertNotEqual(identities[path], (path.stat().st_mtime_ns, path.stat().st_ino))
+                self.assertEqual(contents, {path: path.read_bytes() for path in outputs})
                 (source / "datasets" / "fixtures" / "stale.csv").write_bytes(b"stale\n")
                 result = subprocess.run(
                     [cmake, "--build", str(build), "--target", "csv2_benchmark_corpus"],

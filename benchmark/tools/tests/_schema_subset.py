@@ -117,9 +117,9 @@ def _validate(
         if matches != 1:
             raise ValidationError(f"{path} must match exactly one schema branch")
 
-    if "const" in schema and instance != schema["const"]:
+    if "const" in schema and not _json_equal(instance, schema["const"]):
         raise ValidationError(f"{path} does not match const")
-    if "enum" in schema and instance not in schema["enum"]:
+    if "enum" in schema and not any(_json_equal(instance, value) for value in schema["enum"]):
         raise ValidationError(f"{path} is outside enum")
 
     expected_type = schema.get("type")

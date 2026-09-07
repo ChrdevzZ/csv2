@@ -256,6 +256,8 @@ def collect_timing(
 
 
 def collect_peak_rss(args: argparse.Namespace) -> dict[str, object] | None:
+    if platform.system() != "Linux":
+        return None
     time_tool = Path("/usr/bin/time")
     if not time_tool.is_file():
         return None
@@ -287,7 +289,7 @@ def collect_peak_rss(args: argparse.Namespace) -> dict[str, object] | None:
 
 
 def collect_code_size(executable: Path) -> dict[str, object]:
-    size_tool = shutil.which("size")
+    size_tool = shutil.which("size") if platform.system() == "Linux" else None
     if not size_tool:
         return {"file_bytes": executable.stat().st_size, "method": "filesystem"}
     command = [size_tool, "--format=berkeley", str(executable)]
