@@ -77,12 +77,12 @@ jobs:
           HEAD_SHA: ${{ steps.range.outputs.head }}
         run: |
           if [[ "$EVENT_NAME" == 'workflow_dispatch' || "$FORCE_ALL" == 'true' ]]; then
-            python3 tools/ci/classify_changes.py --paths-from-stdin </dev/null
+            python3 tools/ci/classify_changes.py --event "$EVENT_NAME" --paths-from-stdin </dev/null
           elif [[ "$EVENT_NAME" == 'pull_request' || "$EVENT_NAME" == 'merge_group' ]]; then
-            python3 tools/ci/classify_changes.py \
+            python3 tools/ci/classify_changes.py --event "$EVENT_NAME" \
               --base "$BASE_SHA" --head "$HEAD_SHA" --merge-base
           else
-            python3 tools/ci/classify_changes.py \
+            python3 tools/ci/classify_changes.py --event "$EVENT_NAME" \
               --base "$BASE_SHA" --head "$HEAD_SHA"
           fi
 
@@ -138,7 +138,7 @@ jobs:
 
   perf:
     name: CI / performance protocol
-    if: github.event_name == 'pull_request' && needs.classify.outputs.perf == 'true'
+    if: needs.classify.outputs.perf == 'true'
     needs: [classify, preflight]
     uses: ./.github/workflows/perf.yml
     with:
@@ -161,7 +161,7 @@ jobs:
       FUZZ_RESULT: ${{ needs.fuzz.result }}
       FULL_REQUIRED: ${{ needs.classify.result != 'success' || needs.classify.outputs.full == 'true' }}
       FULL_RESULT: ${{ needs.full.result }}
-      PERF_REQUIRED: ${{ (github.event_name == 'pull_request' && needs.classify.outputs.perf == 'true') && 'true' || 'false' }}
+      PERF_REQUIRED: ${{ needs.classify.result != 'success' || needs.classify.outputs.perf == 'true' }}
       PERF_RESULT: ${{ needs.perf.result }}
     steps:
       - name: Check out gate policy

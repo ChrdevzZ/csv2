@@ -198,12 +198,14 @@ audits are maintainer-side review tools, not tracked CI gates. See
 `.github/workflows/ci.yml` is the only automatic orchestrator. It has no
 workflow-level path filter: a full Git diff is classified after checkout,
 documentation-only changes keep only preflight and `CI / gate`, and unknown or
-unreadable paths conservatively select every owner. Rename detection is disabled
-for classification so both sides of a rename remain visible; pull requests use
+unreadable paths conservatively select every owner applicable to the triggering
+event. Rename detection is disabled for classification so both sides of a rename remain visible; pull requests use
 their merge-base comparison while pushes use the exact before/after range. Files
 installed as package metadata, including the licenses, are never docs-only.
 Repository-control files such as `.gitattributes` and `.gitignore`
-conservatively select all owners. CPack uses an explicit artifact policy rather
+conservatively select all applicable owners. Automatic performance-protocol smoke
+is PR-only; job conditions, the Gate, and the run summary consume the same
+event-specific plan. CPack uses an explicit artifact policy rather
 than interpreting editor ignore globs. The Linux GCC owner builds both
 configured source formats and verifies their
 complete modular/single-header public surfaces and package metadata byte for
@@ -244,7 +246,11 @@ Pull requests that select the full owner run the exact-head GCC 14 full profile.
 Pull requests that select the performance owner also run an exploratory
 end-to-end protocol smoke. Manual `full.yml`
 dispatches add Clang/libc++, Windows, macOS, coverage, and extended fuzzing;
-manual `perf.yml` dispatches retain exploratory and controlled machine-profile
+set `coverage_only=true` on `full.yml` to run only the minitest-backed C++20
+modular coverage slice. It validates raw profiles, first-party LCOV records,
+and the HTML report independently of the aggregate Gate. Compiler caches live
+in runner temporary storage and are excluded from source packages.
+Manual `perf.yml` dispatches retain exploratory and controlled machine-profile
 runs. Controlled dispatches accept only repository-owner requests from the
 default branch with explicit 40-character baseline and candidate SHAs, then
 enter the `csv2-perf` Environment before using the labeled self-hosted runner.

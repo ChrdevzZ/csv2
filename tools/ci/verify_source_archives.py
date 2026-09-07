@@ -22,6 +22,7 @@ REQUIRED_METADATA = (
 )
 
 LOCAL_WORK_DIRECTORIES = {
+    ".ccache",
     ".codex_tmp",
     ".idea",
     ".temp",

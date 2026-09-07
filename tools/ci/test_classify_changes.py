@@ -24,10 +24,10 @@ def parse_plan(completed: subprocess.CompletedProcess[str]) -> dict[str, bool]:
     return result
 
 
-def classify(*paths: str) -> dict[str, bool]:
+def classify(*paths: str, event: str = "pull_request") -> dict[str, bool]:
     return parse_plan(
         subprocess.run(
-            [sys.executable, str(SCRIPT), "--paths-from-stdin"],
+            [sys.executable, str(SCRIPT), "--paths-from-stdin", "--event", event],
             input="".join(f"{path}\n" for path in paths),
             capture_output=True,
             text=True,
@@ -75,6 +75,33 @@ def commit_all(root: Path, message: str) -> str:
 
 
 class ClassifyChangesTests(unittest.TestCase):
+    def test_event_plan_applies_to_normal_and_conservative_paths(self) -> None:
+        for event in ("pull_request", "push", "merge_group", "workflow_dispatch"):
+            for paths in ((), ("unclassified.data",), ("include/csv2/reader.hpp",),
+                          ("benchmark/current/registry.cpp",), ("README.md",)):
+                with self.subTest(event=event, paths=paths):
+                    selected = classify(*paths)
+                    selected["perf"] = selected["perf"] and event == "pull_request"
+                    self.assertEqual(classify(*paths, event=event), selected)
+
+    def test_git_failure_still_applies_event_policy(self) -> None:
+        for event in ("pull_request", "push", "merge_group", "workflow_dispatch"):
+            completed = subprocess.run(
+                [sys.executable, str(SCRIPT), "--base", "missing-base",
+                 "--head", "missing-head", "--event", event],
+                capture_output=True, text=True,
+            )
+            expected = {name: True for name in OWNERS}
+            expected["perf"] = event == "pull_request"
+            self.assertEqual(parse_plan(completed), expected)
+
+    def test_unknown_event_is_rejected(self) -> None:
+        completed = subprocess.run(
+            [sys.executable, str(SCRIPT), "--paths-from-stdin", "--event", "unknown"],
+            input="", capture_output=True, text=True,
+        )
+        self.assertNotEqual(completed.returncode, 0)
+
     def test_documentation_only_skips_every_heavy_owner(self) -> None:
         self.assertEqual(
             classify(

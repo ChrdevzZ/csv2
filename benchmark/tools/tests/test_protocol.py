@@ -74,7 +74,7 @@ def fixed_metrics_manifest(*, owned: bool = False) -> dict[str, object]:
         identities["compiler_executable"] = artifact()
         identities["compile_commands"] = artifact()
     return {
-        "schema": "csv2-artifact-manifest-v3",
+        "schema": "csv2-artifact-manifest-v4",
         "kind": "fixed-metrics",
         "report": artifact(),
         "inputs": {
@@ -111,13 +111,13 @@ def evidence_bundle() -> dict[str, object]:
         )
     }
     component = {
-        "schema": "csv2-benchmark-report-v6",
+        "schema": "csv2-benchmark-report-v7",
         "revision": "d" * 40,
         "build_digest": "a" * 64,
         "controlled_complete": False,
     }
     return {
-        "schema": "csv2-performance-evidence-bundle-v3",
+        "schema": "csv2-performance-evidence-bundle-v4",
         "status": "completed",
         "evidence_level": "exploratory",
         "decision_eligible": False,
@@ -149,7 +149,7 @@ def evidence_bundle() -> dict[str, object]:
             "comparison": json.loads(json.dumps(component)),
             "fixed_metrics": {
                 **component,
-                "schema": "csv2-fixed-machine-metrics-v6",
+                "schema": "csv2-fixed-machine-metrics-v7",
             },
         },
         "checks": checks,
@@ -161,7 +161,7 @@ def evidence_bundle() -> dict[str, object]:
 def evidence_manifest() -> dict[str, object]:
     report = evidence_bundle()
     return {
-        "schema": "csv2-artifact-manifest-v3",
+        "schema": "csv2-artifact-manifest-v4",
         "kind": "evidence-bundle",
         "report": artifact(),
         "inputs": {**report["artifacts"], "finalizer": report["finalizer"]},
@@ -248,7 +248,7 @@ def comparison_report() -> dict[str, object]:
         "launches": [launch("baseline", 0), launch("candidate", 1)],
     }
     return {
-        "schema": "csv2-benchmark-report-v6",
+        "schema": "csv2-benchmark-report-v7",
         "artifact_mode": "external",
         "mode": "aa",
         "status": "completed",
@@ -288,7 +288,7 @@ def comparison_report() -> dict[str, object]:
 
 def fixed_metrics_report() -> dict[str, object]:
     return {
-        "schema": "csv2-fixed-machine-metrics-v6",
+        "schema": "csv2-fixed-machine-metrics-v7",
         "artifact_mode": "external",
         "build": None,
         "status": "completed",
@@ -449,7 +449,7 @@ def controlled_comparison_report() -> dict[str, object]:
     for side_name in ("baseline", "candidate"):
         output = json.loads(json.dumps(report[side_name]["artifact"]))
         build: dict[str, object] = {
-            "schema": "csv2-benchmark-build-v1",
+            "schema": "csv2-benchmark-build-v2",
             "kind": "common-driver",
             "generated_at_utc": "now",
             "revision": revision,
@@ -474,28 +474,24 @@ def controlled_comparison_report() -> dict[str, object]:
             },
             "compiler_flags": ["-std=c++11", "-O3", "-DNDEBUG"],
             "argv": [
-                "/artifact",
-                "-I/source",
-                "adapter.cpp",
-                "-o",
-                f"/{side_name}",
+                "/artifact", "-std=c++11", "-O3", "-DNDEBUG", "-MD", "-MF", f"/.{side_name}.run.d",
                 f'-DCSV2_BENCHMARK_REVISION="{revision}"',
                 "-DCSV2_BENCHMARK_TIMER_SCOPE_AUDIT=0",
                 "-DCSV2_BENCHMARK_ENABLE_MODERN_WRITER_OPERATIONS=0",
+                f"-I/{side_name}-headers/include", "/adapter/benchmark/compare/common_driver.cpp", "-o", f"/.{side_name}.run.build",
             ],
             "normalized_argv": [
-                "/artifact",
-                "-I{include_root}",
-                "{adapter_source}",
-                "-o",
-                "{output}",
+                "/artifact", "-std=c++11", "-O3", "-DNDEBUG", "-MD", "-MF", "{dependencies}",
                 '-DCSV2_BENCHMARK_REVISION="{revision}"',
                 "-DCSV2_BENCHMARK_TIMER_SCOPE_AUDIT=0",
                 "-DCSV2_BENCHMARK_ENABLE_MODERN_WRITER_OPERATIONS=0",
+                "-I{include_root}", "{adapter_source}", "-o", "{output}",
             ],
             "build_log": {"returncode": 0, "stdout": "", "stderr": ""},
             "output": output,
         }
+        build["input_policy"] = builds.owned_inputs.environment()[1]
+        build["dependencies"] = {"schema": "csv2-compile-dependencies-v2", "files": [{"export": "headers", "path": "include/csv2/reader.hpp", "sha256": "c" * 64}, {"export": "adapter", "path": "benchmark/compare/common_driver.cpp", "sha256": adapter_sha256}], "trusted_system_inputs": [], "trusted_system_roots": []}
         build["identity_digest"] = builds.common_build_identity_digest(build)
         build["digest"] = builds.document_digest(build)
         report[side_name]["build"] = build
@@ -572,6 +568,8 @@ def controlled_metrics_report() -> dict[str, object]:
             }
         ],
     }
+    for path in sorted({path for paths in builds.current_dependency_owners().values() for path in paths} | {"include/csv2/reader.hpp"}):
+        source["files"].append({**source["files"][0], "path": path})
     source["digest"] = builds.document_digest(source)
     tool = {
         "artifact": artifact(),
@@ -599,7 +597,7 @@ def controlled_metrics_report() -> dict[str, object]:
         )
     }
     current_build: dict[str, object] = {
-        "schema": "csv2-benchmark-build-v1",
+        "schema": "csv2-benchmark-build-v2",
         "kind": "current-tree",
         "generated_at_utc": "now",
         "revision": "d" * 40,
@@ -642,6 +640,28 @@ def controlled_metrics_report() -> dict[str, object]:
     report["artifacts"]["executable"]["revision"] = "d" * 40
     report["artifacts"]["allocation_executable"]["revision"] = "d" * 40
     report["verification"]["result"]["revision"] = "d" * 40
+    current_build["input_policy"] = builds.owned_inputs.environment()[1]
+    current_build["dependencies"] = {"schema": "csv2-compile-dependencies-v2", "files": [{"export": "source", "path": entry["path"], "sha256": entry["sha256"]} for entry in source["files"]], "trusted_system_inputs": [], "trusted_system_roots": [], "units": [{"owner": owner, "source": relative, "inputs": [str(Path(source["root"]) / entry["path"]) for entry in source["files"]]} for owner, sources in builds.current_dependency_owners().items() for relative in sources]}
+    current_build["configure_argv"] = [
+        current_build["cmake"]["artifact"]["path"], "-S", current_build["source_root"],
+        "-B", current_build["build_root"], "-G", "Ninja", "-DCMAKE_BUILD_TYPE=Release",
+        "-DCMAKE_EXPORT_COMPILE_COMMANDS=ON",
+        "-DCMAKE_CXX_COMPILER=" + current_build["compiler"]["artifact"]["path"],
+        "-DCMAKE_CXX_FLAGS=", "-DCMAKE_CXX_FLAGS_RELEASE=-O3 -DNDEBUG",
+        "-DCSV2_BUILD_BENCHMARKS=ON", "-DCSV2_BUILD_BENCHMARK_CHECKS=ON",
+        "-DCSV2_VERIFICATION_PROFILE=perf", "-DCSV2_BENCHMARK_CORPUS_SCALE=1",
+        "-DCSV2_BENCHMARK_REVISION=" + current_build["revision"], "-DCSV2_REQUIRE_PYTHON_AUDITS=ON",
+    ]
+    current_build["normalized_configure_argv"] = builds.normalize_build_argv(
+        current_build["configure_argv"], (
+            (current_build["source_root"], "{source_root}"), (current_build["build_root"], "{build_root}"),
+            (current_build["compiler"]["artifact"]["path"], "{compiler}"), (current_build["revision"], "{revision}"),
+        ),
+    )
+    current_build["build_argv"] = [
+        current_build["cmake"]["artifact"]["path"], "--build", current_build["build_root"], "--target",
+        "csv2_benchmark", "csv2_benchmark_allocations", "csv2_benchmark_corpus", "--parallel",
+    ]
     current_build["identity_digest"] = builds.current_build_identity_digest(current_build)
     current_build["digest"] = builds.document_digest(current_build)
     report["build"] = current_build
@@ -847,6 +867,71 @@ class ProtocolTests(unittest.TestCase):
                 with self.assertRaisesRegex(RuntimeError, message):
                     protocol.validate_comparison_report(report)
 
+    def test_common_build_rejects_resigned_actual_input_redirection(self) -> None:
+        for original, replacement in (("-I/baseline-headers/include", "-I/tmp/shadow"),
+                                      ("/adapter/benchmark/compare/common_driver.cpp", "/tmp/shadow.cpp"),
+                                      ("-MD", "-MMD")):
+            build = controlled_comparison_report()["baseline"]["build"]
+            build["argv"][build["argv"].index(original)] = replacement
+            build["identity_digest"] = builds.common_build_identity_digest(build)
+            build.pop("digest")
+            build["digest"] = builds.document_digest(build)
+            with self.assertRaisesRegex(RuntimeError, "immutable input contract"):
+                protocol._common_build(build, "redirected build")
+
+    def test_common_command_contract_reads_windows_msvc_on_any_host(self) -> None:
+        build = controlled_comparison_report()["baseline"]["build"]
+        compiler = r"C:\tools\cl.exe"
+        build["compiler"]["artifact"]["path"] = compiler
+        build["header_export"]["root"] = r"C:\headers"
+        build["adapter_export"]["root"] = r"C:\adapter"
+        build["output"]["path"] = r"C:\out\driver.exe"
+        build["compiler_flags"] = ["/O2", "/DNDEBUG", "/EHsc"]
+        revision = build["revision"]
+        build["normalized_argv"] = [
+            compiler, "/O2", "/DNDEBUG", "/EHsc", "/experimental:deterministic",
+            "/pathmap:{adapter_root}=/_csv2/adapter", "/pathmap:{header_root}=/_csv2/source",
+            "/Brepro", "/sourceDependencies", "{dependencies}",
+            '/DCSV2_BENCHMARK_REVISION="{revision}"',
+            "/DCSV2_BENCHMARK_TIMER_SCOPE_AUDIT=0",
+            "/DCSV2_BENCHMARK_ENABLE_MODERN_WRITER_OPERATIONS=0",
+            "/I{include_root}", "{adapter_source}", "/Fe:{output}", "/Fo:{object}",
+        ]
+        build["argv"] = [
+            compiler, "/O2", "/DNDEBUG", "/EHsc", "/experimental:deterministic",
+            r"/pathmap:C:\adapter=/_csv2/adapter", r"/pathmap:C:\headers=/_csv2/source",
+            "/Brepro", "/sourceDependencies", r"C:\out\temp.deps.json",
+            f'/DCSV2_BENCHMARK_REVISION="{revision}"',
+            "/DCSV2_BENCHMARK_TIMER_SCOPE_AUDIT=0",
+            "/DCSV2_BENCHMARK_ENABLE_MODERN_WRITER_OPERATIONS=0",
+            r"/IC:\headers\include", r"C:\adapter\benchmark\compare\common_driver.cpp",
+            r"/Fe:C:\out\temp.build", r"/Fo:C:\out\temp.build.obj",
+        ]
+        builds.validate_common_build_command_contract(build)
+
+    def test_current_build_rejects_resigned_flag_and_config_redirection(self) -> None:
+        for flag in ("-I/tmp/shadow", "-Xclang=-include", "--config=/tmp/config", "-O0"):
+            build = controlled_metrics_report()["build"]
+            build["compiler_flags"].append(flag)
+            for field in ("configure_argv", "normalized_configure_argv"):
+                index = next(i for i, value in enumerate(build[field])
+                             if value.startswith("-DCMAKE_CXX_FLAGS_RELEASE="))
+                build[field][index] += " " + flag
+            build["identity_digest"] = builds.current_build_identity_digest(build)
+            build.pop("digest")
+            build["digest"] = builds.document_digest(build)
+            with self.assertRaises(RuntimeError):
+                protocol._current_build(build, "redirected current build")
+        build = controlled_metrics_report()["build"]
+        build["input_policy"]["bound"]["CPATH"] = "/tmp/shadow"
+        with self.assertRaisesRegex(RuntimeError, "input policy"):
+            builds._verify_input_policy(build)
+        build = controlled_metrics_report()["build"]
+        build["configure_argv"].append("-DCMAKE_TOOLCHAIN_FILE=/tmp/toolchain")
+        build["normalized_configure_argv"].append("-DCMAKE_TOOLCHAIN_FILE=/tmp/toolchain")
+        with self.assertRaisesRegex(RuntimeError, "controlled contract"):
+            builds.validate_current_build_command_contract(build)
+
     def test_v4_component_reports_are_explicitly_rejected(self) -> None:
         comparison = comparison_report()
         comparison["schema"] = "csv2-benchmark-report-v4"
@@ -859,7 +944,7 @@ class ProtocolTests(unittest.TestCase):
 
     def test_artifact_manifest_v3_rejects_old_or_incomplete_inputs(self) -> None:
         manifest = {
-            "schema": "csv2-artifact-manifest-v3",
+            "schema": "csv2-artifact-manifest-v4",
             "kind": "comparison",
             "report": artifact(),
             "inputs": {
@@ -873,7 +958,7 @@ class ProtocolTests(unittest.TestCase):
         protocol.validate_artifact_manifest(manifest)
         schema_root = Path(__file__).resolve().parents[2] / "protocol" / "schemas"
         schema = json.loads(
-            (schema_root / "artifact-manifest-v3.schema.json").read_text(
+            (schema_root / "artifact-manifest-v4.schema.json").read_text(
                 encoding="utf-8"
             )
         )
@@ -887,7 +972,7 @@ class ProtocolTests(unittest.TestCase):
     def test_fixed_metrics_artifact_manifest_is_closed_and_complete(self) -> None:
         schema_root = Path(__file__).resolve().parents[2] / "protocol" / "schemas"
         schema = json.loads(
-            (schema_root / "artifact-manifest-v3.schema.json").read_text(
+            (schema_root / "artifact-manifest-v4.schema.json").read_text(
                 encoding="utf-8"
             )
         )
@@ -982,7 +1067,7 @@ class ProtocolTests(unittest.TestCase):
     def test_evidence_schema_rejects_ineligible_documents(self) -> None:
         schema_root = Path(__file__).resolve().parents[2] / "protocol" / "schemas"
         evidence = json.loads(
-            (schema_root / "evidence-bundle-v3.schema.json").read_text(encoding="utf-8")
+            (schema_root / "evidence-bundle-v4.schema.json").read_text(encoding="utf-8")
         )
         validate_schema(evidence_bundle(), evidence)
         controlled_bundle = evidence_bundle()

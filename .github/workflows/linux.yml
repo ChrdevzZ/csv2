@@ -36,7 +36,6 @@ jobs:
     env:
       CCACHE_BASEDIR: ${{ github.workspace }}
       CCACHE_COMPILERCHECK: content
-      CCACHE_DIR: ${{ github.workspace }}/.ccache
       CCACHE_MAXSIZE: 1G
     steps:
       - name: Check out repository
@@ -49,11 +48,14 @@ jobs:
           sudo apt-get update
           sudo apt-get install --no-install-recommends ccache
 
+      - name: Locate compiler cache outside the source tree
+        run: printf 'CCACHE_DIR=%s/csv2-ccache\n' "$RUNNER_TEMP" >> "$GITHUB_ENV"
+
       - name: Restore compiler cache
         id: ccache-restore
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
-          path: .ccache
+          path: ${{ env.CCACHE_DIR }}
           key: csv2-ccache-v2-linux-gcc14-quick-${{ github.sha }}
           restore-keys: |
             csv2-ccache-v2-linux-gcc14-quick-
@@ -186,7 +188,7 @@ jobs:
           )
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
-          path: .ccache
+          path: ${{ env.CCACHE_DIR }}
           key: csv2-ccache-v2-linux-gcc14-quick-${{ github.sha }}
 
   gcc-sanitizers:
@@ -197,7 +199,6 @@ jobs:
     env:
       CCACHE_BASEDIR: ${{ github.workspace }}
       CCACHE_COMPILERCHECK: content
-      CCACHE_DIR: ${{ github.workspace }}/.ccache
       CCACHE_MAXSIZE: 1G
     steps:
       - name: Check out repository
@@ -210,11 +211,14 @@ jobs:
           sudo apt-get update
           sudo apt-get install --no-install-recommends ccache
 
+      - name: Locate compiler cache outside the source tree
+        run: printf 'CCACHE_DIR=%s/csv2-ccache\n' "$RUNNER_TEMP" >> "$GITHUB_ENV"
+
       - name: Restore compiler cache
         id: ccache-restore
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
-          path: .ccache
+          path: ${{ env.CCACHE_DIR }}
           key: csv2-ccache-v2-linux-gcc14-sanitizer-${{ github.sha }}
           restore-keys: csv2-ccache-v2-linux-gcc14-sanitizer-
 
@@ -259,6 +263,17 @@ jobs:
           --output-junit ctest.xml
           --output-on-failure
 
+      - name: Upload GCC sanitizer results
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: linux-gcc14-sanitizers-ctest
+          path: |
+            build/ctest.xml
+            build/Testing/Temporary/LastTest.log
+            build/test/sanitizer-smoke-targets.txt
+          if-no-files-found: error
+
       - name: Show compiler cache statistics
         if: always()
         run: ccache --show-stats
@@ -277,7 +292,7 @@ jobs:
           )
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
-          path: .ccache
+          path: ${{ env.CCACHE_DIR }}
           key: csv2-ccache-v2-linux-gcc14-sanitizer-${{ github.sha }}
 
   clang:
@@ -288,7 +303,6 @@ jobs:
     env:
       CCACHE_BASEDIR: ${{ github.workspace }}
       CCACHE_COMPILERCHECK: content
-      CCACHE_DIR: ${{ github.workspace }}/.ccache
       CCACHE_MAXSIZE: 1G
     strategy:
       fail-fast: false
@@ -310,11 +324,14 @@ jobs:
           sudo apt-get update
           sudo apt-get install --no-install-recommends "${packages[@]}"
 
+      - name: Locate compiler cache outside the source tree
+        run: printf 'CCACHE_DIR=%s/csv2-ccache\n' "$RUNNER_TEMP" >> "$GITHUB_ENV"
+
       - name: Restore compiler cache
         id: ccache-restore
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
-          path: .ccache
+          path: ${{ env.CCACHE_DIR }}
           key: csv2-ccache-v2-linux-${{ matrix.artifact }}-${{ github.sha }}
           restore-keys: csv2-ccache-v2-linux-${{ matrix.artifact }}-
 
@@ -424,5 +441,5 @@ jobs:
           )
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
-          path: .ccache
+          path: ${{ env.CCACHE_DIR }}
           key: csv2-ccache-v2-linux-${{ matrix.artifact }}-${{ github.sha }}

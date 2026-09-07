@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "title": "CSV2 fixed-machine metrics v6",
+  "title": "CSV2 fixed-machine metrics v7",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -11,13 +11,13 @@
     "post_build", "machine_profile"
   ],
   "properties": {
-    "schema": {"const": "csv2-fixed-machine-metrics-v6"},
+    "schema": {"const": "csv2-fixed-machine-metrics-v7"},
     "artifact_mode": {"enum": ["owned", "external"]},
     "build": {
       "oneOf": [
         {
           "allOf": [
-            {"$ref": "build-v1.schema.json"},
+            {"$ref": "build-v2.schema.json"},
             {
               "type": "object",
               "required": ["kind"],

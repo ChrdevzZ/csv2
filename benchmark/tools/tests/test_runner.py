@@ -228,7 +228,7 @@ class RunnerTests(unittest.TestCase):
             path.write_text(
                 json.dumps(
                     {
-                        "schema": "csv2-benchmark-report-v6",
+                        "schema": "csv2-benchmark-report-v7",
                         "mode": "aa",
                         "status": "completed",
                     }

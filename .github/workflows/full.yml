@@ -3,6 +3,9 @@ name: Full verification
 on:
   workflow_call:
     inputs:
+      coverage_only:
+        type: boolean
+        default: false
       benchmarks:
         type: boolean
         default: true
@@ -11,6 +14,10 @@ on:
         default: false
   workflow_dispatch:
     inputs:
+      coverage_only:
+        description: Run only the coverage slice
+        type: boolean
+        default: false
       benchmarks:
         description: Build and run exhaustive benchmark contracts
         type: boolean
@@ -29,13 +36,13 @@ concurrency:
 
 jobs:
   linux:
+    if: ${{ !inputs.coverage_only }}
     name: Full / Linux / ${{ matrix.name }}
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     env:
       CCACHE_BASEDIR: ${{ github.workspace }}
       CCACHE_COMPILERCHECK: content
-      CCACHE_DIR: ${{ github.workspace }}/.ccache
       CCACHE_MAXSIZE: 1G
       CSV2_CACHE_PROFILE: ${{ inputs.benchmarks && 'bench' || 'core' }}
     strategy:
@@ -60,11 +67,14 @@ jobs:
           sudo apt-get update
           sudo apt-get install --no-install-recommends "${packages[@]}"
 
+      - name: Locate compiler cache outside the source tree
+        run: printf 'CCACHE_DIR=%s/csv2-ccache\n' "$RUNNER_TEMP" >> "$GITHUB_ENV"
+
       - name: Restore compiler cache
         id: ccache-restore
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
-          path: .ccache
+          path: ${{ env.CCACHE_DIR }}
           key: csv2-ccache-v2-linux-${{ matrix.expected_id }}-full-${{ env.CSV2_CACHE_PROFILE }}-${{ github.sha }}
           restore-keys: |
             csv2-ccache-v2-linux-${{ matrix.expected_id }}-full-${{ env.CSV2_CACHE_PROFILE }}-
@@ -166,11 +176,11 @@ jobs:
           )
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
-          path: .ccache
+          path: ${{ env.CCACHE_DIR }}
           key: csv2-ccache-v2-linux-${{ matrix.expected_id }}-full-${{ env.CSV2_CACHE_PROFILE }}-${{ github.sha }}
 
   windows:
-    if: inputs.extended
+    if: inputs.extended && !inputs.coverage_only
     name: Full / Windows / MSVC 19.51
     runs-on: windows-2025-vs2026
     timeout-minutes: 60
@@ -227,7 +237,7 @@ jobs:
           if-no-files-found: error
 
   macos:
-    if: inputs.extended
+    if: inputs.extended && !inputs.coverage_only
     name: Full / macOS / AppleClang 21
     runs-on: macos-26
     timeout-minutes: 60
@@ -281,7 +291,7 @@ jobs:
           if-no-files-found: error
 
   coverage:
-    if: inputs.extended
+    if: inputs.extended || inputs.coverage_only
     name: Full / Linux / Clang 18 coverage (non-blocking)
     runs-on: ubuntu-24.04
     timeout-minutes: 30
@@ -300,29 +310,59 @@ jobs:
           -DCMAKE_CXX_FLAGS="-fprofile-instr-generate -fcoverage-mapping"
           -DCMAKE_EXE_LINKER_FLAGS="-fprofile-instr-generate"
           -DCSV2_BUILD_TESTS=ON
+          -DCSV2_TEST_ASSERTION_BACKEND=minitest
           -DCSV2_VERIFICATION_PROFILE=quick
           -DCSV2_REQUIRE_PYTHON_AUDITS=ON
 
       - name: Build and run C++20 modular runtime coverage
         env:
-          LLVM_PROFILE_FILE: build/profiles/%p-%m.profraw
+          LLVM_PROFILE_FILE: ${{ github.workspace }}/build/profiles/%p-%m.profraw
+        id: coverage
         run: |
+          set -euo pipefail
           mkdir -p build/profiles
           cmake --build build --target csv2_runtime_modular_cxx20_normal --parallel
           ctest --test-dir build -R '^csv2\.runtime\..*\.modular\.cxx20\.normal$' \
-            --output-on-failure
-          llvm-profdata-18 merge -sparse build/profiles/*.profraw \
+            --no-tests=error --output-on-failure
+          shopt -s nullglob
+          profiles=(build/profiles/*.profraw)
+          if ((${#profiles[@]} == 0)); then
+            echo "No coverage profiles were produced" >&2
+            exit 1
+          fi
+          llvm-profdata-18 merge -sparse "${profiles[@]}" \
             -o build/coverage.profdata
           llvm-cov-18 export --format=lcov \
             build/test/csv2_runtime_modular_cxx20_normal \
             -instr-profile=build/coverage.profdata \
             -ignore-filename-regex='(third_party|/test/|/benchmark/|single_include)' \
-            -o build/coverage.lcov
+            > build/coverage.lcov
           llvm-cov-18 show \
             build/test/csv2_runtime_modular_cxx20_normal \
             -instr-profile=build/coverage.profdata \
             -format=html -output-dir=build/coverage-html \
             -ignore-filename-regex='(third_party|/test/|/benchmark/|single_include)'
+
+          test -s build/coverage-html/index.html
+          awk '
+            /^SF:/ { first_party = ($0 ~ /\/include\/csv2\//) }
+            first_party && /^DA:/ {
+              split($0, record, ",")
+              if (record[2] + 0 > 0) covered = 1
+            }
+            END { exit !covered }
+          ' build/coverage.lcov
+
+      - name: Summarize coverage result
+        if: always()
+        env:
+          COVERAGE_OUTCOME: ${{ steps.coverage.outcome }}
+        run: |
+          if [[ "$COVERAGE_OUTCOME" == 'success' ]]; then
+            echo 'Coverage: runtime profiles, first-party LCOV data, and HTML verified.' >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo 'Coverage unavailable: generation or validation did not succeed; inspect this job log.' >> "$GITHUB_STEP_SUMMARY"
+          fi
 
       - name: Upload coverage
         if: always()

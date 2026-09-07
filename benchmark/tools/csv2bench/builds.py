@@ -16,7 +16,7 @@ from pathlib import Path, PurePosixPath
 from typing import Callable, Iterable, Sequence
 
 from . import BUILD_SCHEMA
-from . import artifacts
+from . import artifacts, owned_inputs
 
 
 OBJECT_ID = re.compile(r"(?:[0-9a-f]{40}|[0-9a-f]{64})\Z")
@@ -76,7 +76,7 @@ def _validate_transparent_compiler_argument(argument: str, label: str) -> None:
     lowered = argument.lower()
     if "@" in argument:
         raise RuntimeError(f"{label} cannot use response files")
-    if lowered.startswith("-wp,") or lowered in ("-xclang", "-xpreprocessor"):
+    if lowered.startswith("-wp,") or lowered.startswith(("-xclang", "-xpreprocessor", "--config")):
         raise RuntimeError(f"{label} cannot use preprocessor pass-through options")
     if (
         lowered.startswith("-include")
@@ -87,15 +87,7 @@ def _validate_transparent_compiler_argument(argument: str, label: str) -> None:
 
 
 def _validate_common_compiler_flags(arguments: Sequence[object]) -> None:
-    """Reject caller flags that can alter tool-owned preprocessor definitions."""
-    for argument in arguments:
-        if not isinstance(argument, str):
-            raise RuntimeError("common-driver compiler flags contain a non-string argument")
-        if any(name in argument for name in _COMMON_BUILD_DEFINITIONS):
-            raise RuntimeError("compiler flags override a reserved common-driver definition")
-        _validate_transparent_compiler_argument(
-            argument, "common-driver compiler flags"
-        )
+    owned_inputs.flags(arguments)
 
 
 def validate_common_build_command_contract(manifest: dict[str, object]) -> None:
@@ -133,6 +125,60 @@ def validate_common_build_command_contract(manifest: dict[str, object]) -> None:
         raise RuntimeError("common-driver build command contradicts its revision")
     if normalized["CSV2_BENCHMARK_REVISION"] != ['"{revision}"']:
         raise RuntimeError("normalized common-driver command contradicts its revision")
+    compiler = str(manifest["compiler"]["artifact"]["path"])
+    msvc = owned_inputs.recorded_path(compiler).name.lower() in {"cl", "cl.exe"}
+    owned_inputs.flags(compiler_flags, "msvc" if msvc else "gnu")
+    definitions = [
+        'CSV2_BENCHMARK_REVISION="{revision}"',
+        "CSV2_BENCHMARK_TIMER_SCOPE_AUDIT=0",
+        "CSV2_BENCHMARK_ENABLE_MODERN_WRITER_OPERATIONS=" + expected_modern[0],
+    ]
+    if msvc:
+        lower_flags = {flag.lower() for flag in compiler_flags}
+        tail = [* ([] if "/experimental:deterministic" in lower_flags else ["/experimental:deterministic"]),
+                "/pathmap:{adapter_root}=/_csv2/adapter", "/pathmap:{header_root}=/_csv2/source",
+                * ([] if "/brepro" in lower_flags else ["/Brepro"]),
+                "/sourceDependencies", "{dependencies}",
+                *("/D" + value for value in definitions), "/I{include_root}",
+                "{adapter_source}", "/Fe:{output}", "/Fo:{object}"]
+    else:
+        version = manifest["compiler"]["version"]
+        config = ["--no-default-config", "--driver-mode=g++"] if "clang" in (version["stdout"] + version["stderr"]).lower() else []
+        tail = [*config, "-MD", "-MF", "{dependencies}",
+                *("-D" + value for value in definitions), "-I{include_root}",
+                "{adapter_source}", "-o", "{output}"]
+    if normalized_argv != [compiler, *compiler_flags, *tail]:
+        raise RuntimeError("normalized build commands violate the controlled command contract")
+    if not argv or len(argv) != len(normalized_argv):
+        raise RuntimeError("actual build command length differs from its controlled contract")
+    if msvc:
+        if not argv[-2].startswith("/Fe:"):
+            raise RuntimeError("actual build command lacks its controlled output")
+        temporary_output = owned_inputs.recorded_path(argv[-2][4:])
+    else:
+        temporary_output = owned_inputs.recorded_path(argv[-1])
+    output = owned_inputs.recorded_path(str(manifest["output"]["path"]))
+    if temporary_output.parent != output.parent:
+        raise RuntimeError("actual build command output escapes its artifact directory")
+    header_root = owned_inputs.recorded_path(str(manifest["header_export"]["root"]))
+    adapter_root = owned_inputs.recorded_path(str(manifest["adapter_export"]["root"]))
+    substitutions = {
+        "{header_root}": str(header_root),
+        "{adapter_root}": str(adapter_root),
+        "{include_root}": str(header_root / "include"),
+        "{adapter_source}": str(adapter_root / "benchmark/compare/common_driver.cpp"),
+        "{output}": str(temporary_output),
+        "{object}": str(temporary_output.with_suffix(temporary_output.suffix + ".obj")),
+        "{dependencies}": str(temporary_output.with_suffix(".deps.json" if msvc else ".d")),
+        "{revision}": revision,
+    }
+    expected_actual = []
+    for argument in normalized_argv:
+        for placeholder, value in substitutions.items():
+            argument = argument.replace(placeholder, value)
+        expected_actual.append(argument)
+    if argv != expected_actual:
+        raise RuntimeError("actual build command differs from its immutable input contract")
 
 
 def safe_git_path(value: str) -> PurePosixPath:
@@ -462,6 +508,8 @@ def common_build_identity_digest(manifest: dict[str, object]) -> str:
         "compiler_sha256": compiler["artifact"]["sha256"],
         "compiler_version_stdout": version["stdout"],
         "compiler_version_stderr": version["stderr"],
+        "input_policy": manifest["input_policy"],
+        "dependencies": manifest["dependencies"],
         "normalized_argv": manifest["normalized_argv"],
         "output_sha256": manifest["output"]["sha256"],
     }
@@ -500,14 +548,18 @@ def compile_common_driver(
     compiler = _compiler_path(compiler)
     compiler_artifact = _artifact(compiler, "compiler")
 
+    build_environment, environment_binding = owned_inputs.environment()
     compiler_name = compiler.name.lower()
     msvc = compiler_name in {"cl", "cl.exe"}
     version_command = (
         [str(compiler), "/Bv", "/?"] if msvc else [str(compiler), "--version"]
     )
-    version = run_fn(version_command, capture_output=True, text=True, timeout=30)
+    owned_inputs.flags(compiler_flags, "msvc" if msvc else "gnu")
+    version = run_fn(version_command, capture_output=True, text=True, timeout=30, env=build_environment)
     if version.returncode != 0 or not (version.stdout.strip() or version.stderr.strip()):
         raise RuntimeError("compiler version command failed or returned no identity")
+
+    implicit_config_flags = ["--no-default-config", "--driver-mode=g++"] if "clang" in (version.stdout + version.stderr).lower() else []
 
     output = output.expanduser().resolve(strict=False)
     output.parent.mkdir(parents=True, exist_ok=True)
@@ -526,6 +578,7 @@ def compile_common_driver(
     temporary_output = Path(temporary_name)
     temporary_output.unlink()
     temporary_object = temporary_output.with_suffix(temporary_output.suffix + ".obj")
+    dependency_path = temporary_output.with_suffix(".deps.json" if msvc else ".d")
     revision_definition = f'CSV2_BENCHMARK_REVISION="{revision}"'
     instrumentation_definition = "CSV2_BENCHMARK_TIMER_SCOPE_AUDIT=0"
     modern_definition = (
@@ -548,6 +601,7 @@ def compile_common_driver(
             str(compiler),
             *compiler_flags,
             *reproducibility_flags,
+            "/sourceDependencies", str(dependency_path),
             f"/D{revision_definition}",
             f"/D{instrumentation_definition}",
             f"/D{modern_definition}",
@@ -560,6 +614,8 @@ def compile_common_driver(
         command = [
             str(compiler),
             *compiler_flags,
+            *implicit_config_flags,
+            "-MD", "-MF", str(dependency_path),
             f"-D{revision_definition}",
             f"-D{instrumentation_definition}",
             f"-D{modern_definition}",
@@ -569,7 +625,7 @@ def compile_common_driver(
             str(temporary_output),
         ]
     try:
-        completed = run_fn(command, capture_output=True, text=True, timeout=600)
+        completed = run_fn(command, capture_output=True, text=True, timeout=600, env=build_environment)
         if completed.returncode != 0:
             raise RuntimeError(
                 "common driver compilation failed\n"
@@ -583,6 +639,22 @@ def compile_common_driver(
             or temporary_output.stat().st_size == 0
         ):
             raise RuntimeError("compiler did not create a regular non-empty executable")
+        try:
+            dependency_text = dependency_path.read_text(encoding="utf-8-sig")
+            if msvc:
+                dependency_data = json.loads(dependency_text)["Data"]
+                dependency_paths = [dependency_data["Source"], *dependency_data["Includes"]]
+                trusted_roots = [Path(value).resolve(strict=True) for value in build_environment.get("INCLUDE", "").split(";") if value]
+            else:
+                dependency_paths = owned_inputs.depfile_paths(dependency_text)
+                trusted_roots = _system_include_roots(compiler, compiler_flags, implicit_config_flags, build_environment, run_fn)
+            dependencies = owned_inputs.bind_dependencies(
+                dependency_paths, {"headers": header_export, "adapter": adapter_export},
+                cwd=Path.cwd(), required_sources={("adapter", "benchmark/compare/common_driver.cpp")},
+                trusted_roots=trusted_roots)
+            dependencies["trusted_system_roots"] = sorted(str(root) for root in trusted_roots)
+        except (OSError, ValueError, KeyError, TypeError) as error:
+            raise RuntimeError("compiler dependency evidence is missing or malformed") from error
         verify_git_export(header_export)
         verify_git_export(adapter_export)
         artifacts.verify_unchanged(compiler_artifact, "compiler executable")
@@ -590,6 +662,8 @@ def compile_common_driver(
     finally:
         if temporary_output.exists() or temporary_output.is_symlink():
             temporary_output.unlink()
+        if dependency_path.exists():
+            dependency_path.unlink()
         if temporary_object.exists() or temporary_object.is_symlink():
             temporary_object.unlink()
 
@@ -601,6 +675,8 @@ def compile_common_driver(
             (str(include_root), "{include_root}"),
             (str(adapter_source), "{adapter_source}"),
             (str(temporary_output), "{output}"),
+            (str(temporary_object), "{object}"),
+            (str(dependency_path), "{dependencies}"),
             (revision, "{revision}"),
         ),
     )
@@ -630,6 +706,8 @@ def compile_common_driver(
             },
         },
         "compiler_flags": list(compiler_flags),
+        "input_policy": environment_binding,
+        "dependencies": dependencies,
         "argv": command,
         "normalized_argv": normalized_argv,
         "build_log": {
@@ -657,6 +735,8 @@ def validate_build_manifest(manifest: dict[str, object]) -> None:
         "adapter_export",
         "compiler",
         "compiler_flags",
+        "input_policy",
+        "dependencies",
         "argv",
         "normalized_argv",
         "build_log",
@@ -693,6 +773,11 @@ def validate_build_manifest(manifest: dict[str, object]) -> None:
         raise RuntimeError("build source exports are malformed")
     verify_git_export(header_export)
     verify_git_export(adapter_export)
+    _verify_input_policy(manifest)
+    owned_inputs.verify_dependencies(
+        manifest["dependencies"], {"headers": header_export, "adapter": adapter_export},
+        {("adapter", "benchmark/compare/common_driver.cpp")},
+    )
     if header_export.get("commit") != revision:
         raise RuntimeError("build revision differs from the header export")
     header_paths = {str(entry["path"]) for entry in header_export["files"]}
@@ -770,6 +855,8 @@ def assert_compatible_builds(
         raise RuntimeError("baseline and candidate compiler artifacts differ")
     if baseline["adapter_export"]["digest"] != candidate["adapter_export"]["digest"]:
         raise RuntimeError("baseline and candidate adapter exports differ")
+    if baseline["input_policy"] != candidate["input_policy"]:
+        raise RuntimeError("baseline and candidate controlled environments differ")
     if baseline["normalized_argv"] != candidate["normalized_argv"]:
         raise RuntimeError("baseline and candidate normalized build commands differ")
 
@@ -854,6 +941,8 @@ def current_build_identity_digest(manifest: dict[str, object]) -> str:
             "compiler_sha256": compiler["artifact"]["sha256"],
             "cmake_sha256": cmake["artifact"]["sha256"],
             "ninja_sha256": ninja["artifact"]["sha256"],
+            "input_policy": manifest["input_policy"],
+            "dependencies": manifest["dependencies"],
             "compiler_flags": manifest["compiler_flags"],
             "normalized_configure_argv": manifest["normalized_configure_argv"],
             "file_api": manifest["file_api"],
@@ -864,8 +953,8 @@ def current_build_identity_digest(manifest: dict[str, object]) -> str:
     )
 
 
-def _run_text(command: Sequence[str], *, timeout: int = 600, run_fn: Run = subprocess.run):
-    completed = run_fn(list(command), capture_output=True, text=True, timeout=timeout)
+def _run_text(command: Sequence[str], *, timeout: int = 600, run_fn: Run = subprocess.run, env=None):
+    completed = run_fn(list(command), capture_output=True, text=True, timeout=timeout, env=env)
     if completed.returncode != 0:
         raise RuntimeError(
             "build command failed\n"
@@ -942,8 +1031,10 @@ def _expected_string_defines(name: str, value: str) -> set[str]:
 
 
 def _validate_effective_release_flags(
-    arguments: Sequence[str], label: str
+    arguments: Sequence[str], label: str, *, controlled: bool = True
 ) -> None:
+    if controlled:
+        owned_inputs.flags(arguments)
     optimization: str | None = None
     ndebug: bool | None = None
     index = 0
@@ -1080,7 +1171,7 @@ def validate_current_compile_topology(
                     f"{owner_name} lacks requested compiler flags: "
                     + ", ".join(missing_flags)
                 )
-            _validate_effective_release_flags(fragment_tokens, owner_name)
+            _validate_effective_release_flags(fragment_tokens, owner_name, controlled=False)
             if standard not in {"20", "23", "26"} or not any(
                 flag in fragments
                 for flag in (
@@ -1426,10 +1517,25 @@ def build_current_tree(
     _validate_effective_release_flags(compiler_flags, "owned current-tree compiler flags")
     repository = artifacts.canonical_existing(repository, "Git repository")
     compiler = _compiler_path(compiler)
+    build_environment, environment_binding = owned_inputs.environment()
+    original_run = run_fn
+    def controlled_run(command, **kwargs):
+        kwargs["env"] = build_environment
+        return original_run(command, **kwargs)
+    run_fn = controlled_run
+    owned_inputs.flags(compiler_flags, "msvc" if compiler.name.lower() in {"cl", "cl.exe"} else "gnu")
+    compiler_identity = _tool_identity(
+        compiler, ("/Bv", "/?") if compiler.name.lower() in {"cl", "cl.exe"} else ("--version",), run_fn)
+    version_text = compiler_identity["version"]["stdout"] + compiler_identity["version"]["stderr"]
+    implicit_config_flags = (
+        ["--no-default-config", "--driver-mode=g++"] if "clang" in version_text.lower() else []
+    )
     cmake_path = shutil.which("cmake")
     ninja_path = shutil.which("ninja")
     if cmake_path is None or ninja_path is None:
         raise RuntimeError("owned current-tree builds require CMake and Ninja")
+    cmake_path = str(Path(cmake_path).resolve(strict=True))
+    ninja_path = str(Path(ninja_path).resolve(strict=True))
     workspace = workspace.expanduser().resolve(strict=False)
     workspace.mkdir(parents=True, exist_ok=False)
     source = export_git_tree(repository, reference, workspace / "source", run_fn=run_fn)
@@ -1451,6 +1557,7 @@ def build_current_tree(
         "-DCMAKE_BUILD_TYPE=Release",
         "-DCMAKE_EXPORT_COMPILE_COMMANDS=ON",
         f"-DCMAKE_CXX_COMPILER={compiler}",
+        f"-DCMAKE_CXX_FLAGS={' '.join(implicit_config_flags)}",
         f"-DCMAKE_CXX_FLAGS_RELEASE={' '.join(compiler_flags)}",
         "-DCSV2_BUILD_BENCHMARKS=ON",
         "-DCSV2_BUILD_BENCHMARK_CHECKS=ON",
@@ -1485,6 +1592,7 @@ def build_current_tree(
     )
     cmake_identity = _tool_identity(Path(cmake_path), ("--version",), run_fn)
     ninja_identity = _tool_identity(Path(ninja_path), ("--version",), run_fn)
+    dependencies = _current_dependencies(source, build_root, compiler, compiler_flags, implicit_config_flags, audit, build_environment, run_fn)
     compile_commands = artifacts.metadata(build_root / "compile_commands.json")
     targets = {
         name: artifacts.metadata(Path(str(value["artifact"])), revision)
@@ -1508,6 +1616,8 @@ def build_current_tree(
         "source_export": source,
         "compiler": compiler_identity,
         "compiler_flags": compiler_flags,
+        "input_policy": environment_binding,
+        "dependencies": dependencies,
         "cmake": cmake_identity,
         "ninja": ninja_identity,
         "configure_argv": configure,
@@ -1558,11 +1668,14 @@ def verify_current_build_manifest(manifest: dict[str, object]) -> None:
     ):
         raise RuntimeError("current-tree compiler flags are malformed")
     _validate_effective_release_flags(compiler_flags, "current-tree build")
+    validate_current_build_command_contract(manifest)
 
     source = manifest.get("source_export")
     if not isinstance(source, dict):
         raise RuntimeError("current-tree source export is malformed")
     verify_git_export(source)
+    _verify_input_policy(manifest)
+    _verify_current_dependencies(manifest)
     revision = str(manifest.get("revision", ""))
     if source.get("commit") != revision:
         raise RuntimeError("current-tree revision differs from its source export")
@@ -1587,3 +1700,219 @@ def verify_current_build_manifest(manifest: dict[str, object]) -> None:
         if not isinstance(identity, dict):
             raise RuntimeError(f"current-tree target identity is malformed: {name}")
         artifacts.verify_unchanged(identity, f"current-tree target {name}")
+
+
+def _verify_input_policy(manifest: dict[str, object]) -> None:
+    policy = manifest.get("input_policy")
+    if (
+        not isinstance(policy, dict)
+        or set(policy) != {"policy", "removed", "bound"}
+        or policy.get("policy") != owned_inputs.POLICY
+        or policy.get("removed") != sorted(owned_inputs.REMOVED_ENV)
+        or not isinstance(policy.get("bound"), dict)
+        or not all(isinstance(key, str) and isinstance(value, str)
+                   and key.upper() in owned_inputs.BOUND_ENV
+                   for key, value in policy["bound"].items())
+    ):
+        raise RuntimeError("owned build input policy is missing or unsupported")
+
+
+def _current_dependencies(
+    source: dict[str, object], build_root: Path, compiler: Path,
+    compiler_flags: Sequence[str], config_flags: Sequence[str],
+    audit: dict[str, object], env: dict[str, str], run_fn: Run,
+) -> dict[str, object]:
+    # Ninja records the depfile/showIncludes emitted by the actual object compile.
+    trace = _run_text(
+        [shutil.which("ninja"), "-C", str(build_root), "-t", "deps"], run_fn=run_fn
+    ).stdout
+    objects: dict[str, dict[str, object]] = {}
+    current = None
+    for line in trace.splitlines():
+        if line and not line[0].isspace():
+            match = re.fullmatch(r"(.+): #deps ([0-9]+), deps mtime .+ \(VALID\)", line)
+            current = match[1] if match else None
+            if current:
+                objects[current] = {"count": int(match[2]), "paths": []}
+        elif current and line.strip():
+            objects[current]["paths"].append(line.strip())
+    roots = _system_include_roots(compiler, compiler_flags, config_flags, env, run_fn)
+    commands = json.loads((build_root / "compile_commands.json").read_text(encoding="utf-8"))
+    owners: dict[str, list[str]] = {}
+    for target in audit["targets"].values():
+        owners.update(target["compile_owners"])
+    units = []
+    msvc = compiler.name.lower() in {"cl", "cl.exe"}
+    for owner, sources in sorted(owners.items()):
+        for relative in sources:
+            source_path = (Path(source["root"]) / relative).resolve(strict=True)
+            matches = []
+            for entry in commands:
+                if (
+                    Path(entry["file"]).resolve(strict=True) == source_path
+                    and f"CMakeFiles/{owner}.dir/" in entry["command"].replace("\\", "/")
+                ):
+                    matches.append(entry)
+            if len(matches) != 1:
+                raise RuntimeError(f"owned compile command missing/ambiguous: {owner}/{relative}")
+            entry = matches[0]
+            tokens = shlex.split(entry["command"], posix=os.name != "nt")
+            if "-o" in tokens:
+                object_path = tokens[tokens.index("-o") + 1]
+            else:
+                outputs = [token[3:].lstrip(":").strip('"')
+                           for token in tokens if token.lower().startswith("/fo")]
+                if len(outputs) != 1:
+                    raise RuntimeError("owned compile command lacks unique object output")
+                object_path = outputs[0]
+            object_absolute = (Path(entry["directory"]) / object_path).resolve(strict=True)
+            candidates = [value for key, value in objects.items()
+                          if (build_root / key).resolve(strict=True) == object_absolute]
+            if len(candidates) != 1 or candidates[0]["count"] != len(candidates[0]["paths"]):
+                raise RuntimeError(f"same-compilation dependencies incomplete: {owner}/{relative}")
+            paths = {
+                str((Path(entry["directory"]) / path).resolve(strict=True))
+                for path in candidates[0]["paths"]
+            }
+            # MSVC showIncludes does not repeat the translation-unit source.
+            if msvc:
+                paths.add(str(source_path))
+            if str(source_path) not in paths:
+                raise RuntimeError("same-compilation dependencies lack the translation unit")
+            units.append({"owner": owner, "source": relative, "inputs": sorted(paths)})
+    all_paths = [path for unit in units for path in unit["inputs"]]
+    result = owned_inputs.bind_dependencies(
+        all_paths, {"source": source}, cwd=build_root,
+        required_sources={("source", unit["source"]) for unit in units},
+        trusted_roots=roots,
+    )
+    result["units"] = units
+    result["trusted_system_roots"] = sorted(str(root) for root in roots)
+    return result
+
+
+def current_dependency_owners() -> dict[str, frozenset[str]]:
+    return {
+        "csv2_benchmark": CURRENT_FRONTEND_SOURCES,
+        "csv2_benchmark_allocations": CURRENT_FRONTEND_SOURCES,
+        "csv2_benchmark_core": CURRENT_CORE_SOURCES,
+        "csv2_benchmark_build_config": CURRENT_BUILD_CONFIG_SOURCES,
+    }
+
+
+def _verify_current_dependencies(manifest: dict[str, object]) -> None:
+    owners = current_dependency_owners()
+    expected = {(owner, source) for owner, sources in owners.items() for source in sources}
+    source = manifest["source_export"]
+    dependencies = manifest.get("dependencies")
+    owned_inputs.verify_dependencies(
+        dependencies, {"source": source}, {("source", source) for _, source in expected}
+    )
+    units = dependencies.get("units")
+    if not isinstance(units, list):
+        raise RuntimeError("current-tree dependency units are missing")
+    actual = set()
+    for unit in units:
+        if not isinstance(unit, dict) or set(unit) != {"owner", "source", "inputs"}:
+            raise RuntimeError("current-tree dependency unit is malformed")
+        if not isinstance(unit["owner"], str) or not isinstance(unit["source"], str):
+            raise RuntimeError("current-tree dependency unit identity is malformed")
+        inputs = unit["inputs"]
+        if not isinstance(inputs, list) or not all(isinstance(path, str) for path in inputs):
+            raise RuntimeError("current-tree dependency unit inputs are malformed")
+        safe_git_path(unit["source"])
+        actual.add((unit["owner"], unit["source"]))
+    if actual != expected or len(units) != len(expected):
+        raise RuntimeError("current-tree dependency evidence lacks owned compile closure")
+    root = owned_inputs.recorded_path(source["root"])
+    known = {str(root / entry["path"]): entry["path"] for entry in source["files"]}
+    consumed = set()
+    external = set(dependencies["trusted_system_inputs"])
+    for unit in units:
+        inputs = unit["inputs"]
+        if str(root / unit["source"]) not in inputs:
+            raise RuntimeError("current-tree dependency unit lacks its source")
+        for path in inputs:
+            if path in known:
+                consumed.add(known[path])
+            elif path not in external:
+                raise RuntimeError("current-tree dependency unit has unbound input")
+    if consumed != {entry["path"] for entry in dependencies["files"]}:
+        raise RuntimeError("current-tree dependency union is inconsistent")
+
+
+def _system_include_roots(
+    compiler: Path, compiler_flags: Sequence[str], config_flags: Sequence[str],
+    env: dict[str, str], run_fn: Run,
+) -> list[Path]:
+    if compiler.name.lower() in {"cl", "cl.exe"}:
+        return [Path(value).resolve(strict=True)
+                for value in env.get("INCLUDE", "").split(";") if value]
+    probe = run_fn(
+        [str(compiler), *compiler_flags, *config_flags, "-E", "-x", "c++", "-", "-v"],
+        input="", capture_output=True, text=True, timeout=30, env=env,
+    )
+    if probe.returncode:
+        raise RuntimeError("compiler system include discovery failed")
+    roots = []
+    active = False
+    for line in probe.stderr.splitlines():
+        if "#include <...> search starts here:" in line:
+            active = True
+        elif "End of search list." in line:
+            active = False
+        elif active and line.strip():
+            directory = line.strip().removesuffix(" (framework directory)")
+            roots.append(Path(directory).resolve(strict=True))
+    if not roots:
+        raise RuntimeError("compiler system include discovery is incomplete")
+    return roots
+
+
+def validate_current_build_command_contract(manifest: dict[str, object]) -> None:
+    """Validate persisted current-tree controls without consulting local paths."""
+    compiler = str(manifest["compiler"]["artifact"]["path"])
+    family = "msvc" if owned_inputs.recorded_path(compiler).name.lower() in {"cl", "cl.exe"} else "gnu"
+    owned_inputs.flags(manifest["compiler_flags"], family)
+    _validate_effective_release_flags(manifest["compiler_flags"], "current-tree build")
+    configure = manifest["configure_argv"]
+    normalized = manifest["normalized_configure_argv"]
+    if not isinstance(configure, list) or not isinstance(normalized, list):
+        raise RuntimeError("current-tree configure command is malformed")
+    if not all(isinstance(value, str) for value in configure):
+        raise RuntimeError("current-tree configure arguments are malformed")
+    scale_prefix = "-DCSV2_BENCHMARK_CORPUS_SCALE="
+    scales = [value for value in configure if value.startswith(scale_prefix)]
+    if len(scales) != 1 or not re.fullmatch(scale_prefix + r"[1-9][0-9]*", scales[0]):
+        raise RuntimeError("current-tree configure corpus scale is malformed")
+    source_root = str(manifest["source_export"]["root"])
+    build_root = str(manifest["build_root"])
+    if manifest["source_root"] != source_root:
+        raise RuntimeError("current-tree configure source differs from its export")
+    owned_inputs.recorded_path(source_root)
+    owned_inputs.recorded_path(build_root)
+    version = manifest["compiler"]["version"]
+    clang = "clang" in (version["stdout"] + version["stderr"]).lower()
+    controls = "--no-default-config --driver-mode=g++" if clang else ""
+    cmake = str(manifest["cmake"]["artifact"]["path"])
+    expected = [
+        cmake, "-S", source_root, "-B", build_root, "-G", "Ninja",
+        "-DCMAKE_BUILD_TYPE=Release", "-DCMAKE_EXPORT_COMPILE_COMMANDS=ON",
+        f"-DCMAKE_CXX_COMPILER={compiler}", f"-DCMAKE_CXX_FLAGS={controls}",
+        "-DCMAKE_CXX_FLAGS_RELEASE=" + " ".join(manifest["compiler_flags"]),
+        "-DCSV2_BUILD_BENCHMARKS=ON", "-DCSV2_BUILD_BENCHMARK_CHECKS=ON",
+        "-DCSV2_VERIFICATION_PROFILE=perf", scales[0],
+        "-DCSV2_BENCHMARK_REVISION=" + str(manifest["revision"]),
+        "-DCSV2_REQUIRE_PYTHON_AUDITS=ON",
+    ]
+    expected_normalized = normalize_build_argv(expected, (
+        (source_root, "{source_root}"), (build_root, "{build_root}"),
+        (compiler, "{compiler}"), (str(manifest["revision"]), "{revision}"),
+    ))
+    if configure != expected or normalized != expected_normalized:
+        raise RuntimeError("current-tree configure command violates its controlled contract")
+    if manifest["build_argv"] != [
+        cmake, "--build", build_root, "--target", "csv2_benchmark",
+        "csv2_benchmark_allocations", "csv2_benchmark_corpus", "--parallel",
+    ]:
+        raise RuntimeError("current-tree build command violates its controlled contract")

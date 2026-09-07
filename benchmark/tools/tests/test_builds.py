@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import copy
 import hashlib
+import json
+import os
 import shutil
 import subprocess
 import sys
@@ -96,6 +98,16 @@ def valid_current_compile_topology() -> tuple[
         "csv2_benchmark_observer_audit": ["csv2_benchmark_observer_audit"],
     }
     return owners, closures, source_root, revision, compiler_flags
+
+
+def fake_dependencies(command):
+    source = next(value for value in command if value.endswith("common_driver.cpp"))
+    include = next(value[2:] for value in command if value.startswith(("-I", "/I")))
+    header = str(Path(include) / "csv2" / "reader.hpp")
+    if "-MF" in command:
+        Path(command[command.index("-MF") + 1]).write_text("output: " + source + " " + header + "\n")
+    else:
+        Path(command[command.index("/sourceDependencies") + 1]).write_text(json.dumps({"Data": {"Source": source, "Includes": [header]}}))
 
 
 class BuildTests(unittest.TestCase):
@@ -261,7 +273,7 @@ class BuildTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             source = builds.export_git_tree(
-                REPOSITORY, "HEAD", root / "source", ("CMakeLists.txt",)
+                REPOSITORY, "HEAD", root / "source"
             )
 
             def create_artifact(name: str, contents: bytes) -> dict[str, object]:
@@ -312,7 +324,9 @@ class BuildTests(unittest.TestCase):
                     "stdout": "",
                     "stderr": "",
                 },
-                "file_api": {},
+                "input_policy": builds.owned_inputs.environment()[1],
+                "dependencies": {"schema": "csv2-compile-dependencies-v2", "files": [{"export": "source", "path": entry["path"], "sha256": entry["sha256"]} for entry in source["files"]], "units": [{"owner": owner, "source": relative, "inputs": [str(Path(source["root"]) / entry["path"]) for entry in source["files"]]} for owner, sources in builds.current_dependency_owners().items() for relative in sources], "trusted_system_inputs": [], "trusted_system_roots": []},
+                "file_api": {"targets": {}},
                 "compile_commands": compile_commands,
                 "targets": {
                     "csv2_benchmark": benchmark,
@@ -322,9 +336,38 @@ class BuildTests(unittest.TestCase):
                 "source_root": source["root"],
                 "build_root": str(root),
             }
+            manifest["configure_argv"] = [
+                manifest["cmake"]["artifact"]["path"], "-S", manifest["source_root"],
+                "-B", manifest["build_root"], "-G", "Ninja", "-DCMAKE_BUILD_TYPE=Release",
+                "-DCMAKE_EXPORT_COMPILE_COMMANDS=ON",
+                "-DCMAKE_CXX_COMPILER=" + manifest["compiler"]["artifact"]["path"],
+                "-DCMAKE_CXX_FLAGS=", "-DCMAKE_CXX_FLAGS_RELEASE=-O3 -DNDEBUG",
+                "-DCSV2_BUILD_BENCHMARKS=ON", "-DCSV2_BUILD_BENCHMARK_CHECKS=ON",
+                "-DCSV2_VERIFICATION_PROFILE=perf", "-DCSV2_BENCHMARK_CORPUS_SCALE=1",
+                "-DCSV2_BENCHMARK_REVISION=" + manifest["revision"], "-DCSV2_REQUIRE_PYTHON_AUDITS=ON",
+            ]
+            manifest["normalized_configure_argv"] = builds.normalize_build_argv(
+                manifest["configure_argv"], (
+                    (manifest["source_root"], "{source_root}"), (manifest["build_root"], "{build_root}"),
+                    (manifest["compiler"]["artifact"]["path"], "{compiler}"), (manifest["revision"], "{revision}"),
+                ),
+            )
+            manifest["build_argv"] = [
+                manifest["cmake"]["artifact"]["path"], "--build", manifest["build_root"], "--target",
+                "csv2_benchmark", "csv2_benchmark_allocations", "csv2_benchmark_corpus", "--parallel",
+            ]
             manifest["identity_digest"] = builds.current_build_identity_digest(manifest)
             manifest["digest"] = builds.document_digest(manifest)
             builds.verify_current_build_manifest(manifest)
+
+            for units in ([], [None], manifest["dependencies"]["units"][1:]):
+                changed = copy.deepcopy(manifest)
+                changed["dependencies"]["units"] = units
+                changed["identity_digest"] = builds.current_build_identity_digest(changed)
+                changed.pop("digest")
+                changed["digest"] = builds.document_digest(changed)
+                with self.assertRaises(RuntimeError):
+                    builds.verify_current_build_manifest(changed)
 
             contradictory_flags = copy.deepcopy(manifest)
             contradictory_flags["compiler_flags"] = [
@@ -365,6 +408,44 @@ class BuildTests(unittest.TestCase):
                 )
             self.assertFalse(workspace.exists())
 
+    def test_owned_flags_reject_redirects_and_unknown_tokens(self):
+        for suffix in [("-I/tmp/shadow",), ("-I", "/tmp/shadow"),
+                       ("-isystem/tmp/shadow",), ("-Xclang=-include",),
+                       ("--config=/tmp/config",), ("--config", "/tmp/config"),
+                       ("-B/tmp/tools",), ("/Ishadow",), ("-D", "CSV2_HAS_MMAP=0"),
+                       ("-fplugin=shadow.so",), ("extra.cpp",), ("-specs=x",)]:
+            flags = ["-O3", "-DNDEBUG", *suffix]
+            with self.subTest(flags=flags):
+                with self.assertRaises(RuntimeError):
+                    builds._validate_common_compiler_flags(flags)
+                with self.assertRaises(RuntimeError):
+                    builds._validate_effective_release_flags(flags, "test")
+        for flags in [("-O3", "-D", "NDEBUG", "-std=c++11", "-march=native"),
+                      ("-O2", "-DNDEBUG", "-stdlib=libc++", "-mavx2"),
+                      ("/O2", "/D", "NDEBUG", "/EHsc", "/arch:AVX2")]:
+            builds._validate_common_compiler_flags(flags)
+
+    def test_dependency_binding_rejects_missing_and_outside_inputs(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = builds.export_git_tree(REPOSITORY, "HEAD", root / "source", ("include",))
+            header = Path(source["root"]) / "include/csv2/reader.hpp"
+            outside = root / "shadow.hpp"
+            outside.write_text("shadow")
+            for paths, required in [([], set()), ([str(header), str(outside)], set()),
+                                    ([str(header)], {("source", "missing.cpp")})]:
+                with self.assertRaises(RuntimeError):
+                    builds.owned_inputs.bind_dependencies(paths, {"source": source}, cwd=root, required_sources=required)
+
+    def test_compiler_environment_removes_injection_preserves_sdk(self):
+        from unittest.mock import patch
+        with patch.dict(os.environ, {"CPATH": "/shadow", "CL": "/FIshadow", "INCLUDE": "/sdk", "PATH": "/tools"}):
+            env, policy = builds.owned_inputs.environment()
+        self.assertNotIn("CPATH", env)
+        self.assertNotIn("CL", env)
+        self.assertEqual(env["INCLUDE"], "/sdk")
+        self.assertEqual(policy["bound"]["PATH"], "/tools")
+
     def test_msvc_owned_build_normalizes_source_paths_reproducibly(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -382,6 +463,8 @@ class BuildTests(unittest.TestCase):
 
             def fake_run(command, **kwargs):
                 del kwargs
+                if "-v" in command:
+                    return subprocess.CompletedProcess(command, 0, "", "#include <...> search starts here:\n /usr/include\nEnd of search list.\n")
                 if "/Bv" in command:
                     return subprocess.CompletedProcess(
                         command, 0, "fake MSVC compiler 1\n", ""
@@ -391,6 +474,7 @@ class BuildTests(unittest.TestCase):
                     for argument in command
                     if argument.startswith("/Fe:")
                 )
+                fake_dependencies(command)
                 output.write_bytes(b"owned-driver")
                 return subprocess.CompletedProcess(command, 0, "", "")
 
@@ -510,8 +594,11 @@ class BuildTests(unittest.TestCase):
 
             def fake_run(command, **kwargs):
                 del kwargs
+                if "-v" in command:
+                    return subprocess.CompletedProcess(command, 0, "", "#include <...> search starts here:\n /usr/include\nEnd of search list.\n")
                 if command[-1] == "--version":
                     return subprocess.CompletedProcess(command, 0, "fake compiler 1\n", "")
+                fake_dependencies(command)
                 output_index = command.index("-o") + 1
                 Path(command[output_index]).write_bytes(b"owned-driver")
                 return subprocess.CompletedProcess(command, 0, "compile stdout", "compile stderr")
@@ -533,6 +620,16 @@ class BuildTests(unittest.TestCase):
             self.assertEqual(manifest["build_log"]["returncode"], 0)
             self.assertRegex(manifest["digest"], r"^[0-9a-f]{64}$")
 
+            for malformed in (None, {}, {**manifest["dependencies"], "files": [None]},
+                              {**manifest["dependencies"], "files": [{"export": "headers", "path": "../escape", "sha256": "a" * 64}]}):
+                changed = copy.deepcopy(manifest)
+                changed["dependencies"] = malformed
+                changed["identity_digest"] = builds.common_build_identity_digest(changed)
+                changed.pop("digest")
+                changed["digest"] = builds.document_digest(changed)
+                with self.assertRaises(RuntimeError):
+                    builds.validate_build_manifest(changed)
+
             missing_flags = copy.deepcopy(manifest)
             missing_flags["compiler_flags"] = []
             missing_flags["identity_digest"] = builds.common_build_identity_digest(
@@ -541,7 +638,7 @@ class BuildTests(unittest.TestCase):
             unsigned_missing_flags = dict(missing_flags)
             unsigned_missing_flags.pop("digest")
             missing_flags["digest"] = builds.document_digest(unsigned_missing_flags)
-            with self.assertRaisesRegex(RuntimeError, "normalization"):
+            with self.assertRaisesRegex(RuntimeError, "controlled command contract"):
                 builds.validate_build_manifest(missing_flags)
 
             compatible = copy.deepcopy(manifest)
@@ -571,8 +668,11 @@ class BuildTests(unittest.TestCase):
 
             def fake_run(command, **kwargs):
                 del kwargs
+                if "-v" in command:
+                    return subprocess.CompletedProcess(command, 0, "", "#include <...> search starts here:\n /usr/include\nEnd of search list.\n")
                 if command[-1] == "--version":
                     return subprocess.CompletedProcess(command, 0, "fake compiler 1\n", "")
+                fake_dependencies(command)
                 output_index = command.index("-o") + 1
                 Path(command[output_index]).write_bytes(b"owned-driver")
                 return subprocess.CompletedProcess(command, 0, "", "")

@@ -119,7 +119,7 @@ int main() {
 | `parse(rvalue)` | Reader-owned | C++11 | The Reader takes or materializes independent storage |
 | `parse_borrowed(data, size)` | Borrowed | C++11 | Borrows exactly the supplied byte range |
 | `parse_owned(string)` | Reader-owned | C++11 | Stores an independent source |
-| `parse_view(string_view)` | Borrowed | C++17 | The view and its backing storage must remain valid |
+| `parse_view(string_view)` | Borrowed | C++17 | Backing storage must remain alive and unchanged while borrowed; the view object need not outlive the call |
 | `parse_borrowed(span)` | Borrowed | C++20 | Adapts `std::span<const char>` without copying |
 
 Selecting a source replaces the previous one. Destroying, resizing, reallocating, or mutating borrowed storage
@@ -196,7 +196,8 @@ The table below is an index, not a replacement for the declarations in
 | --- | --- |
 | Source selection | `mmap`, `parse`, `parse_borrowed`, `parse_owned`, `parse_view` |
 | Shape and traversal | `header`, `begin`, `end`, `rows`, `cols` |
-| Raw access | Row/Cell `raw_data`, `raw_size`, `read_raw_value`, `copy_raw_to` |
+| Row and Cell raw access | `raw_data`, `raw_size`, `read_raw_value` |
+| Cell output-iterator access | `copy_raw_to`, `decode_to`, `copy_content_to` |
 | Decoded access | Cell `read_value`, `decode_to`, `copy_content_to`, `raw_trimmed_view` |
 | Validation | `validate`, conditionally `validate_expected` |
 | Conversion | `try_parse`, conditionally `parse_expected` |
@@ -374,7 +375,8 @@ C++11–23, modular/single-header, and variant matrix; C++26 is compile-only. De
 
 The always-run `CI` workflow classifies the complete Git diff and ends in one
 stable `CI / gate`. Documentation-only changes run preflight and the Gate;
-unknown paths fail safe by selecting every owner. Selected changes call the
+unknown paths fail safe by selecting every owner applicable to the event. Automatic
+performance-protocol smoke is PR-only. Selected changes call the
 reusable Linux, Windows, macOS, fuzz, exact-head full, and
 performance-protocol workflows. Manual full and performance runs retain the
 broader platform matrix and controlled self-hosted path.

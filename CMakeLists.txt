@@ -139,6 +139,7 @@ if(CSV2_IS_TOP_LEVEL)
   # Use [.] for literal dots because CPack serializes these expressions through
   # a generated CMake configuration before evaluating them.
   set(CPACK_SOURCE_IGNORE_FILES
+    "/[.]ccache($|/)"
     "/[.]git[^/]*($|/)"
     "/[.](codex_tmp|idea|temp|tmp|vs|vscode)($|/)"
     "/(analysis-cppcheck-build-dir|build|coverage|out|test-output|test-results)($|/)"
