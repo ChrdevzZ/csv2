@@ -1445,6 +1445,12 @@ def validate_fixed_metrics_report(report: object) -> None:
                 raise RuntimeError(f"fixed-machine {name} differs from the owned build")
 
     if status == "completed":
+        if evidence == "controlled":
+            for field in ("pmu", "pmu_invocation", "peak_rss", "code_size"):
+                if document.get(field) is None:
+                    raise RuntimeError(
+                        f"completed controlled fixed-machine report requires non-null {field}"
+                    )
         _required(
             document,
             {
@@ -1551,7 +1557,7 @@ def validate_fixed_metrics_report(report: object) -> None:
             _code_size(
                 document["code_size"],
                 "fixed-machine report.code_size",
-                require_sections=False,
+                require_sections=evidence == "controlled",
             )
     elif status == "failed":
         _string(document.get("error"), "fixed-machine report.error")
@@ -1626,26 +1632,6 @@ def validate_fixed_metrics_report(report: object) -> None:
                 raise RuntimeError("fixed-machine compiler differs from the owned build")
             if recorded_commands["sha256"] != current_build["compile_commands"]["sha256"]:
                 raise RuntimeError("fixed-machine compile commands differ from the owned build")
-        if status == "completed":
-            _required(
-                document,
-                {"pmu", "pmu_invocation", "peak_rss", "code_size"},
-                "completed controlled fixed-machine report",
-            )
-            _clean_build(document["clean_build"], "fixed-machine report.clean_build")
-            _timing(
-                document["pmu"],
-                "fixed-machine report.pmu",
-                runs,
-                require_pmu=True,
-            )
-            _invocation(document["pmu_invocation"], "fixed-machine report.pmu_invocation")
-            _peak_rss(document["peak_rss"], "fixed-machine report.peak_rss")
-            _code_size(
-                document["code_size"],
-                "fixed-machine report.code_size",
-                require_sections=True,
-            )
 
 
 def validate_evidence_bundle(bundle: object) -> None:

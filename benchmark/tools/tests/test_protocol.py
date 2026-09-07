@@ -992,6 +992,43 @@ class ProtocolTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "launches"):
             protocol.validate_comparison_report(comparison)
 
+    def test_fixed_metrics_completion_requirements_preserve_lifecycle(self) -> None:
+        optional = ("pmu", "pmu_invocation", "peak_rss", "code_size")
+        for field in optional:
+            for missing in (False, True):
+                report = controlled_metrics_report()
+                if missing:
+                    del report[field]
+                else:
+                    report[field] = None
+                with self.subTest(field=field, missing=missing):
+                    with self.assertRaises(RuntimeError):
+                        protocol.validate_fixed_metrics_report(report)
+        for status in ("running", "failed"):
+            report = controlled_metrics_report()
+            report.update(status=status, controlled_complete=False)
+            if status == "failed":
+                report["error"] = "collection interrupted"
+            for field in (*optional, "verification", "allocations", "timing",
+                          "timing_invocation", "comparison_binding", "completed_at_utc"):
+                report.pop(field, None)
+            protocol.validate_fixed_metrics_report(report)
+        report = fixed_metrics_report()
+        for field in optional:
+            report[field] = None
+        report["code_size"] = {"file_bytes": 42, "method": "filesystem"}
+        protocol.validate_fixed_metrics_report(report)
+        report = controlled_metrics_report()
+        report["code_size"] = {"file_bytes": 42, "method": "filesystem"}
+        with self.assertRaises(RuntimeError):
+            protocol.validate_fixed_metrics_report(report)
+        for field, value in (("bytes_per_second", 2.0), ("name", "wrong/real_time")):
+            report = controlled_metrics_report()
+            report["pmu"]["samples"][0][field] = value
+            with self.subTest(pmu_field=field):
+                with self.assertRaises(RuntimeError):
+                    protocol.validate_fixed_metrics_report(report)
+
     def test_owned_current_build_rejects_provenance_drift(self) -> None:
         mutations = (
             (
@@ -1307,6 +1344,23 @@ class ProtocolTests(unittest.TestCase):
         validate_schema(1, {"type": "number", "exclusiveMinimum": 0})
         with self.assertRaises(SchemaValidationError):
             validate_schema(0, {"type": "number", "exclusiveMinimum": 0})
+
+    def test_schema_const_and_enum_use_json_equality(self) -> None:
+        for keyword in ("const", "enum"):
+            for value, changed in ((False, 0), (True, 1), ([False], [0]), ({"value": True}, {"value": 1})):
+                schema = {keyword: [value] if keyword == "enum" else value}
+                validate_schema(value, schema)
+                with self.subTest(keyword=keyword, value=value):
+                    with self.assertRaises(SchemaValidationError):
+                        validate_schema(changed, schema)
+            validate_schema(1.0, {keyword: [1] if keyword == "enum" else 1})
+        schema_path = Path(__file__).resolve().parents[2] / "protocol/schemas/fixed-machine-v7.schema.json"
+        schema = json.loads(schema_path.read_text(encoding="utf-8"))
+        report = fixed_metrics_report()
+        validate_schema(report, schema)
+        report["decision_eligible"] = 0
+        with self.assertRaises(SchemaValidationError):
+            validate_schema(report, schema)
 
     def test_only_completed_owned_controlled_reports_are_component_complete(self) -> None:
         self.assertTrue(protocol.controlled_complete("controlled", "completed"))
