@@ -482,6 +482,7 @@ def main() -> None:
                 workspace=artifacts.canonical_output(args.build_root),
                 corpus_scale=args.corpus_scale,
             )
+            args.compiler_executable = Path(str(owned_build["compiler"]["artifact"]["path"]))
             args.compiler_flags = " ".join(compiler_flags)
             args.revision = str(owned_build["revision"])
             args.executable = Path(str(owned_build["targets"]["csv2_benchmark"]["path"]))
@@ -631,15 +632,7 @@ def main() -> None:
             if owned_build is not None
             else None
         ),
-        "post_build": (
-            {
-                "command": owned_build["build_argv"],
-                "stdout": owned_build["build_log"]["stdout"],
-                "stderr": owned_build["build_log"]["stderr"],
-            }
-            if owned_build is not None
-            else None
-        ),
+        "post_build": None,
     }
     protocol.validate_fixed_metrics_report(report)
     atomic.write_json(args.output, report)

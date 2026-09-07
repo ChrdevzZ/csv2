@@ -10,6 +10,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 import _support
 from csv2bench import BUILD_SCHEMA, artifacts, builds
@@ -269,6 +270,55 @@ class BuildTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "compile closure"):
             self.validate_current_topology(*topology)
 
+    def test_current_build_times_only_compile_and_link(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            workspace = root / "owned"
+            source = {"root": str(workspace / "source"), "commit": "a" * 40}
+            clock = [0.0]
+            commands = []
+
+            def run_phase(command, **kwargs):
+                commands.append(command)
+                if "--build" not in command:
+                    clock[0] += 2.0
+                elif "csv2_benchmark_corpus" in command:
+                    clock[0] += 100.0
+                else:
+                    clock[0] += 5.0
+                return subprocess.CompletedProcess(command, 0, str(len(commands)), "")
+
+            tool = {"artifact": {"path": str(Path(sys.executable).resolve())},
+                    "version": {"stdout": "GNU", "stderr": ""}}
+            with (patch.object(builds, "_compiler_path", return_value=Path(sys.executable).resolve()),
+                  patch.object(builds.shutil, "which", return_value=sys.executable),
+                  patch.object(builds, "_tool_identity", return_value=tool),
+                  patch.object(builds, "export_git_tree", return_value=source),
+                  patch.object(builds, "_run_text", side_effect=run_phase),
+                  patch.object(builds, "audit_current_codemodel", return_value={"targets": {}}),
+                  patch.object(builds, "_current_dependencies", return_value={}),
+                  patch.object(builds.artifacts, "metadata", return_value={}),
+                  patch.object(builds, "current_build_identity_digest", return_value="b" * 64),
+                  patch.object(builds, "verify_current_build_manifest"),
+                  patch("time.perf_counter", side_effect=lambda: clock[0])):
+                manifest = builds.build_current_tree(
+                    repository=root, reference="HEAD", compiler=Path(sys.executable),
+                    compiler_flags=["-O3", "-DNDEBUG"], workspace=workspace,
+                )
+            self.assertEqual(manifest["build_log"]["seconds"], 5.0)
+            self.assertEqual(manifest["configure_log"]["seconds"], 2.0)
+            self.assertEqual(commands, [manifest["configure_argv"],
+                                       manifest["build_argv"], manifest["corpus_argv"]])
+            self.assertEqual(manifest["corpus_log"],
+                             {"returncode": 0, "stdout": "3", "stderr": ""})
+            builds.validate_current_build_command_contract(manifest)
+            for field in ("build_argv", "corpus_argv"):
+                with self.subTest(field=field):
+                    changed = copy.deepcopy(manifest)
+                    changed[field].append("unexpected-target")
+                    with self.assertRaisesRegex(RuntimeError, "controlled contract"):
+                        builds.validate_current_build_command_contract(changed)
+
     def test_current_build_verification_rejects_source_drift(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -354,11 +404,26 @@ class BuildTests(unittest.TestCase):
             )
             manifest["build_argv"] = [
                 manifest["cmake"]["artifact"]["path"], "--build", manifest["build_root"], "--target",
-                "csv2_benchmark", "csv2_benchmark_allocations", "csv2_benchmark_corpus", "--parallel",
+                "csv2_benchmark", "csv2_benchmark_allocations", "--parallel",
             ]
+            manifest["corpus_argv"] = [
+                manifest["cmake"]["artifact"]["path"], "--build", manifest["build_root"],
+                "--target", "csv2_benchmark_corpus",
+            ]
+            manifest["corpus_log"] = {"returncode": 0, "stdout": "", "stderr": ""}
             manifest["identity_digest"] = builds.current_build_identity_digest(manifest)
             manifest["digest"] = builds.document_digest(manifest)
             builds.verify_current_build_manifest(manifest)
+
+            for corpus_log in ({}, {"returncode": 1, "stdout": "", "stderr": "failed"},
+                               {"returncode": False, "stdout": "", "stderr": ""},
+                               {"returncode": 0, "stdout": [], "stderr": ""}):
+                changed = copy.deepcopy(manifest)
+                changed["corpus_log"] = corpus_log
+                changed.pop("digest")
+                changed["digest"] = builds.document_digest(changed)
+                with self.assertRaisesRegex(RuntimeError, "corpus log"):
+                    builds.verify_current_build_manifest(changed)
 
             for units in ([], [None], manifest["dependencies"]["units"][1:]):
                 changed = copy.deepcopy(manifest)

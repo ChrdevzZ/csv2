@@ -168,7 +168,9 @@ def generated_datasets(scale: int = 1) -> dict[str, tuple[bytes, dict[str, objec
     return result
 
 
-def build_manifest(fixtures: Path, scale: int) -> dict[str, object]:
+def build_manifest(
+    fixtures: Path, scale: int, expected_parameters: dict[str, dict[str, object]]
+) -> dict[str, object]:
     invalid_errors = {
         "invalid_early.csv": {
             "code": "unexpected_quote",
@@ -189,10 +191,9 @@ def build_manifest(fixtures: Path, scale: int) -> dict[str, object]:
             "column": 1,
         },
     }
-    generated = generated_datasets(scale)
     fixture_paths = sorted(fixtures.glob("*.csv"))
     actual_names = {path.name for path in fixture_paths}
-    expected_names = set(generated)
+    expected_names = set(expected_parameters)
     unexpected = sorted(actual_names - expected_names)
     if unexpected:
         raise RuntimeError(
@@ -211,7 +212,7 @@ def build_manifest(fixtures: Path, scale: int) -> dict[str, object]:
         )
         valid = strict_error["code"] == "none"
         rows = parse_rows(data) if valid else []
-        parameters = generated[path.name][1]
+        parameters = expected_parameters[path.name]
         records.append(
             {
                 "name": path.name,
@@ -262,13 +263,22 @@ def main() -> int:
     if arguments.manifest is None:
         arguments.manifest = arguments.output.parent / "manifest.json"
 
-    arguments.output.mkdir(parents=True, exist_ok=True)
-
     generated = generated_datasets(arguments.scale)
+    committed_names = {path.name for path in (Path(__file__).parent / "fixtures").glob("*.csv")}
+    missing = sorted(set(generated) - committed_names)
+    unexpected = sorted(committed_names - set(generated))
+    if missing or unexpected:
+        raise RuntimeError(
+            "committed benchmark fixture inventory differs from generator: "
+            f"missing={missing}, unexpected={unexpected}"
+        )
     for name, (data, _) in generated.items():
         atomic_write(arguments.output / name, data)
 
-    manifest = build_manifest(arguments.output, arguments.scale)
+    manifest = build_manifest(
+        arguments.output, arguments.scale,
+        {name: parameters for name, (_, parameters) in generated.items()},
+    )
     encoded = (json.dumps(manifest, indent=2, sort_keys=True) + "\n").encode("utf-8")
     atomic_write(arguments.manifest, encoded)
     return 0

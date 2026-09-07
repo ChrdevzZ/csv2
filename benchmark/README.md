@@ -223,6 +223,12 @@ With `CSV2_VERIFICATION_PROFILE=perf`, CMake exposes the equivalent explicit
 target `csv2_benchmark_corpus`; its multiplier is controlled by
 `CSV2_BENCHMARK_CORPUS_SCALE` and defaults to 100. The target is not part of
 the default build and does not start a timing run.
+The target tracks every generated CSV and the manifest. Missing outputs,
+generator changes, and scale changes trigger regeneration; an unchanged build
+does not rewrite the corpus. The generator and committed fixture inventory must
+agree. The direct command above forces regeneration and audits the files actually
+written. Incremental timestamps only schedule work; evidence validation still
+checks the inventory and content hashes.
 
 ## Cross-revision common driver
 
@@ -365,8 +371,13 @@ Controlled metrics currently require Linux, a verified
 `csv2-machine-profile-v1`, at least 20 repetitions, matching CPU affinity,
 positive warmup, a libpfm-enabled Google Benchmark build, and complete
 cycles/instructions/branch-misses plus RSS/size and clean-build timing
-collection. Corpus generation is untimed and its checked manifest remains part
-of the owned build identity. The current wire revision, source Git commit,
+collection. The clean-build metric covers compilation and linking of the two
+owned benchmark executables and their declared dependencies, including Google
+Benchmark; it is not a measurement of CSV2 headers alone. CMake configuration
+and corpus generation run outside that interval. Corpus parameters, file
+inventory, and content hashes remain part of the evidence provenance.
+Historical build timings that included corpus generation are not directly
+comparable with this interval. The current wire revision, source Git commit,
 codemodel, compile/link commands, compiler executable, and output hashes must
 all agree. Both pipelines hash their entry point and complete imported Python
 helper closure as one deterministic source bundle; A/B rejects an A/A

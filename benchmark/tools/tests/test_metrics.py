@@ -11,6 +11,54 @@ from csv2bench import metrics
 
 
 class MetricsTests(unittest.TestCase):
+    def test_owned_collection_reuses_the_built_compiler_identity(self) -> None:
+        class ReportCollected(Exception):
+            pass
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
+            compiler = root / "canonical-cxx"
+            executable = root / "benchmark"
+            allocation = root / "benchmark_allocations"
+            dataset = root / "input.csv"
+            commands = root / "compile_commands.json"
+            for path in (compiler, executable, allocation, dataset):
+                path.write_text("fixture", encoding="utf-8")
+            commands.write_text(json.dumps([
+                {"arguments": [str(compiler), "-c", "source.cpp"]}
+            ]), encoding="utf-8")
+            owned = {
+                "revision": "a" * 40,
+                "compiler": {
+                    "artifact": metrics.artifacts.metadata(compiler),
+                    "version": {"command": [str(compiler), "--version"],
+                                "stdout": "test compiler", "stderr": ""},
+                },
+                "targets": {"csv2_benchmark": {"path": str(executable)},
+                            "csv2_benchmark_allocations": {"path": str(allocation)}},
+                "compile_commands": {"path": str(commands)},
+                "build_argv": ["cmake", "--build", str(root / "build")],
+                "build_log": {"seconds": 1.0, "stdout": "built", "stderr": ""},
+            }
+            for argument in ("g++", str(compiler)):
+                with self.subTest(argument=argument), unittest.mock.patch(
+                    "sys.argv", ["collect_metrics", "--candidate-ref", "HEAD",
+                                 "--compiler-executable", argument,
+                                 "--compiler-flags=-O3 -DNDEBUG", "--input", str(dataset),
+                                 "--operation", "traversal/rows-cells",
+                                 "--output", str(root / "report.json")]
+                ), unittest.mock.patch.object(
+                    metrics.builds, "build_current_tree", return_value=owned
+                ), unittest.mock.patch.object(
+                    metrics.protocol, "validate_fixed_metrics_report", side_effect=ReportCollected
+                ) as validate:
+                    with self.assertRaises(ReportCollected):
+                        metrics.main()
+                    report = validate.call_args.args[0]
+                    self.assertEqual(report["compiler_identity"]["artifact"], owned["compiler"]["artifact"])
+                    self.assertEqual(report["compiler_identity"]["compile_command_matches"], 1)
+                    self.assertIsNone(report["post_build"])
+
     def test_verify_command_uses_current_v4_cli(self) -> None:
         command = metrics.verify_command(
             Path("bench"), "traversal/rows", Path("input.csv"), "buffer"

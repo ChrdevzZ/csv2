@@ -811,7 +811,6 @@ def main() -> None:
     if not args.external_artifacts:
         try:
             repository = canonical_existing(args.repository, "benchmark repository")
-            compiler = canonical_existing(args.compiler_executable, "compiler executable")
             compiler_flags = shlex.split(args.compiler_flags, posix=os.name != "nt")
             if not compiler_flags:
                 raise RuntimeError("--compiler-flags must contain at least one flag")
@@ -819,7 +818,7 @@ def main() -> None:
                 repository=repository,
                 baseline_reference=args.baseline_ref,
                 candidate_reference=args.candidate_ref,
-                compiler=compiler,
+                compiler=args.compiler_executable,
                 compiler_flags=compiler_flags,
                 workspace=canonical_output(args.build_root),
                 enable_modern_writer_operations=enable_modern_writer_operations,
