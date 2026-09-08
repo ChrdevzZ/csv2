@@ -75,7 +75,7 @@ class basic_writer {
 
   template <typename CandidateStream> static void close_stream_(CandidateStream &, long) noexcept {}
 
-  void close_noexcept_() noexcept {
+  void release_noexcept_(std::true_type) noexcept {
     if (!active_)
       return;
     active_ = false;
@@ -88,8 +88,6 @@ class basic_writer {
     close_stream_(*stream_, 0);
 #endif
   }
-
-  void release_noexcept_(std::true_type) noexcept { close_noexcept_(); }
 
   void release_noexcept_(std::false_type) noexcept { active_ = false; }
 
@@ -203,7 +201,7 @@ class basic_writer {
 
     stream_->width(formatted.width());
     const std::ios_base::iostate state = formatted.rdstate();
-    const std::string value = formatted.str();
+    const std::string value = std::move(formatted).str();
     write_escaped_chars_(value.data(), value.size(), QuotePolicy());
     if (state != std::ios_base::goodbit)
       stream_->setstate(state);
