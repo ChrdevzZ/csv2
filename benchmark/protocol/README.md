@@ -221,6 +221,19 @@ statistics once, then assembles one bundle. Publication still rechecks mutable
 artifacts, builds and source exports, the profile file, and every corpus member;
 those file checks do not repeat the unchanged samples' statistical calculations.
 
+Build-input sanitization, Google Benchmark option control, and controlled runtime
+policy are separate boundaries. Controlled collectors reject non-empty
+`LD_PRELOAD` and `LD_AUDIT` settings before preparation, when loading the machine
+profile, and at the existing sampling/completion boundaries. They require a
+restart from a clean environment: filtering child-process variables cannot unload
+libraries already loaded into the collector. Library search paths and required
+SDK settings retain their existing policy. Intentional preload profiling remains
+exploratory and must not be promoted to controlled evidence. The managed host,
+system runtime (including system-wide loader configuration), and toolchain remain
+trusted prerequisites; these checks do not establish complete runtime isolation.
+See the [Linux dynamic loader documentation](https://man7.org/linux/man-pages/man8/ld.so.8.html)
+for the distinct effects of injection and library search variables.
+
 Controlled A/A, A/B, and fixed metrics carry the same resolved
 `csv2-machine-profile-v1` digest and runtime observation. The observation must
 match the profile's CPU model, architecture, logical CPU count, allowed

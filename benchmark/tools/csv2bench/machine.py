@@ -6,12 +6,26 @@ import json
 import os
 import platform
 import subprocess
+from collections.abc import Mapping
 from pathlib import Path
 
 from . import artifacts
 
 
 MACHINE_PROFILE_SCHEMA = "csv2-machine-profile-v1"
+
+
+def reject_runtime_injection(environment: Mapping[str, str]) -> None:
+    """Reject caller-supplied libraries; filtering children cannot clean this process."""
+    active = sorted(
+        name for name, value in environment.items()
+        if name.upper() in {"LD_PRELOAD", "LD_AUDIT"} and value
+    )
+    if active:
+        raise RuntimeError(
+            "controlled measurement rejects runtime injection: " + ", ".join(active)
+            + "; restart collection from a clean environment"
+        )
 
 
 def _unique_object(pairs: list[tuple[str, object]]) -> dict[str, object]:
@@ -190,6 +204,7 @@ def _read_profile(path: Path) -> tuple[dict[str, object], dict[str, object]]:
 
 
 def load(path: Path) -> dict[str, object]:
+    reject_runtime_injection(os.environ)
     profile, artifact = _read_profile(path)
     observation = observe()
     for field in (
@@ -231,6 +246,7 @@ def verify_binding(binding: object, label: str = "machine profile") -> None:
 
 def verify_runtime(binding: object, label: str = "machine profile") -> None:
     """Verify recorded profile bytes and the live state at a measurement boundary."""
+    reject_runtime_injection(os.environ)
     verify_binding(binding, label)
     if not isinstance(binding, dict):
         raise RuntimeError(f"{label} binding must be an object")

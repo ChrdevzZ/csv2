@@ -1,6 +1,10 @@
 from __future__ import annotations
 
 import json
+import contextlib
+import io
+import os
+import sys
 import subprocess
 import tempfile
 import unittest
@@ -8,7 +12,7 @@ from pathlib import Path
 from unittest import mock
 
 import _support  # noqa: F401
-from csv2bench import artifacts, machine, protocol
+from csv2bench import artifacts, machine, metrics, protocol, runner
 
 
 def profile() -> dict[str, object]:
@@ -36,6 +40,54 @@ def observation() -> dict[str, object]:
 
 
 class MachineProfileTests(unittest.TestCase):
+    def test_collectors_reject_injection_before_preparation(self) -> None:
+        for collector in (metrics, runner):
+            for variable in ("LD_PRELOAD", "LD_AUDIT"):
+                with self.subTest(collector=collector.__name__, variable=variable):
+                    argv = ["collector", "--candidate-ref", "HEAD", "--compiler-executable", "cc",
+                            "--compiler-flags=-O3", "--output", "out.json",
+                            "--evidence-level", "controlled", "--cpu-affinity", "2",
+                            "--machine-profile", "profile.json"]
+                    if collector is metrics:
+                        argv += ["--operation", "traversal/rows-cells", "--input", "input.csv"]
+                    else:
+                        argv += ["--baseline-ref", "HEAD", "--mode", "aa", "--datasets", "."]
+                    errors = io.StringIO()
+                    with mock.patch.object(sys, "argv", argv), \
+                         mock.patch.dict(os.environ, {variable: "injected.so"}), \
+                         mock.patch.object(collector.platform, "system", return_value="Linux"), \
+                         mock.patch.object(os, "sched_getaffinity", return_value={2}, create=True), \
+                         mock.patch.object(artifacts, "canonical_existing", side_effect=AssertionError("preparation started")), \
+                         mock.patch.object(collector.builds, "build_current_tree", side_effect=AssertionError("build started")), \
+                         contextlib.redirect_stderr(errors):
+                        with self.assertRaises(SystemExit) as raised:
+                            collector.main()
+                    self.assertEqual(raised.exception.code, 2)
+                    self.assertIn("runtime injection", errors.getvalue())
+                    self.assertIn(variable, errors.getvalue())
+
+    def test_runtime_injection_policy_and_offline_validation(self) -> None:
+        for environment in ({}, {"LD_PRELOAD": "", "LD_AUDIT": ""},
+                            {"LD_LIBRARY_PATH": "/sdk/lib", "PATH": "/sdk/bin"}):
+            before = dict(environment)
+            machine.reject_runtime_injection(environment)
+            self.assertEqual(environment, before)
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "machine.json"
+            path.write_text(json.dumps(profile()), encoding="utf-8")
+            with mock.patch.dict(os.environ, {}, clear=True), \
+                 mock.patch.object(machine, "observe", return_value=observation()):
+                binding = machine.load(path)
+                machine.verify_runtime(binding)
+                for variable in ("LD_PRELOAD", "LD_AUDIT", "ld_preload"):
+                    with self.subTest(variable=variable), mock.patch.dict(os.environ, {variable: "library.so"}):
+                        # Offline verification must not depend on the reviewer's environment.
+                        machine.verify_binding(binding)
+                        for invoke in (lambda: machine.load(path), lambda: machine.verify_runtime(binding)):
+                            with self.assertRaisesRegex(RuntimeError, variable):
+                                invoke()
+                        self.assertEqual(os.environ[variable], "library.so")
+
     def test_profile_binds_bytes_and_matching_runtime_observation(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "machine.json"
