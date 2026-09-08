@@ -3432,9 +3432,7 @@ public:
 
 #if CSV2_HAS_STRING_VIEW
   // Borrow a string_view under the lifetime and mutation contract above.
-  bool parse_view(std::string_view sv) {
-    return parse_borrowed(sv.data(), sv.size());
-  }
+  bool parse_view(std::string_view sv) { return parse_borrowed(sv.data(), sv.size()); }
 #endif
 
   bool validate(parse_error &error) const
