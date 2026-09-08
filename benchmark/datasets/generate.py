@@ -252,16 +252,13 @@ def atomic_write(path: Path, contents: bytes) -> None:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--output", type=Path, default=Path(__file__).parent / "fixtures")
-    parser.add_argument("--manifest", type=Path)
+    parser = argparse.ArgumentParser(allow_abbrev=False)
+    parser.add_argument("--output-root", type=Path, required=True)
     parser.add_argument("--scale", type=int, default=1)
     arguments = parser.parse_args()
 
     if arguments.scale < 1:
         parser.error("--scale must be at least one")
-    if arguments.manifest is None:
-        arguments.manifest = arguments.output.parent / "manifest.json"
 
     generated = generated_datasets(arguments.scale)
     committed_names = {path.name for path in (Path(__file__).parent / "fixtures").glob("*.csv")}
@@ -272,37 +269,35 @@ def main() -> int:
             "committed benchmark fixture inventory differs from generator: "
             f"missing={missing}, unexpected={unexpected}"
         )
-    output_root = arguments.output.resolve()
-    manifest_path = arguments.manifest.resolve()
-    source_fixtures = (Path(__file__).resolve().parent / "fixtures").resolve()
-    planned_files = {output_root / name for name in generated}
-    protected_files = {path.resolve() for path in planned_files}
-    protected_files.update((source_fixtures / name).resolve() for name in committed_names)
-    protected_files.add(Path(__file__).resolve())
+    output_root = arguments.output_root.resolve()
+    fixtures = output_root / "fixtures"
+    manifest_path = output_root / "manifest.json"
+    if any(path.exists() and not path.is_dir() for path in (output_root, *output_root.parents)):
+        parser.error("corpus root and its ancestors must be directories")
     if (
-        not {manifest_path, *manifest_path.parents}.isdisjoint(planned_files | protected_files)
-        or (manifest_path.parent in (output_root, source_fixtures)
-            and manifest_path.suffix.lower() == ".csv")
-        or manifest_path in (output_root, *output_root.parents)
-        or any(parent.exists() and not parent.is_dir() for parent in manifest_path.parents)
-        or manifest_path.is_dir()
+        fixtures.is_symlink()
+        or fixtures.resolve() != fixtures
+        or (fixtures.exists() and not fixtures.is_dir())
     ):
-        parser.error("manifest path conflicts with generator inputs or corpus outputs")
+        parser.error("corpus fixtures must be a directory inside the corpus root, not a link")
+    for path in (manifest_path, *(fixtures / name for name in generated)):
+        if path.is_symlink() or (path.exists() and not path.is_file()):
+            parser.error(f"corpus output must be a regular file, not a symbolic link: {path}")
     unexpected_outputs = sorted(
-        {path.name for path in arguments.output.glob("*.csv")} - set(generated)
+        {path.name for path in fixtures.glob("*.csv")} - set(generated)
     )
     if unexpected_outputs:
         parser.error("unexpected benchmark datasets: " + ", ".join(unexpected_outputs))
 
     for name, (data, _) in generated.items():
-        atomic_write(arguments.output / name, data)
+        atomic_write(fixtures / name, data)
 
     manifest = build_manifest(
-        arguments.output, arguments.scale,
+        fixtures, arguments.scale,
         {name: parameters for name, (_, parameters) in generated.items()},
     )
     encoded = (json.dumps(manifest, indent=2, sort_keys=True) + "\n").encode("utf-8")
-    atomic_write(arguments.manifest, encoded)
+    atomic_write(manifest_path, encoded)
     return 0
 
 

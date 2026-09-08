@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import platform
+import subprocess
 from pathlib import Path
 
 from . import artifacts
@@ -22,19 +23,61 @@ def _unique_object(pairs: list[tuple[str, object]]) -> dict[str, object]:
     return result
 
 
-def cpu_model() -> str:
+def parse_affinity(value: str) -> list[int]:
+    """Parse an explicit CPU list without silently discarding malformed entries."""
+    tokens = [token.strip() for token in value.split(",")]
+    if any(not token or not token.isascii() or not token.isdecimal() for token in tokens):
+        raise RuntimeError("CPU affinity must be a comma-separated list of nonnegative integers")
+    try:
+        return sorted({int(token) for token in tokens})
+    except ValueError as error:
+        raise RuntimeError("CPU affinity contains an invalid integer") from error
+
+
+def cpu_identity() -> tuple[str, str]:
     if platform.system() == "Linux":
         try:
-            for line in Path("/proc/cpuinfo").read_text(
-                encoding="utf-8", errors="replace"
-            ).splitlines():
-                if line.lower().startswith("model name") and ":" in line:
-                    value = line.split(":", 1)[1].strip()
-                    if value:
-                        return value
+            with Path("/proc/cpuinfo").open(
+                "r", encoding="utf-8", errors="replace"
+            ) as cpuinfo:
+                for line in cpuinfo:
+                    name, separator, value = line.partition(":")
+                    if (
+                        separator
+                        and name.strip() in {"model name", "Hardware", "Processor"}
+                        and value.strip()
+                    ):
+                        return value.strip(), f"/proc/cpuinfo:{name.strip()}"
         except OSError:
             pass
-    return platform.processor() or "unknown"
+    elif platform.system() == "Darwin":
+        sysctl = Path("/usr/sbin/sysctl")
+        if sysctl.is_file():
+            for name in ("machdep.cpu.brand_string", "hw.model"):
+                try:
+                    completed = subprocess.run(
+                        [str(sysctl), "-n", name],
+                        capture_output=True,
+                        text=True,
+                        timeout=2,
+                    )
+                except (OSError, subprocess.TimeoutExpired):
+                    continue
+                value = completed.stdout.strip()
+                if completed.returncode == 0 and value:
+                    return value, f"sysctl:{name}"
+    elif platform.system() == "Windows":
+        value = os.environ.get("PROCESSOR_IDENTIFIER", "").strip()
+        if value:
+            return value, "environment:PROCESSOR_IDENTIFIER"
+
+    for source, value in (
+        ("platform.processor", platform.processor()),
+        ("platform.uname.processor", platform.uname().processor),
+    ):
+        if value.strip():
+            return value.strip(), source
+    return "unknown", "unavailable"
 
 
 def _read_state(path: Path) -> str | None:
@@ -46,18 +89,15 @@ def _read_state(path: Path) -> str | None:
 
 
 def governor(affinity: list[int]) -> str:
-    values = {
-        value
+    states = [
+        _read_state(Path(f"/sys/devices/system/cpu/cpu{cpu}/cpufreq/scaling_governor"))
         for cpu in affinity
-        if (
-            value := _read_state(
-                Path(f"/sys/devices/system/cpu/cpu{cpu}/cpufreq/scaling_governor")
-            )
-        )
-        is not None
-    }
+    ]
+    values = {state for state in states if state is not None}
     if not values:
         return "unavailable"
+    if None in states:
+        raise RuntimeError("CPU governor observation is partially unavailable")
     return next(iter(values)) if len(values) == 1 else "mixed:" + ",".join(sorted(values))
 
 
@@ -80,7 +120,7 @@ def observe() -> dict[str, object]:
     return {
         "system": platform.system(),
         "architecture": platform.machine(),
-        "cpu_model": cpu_model(),
+        "cpu_model": cpu_identity()[0],
         "logical_cpus": os.cpu_count() or 1,
         "process_affinity": affinity,
         "kernel_release": platform.release(),
@@ -184,3 +224,21 @@ def verify_binding(binding: object, label: str = "machine profile") -> None:
         raise RuntimeError(f"{label} digest differs from its source artifact")
     if binding.get("profile") != profile:
         raise RuntimeError(f"{label} content differs from its source artifact")
+
+
+def verify_runtime(binding: object, label: str = "machine profile") -> None:
+    """Verify recorded profile bytes and the live state at a measurement boundary."""
+    verify_binding(binding, label)
+    if not isinstance(binding, dict):
+        raise RuntimeError(f"{label} binding must be an object")
+    expected = binding.get("observation")
+    if not isinstance(expected, dict):
+        raise RuntimeError(f"{label} lacks a runtime observation")
+    actual = observe()
+    changed = sorted(
+        field
+        for field in expected.keys() | actual.keys()
+        if expected.get(field) != actual.get(field)
+    )
+    if changed:
+        raise RuntimeError(f"{label} runtime state changed: {', '.join(changed)}")

@@ -214,8 +214,7 @@ Generate a larger corpus only under an ignored build tree:
 
 ```bash
 python3 benchmark/datasets/generate.py \
-  --output build-benchmark/corpus/fixtures \
-  --manifest build-benchmark/corpus/manifest.json \
+  --output-root build-benchmark/corpus \
   --scale 100
 ```
 
@@ -229,9 +228,11 @@ does not rewrite the corpus. The generator and committed fixture inventory must
 agree. The direct command above forces regeneration and audits the files actually
 written. Incremental timestamps only schedule work; evidence validation still
 checks the inventory and content hashes. Before writing, generation rejects
-unexpected CSV outputs and manifest paths that conflict with corpus outputs or
-generator inputs. Individual files are replaced atomically; a whole corpus is
-not a multi-file transaction under I/O failure or process interruption.
+unexpected CSV outputs, symlinks, and non-regular output layouts. The required
+`--output-root` derives `manifest.json` and `fixtures/` together, so every manifest
+member resolves relative to its containing directory. The former independent
+output/manifest parameters are not supported. Individual files are replaced
+atomically; a whole corpus is not a multi-file transaction under I/O failure or process interruption.
 
 ## Cross-revision common driver
 
@@ -290,8 +291,9 @@ below. Then run A/A and A/B against that exact generated fixture directory:
 BASE="$(git merge-base master HEAD)"
 CANDIDATE="$(git rev-parse HEAD)"
 CXX="$(command -v c++)"
+: "${AFFINITY:?Set the reviewed comma-separated CPU indices}"
 
-python3 benchmark/run_suite.py \
+taskset -c "$AFFINITY" python3 benchmark/run_suite.py \
   --repository . \
   --baseline-ref "$CANDIDATE" --candidate-ref "$CANDIDATE" \
   --build-root build-benchmark/owned-aa \
@@ -302,11 +304,11 @@ python3 benchmark/run_suite.py \
   --sources buffer,mmap \
   --files short_unquoted.csv,quote_heavy.csv,multiline.csv,crlf.csv \
   --runs 20 --warmups 3 --iterations 10 --mode aa \
-  --evidence-level controlled --cpu-affinity 0 \
+  --evidence-level controlled --cpu-affinity "$AFFINITY" \
   --machine-profile /etc/csv2/perf-machine.json \
   --output build-benchmark/aa.json
 
-python3 benchmark/run_suite.py \
+taskset -c "$AFFINITY" python3 benchmark/run_suite.py \
   --repository . \
   --baseline-ref "$BASE" --candidate-ref "$CANDIDATE" \
   --build-root build-benchmark/owned-ab \
@@ -318,14 +320,14 @@ python3 benchmark/run_suite.py \
   --files short_unquoted.csv,quote_heavy.csv,multiline.csv,crlf.csv \
   --runs 20 --warmups 3 --iterations 10 --mode compare \
   --calibration build-benchmark/aa.json \
-  --evidence-level controlled --cpu-affinity 0 \
+  --evidence-level controlled --cpu-affinity "$AFFINITY" \
   --machine-profile /etc/csv2/perf-machine.json \
   --output build-benchmark/ab.json
 ```
 
 Run the process itself under the declared affinity, for example
-`taskset -c 0 python3 ...`; controlled mode rejects an affinity mismatch.
-Numeric CLI fields accept unsigned ASCII decimal only. Signs, whitespace,
+`taskset -c "$AFFINITY" python3 ...`; controlled mode rejects an affinity mismatch.
+Scalar numeric CLI fields accept unsigned ASCII decimal only. Signs, whitespace,
 zero iterations, and overflow are rejected before measurement.
 
 The report retains launch order, raw output, every sample, provenance, median,
@@ -356,7 +358,7 @@ allocations, Google Benchmark real-time samples, Linux PMU counters, peak RSS,
 text/data/BSS sizes, and clean owned-build duration:
 
 ```bash
-taskset -c 0 python3 benchmark/collect_metrics.py \
+taskset -c "$AFFINITY" python3 benchmark/collect_metrics.py \
   --repository . --candidate-ref "$CANDIDATE" \
   --build-root build-benchmark/current-owned --corpus-scale 100 \
   --compiler-executable "$(command -v c++)" \
@@ -365,7 +367,7 @@ taskset -c 0 python3 benchmark/collect_metrics.py \
   --input short_unquoted.csv \
   --source buffer --runs 20 \
   --minimum-time 0.5s --warmup-seconds 0.5 \
-  --evidence-level controlled --cpu-affinity 0 \
+  --evidence-level controlled --cpu-affinity "$AFFINITY" \
   --machine-profile /etc/csv2/perf-machine.json \
   --output build-benchmark/fixed-machine.json
 ```
@@ -449,7 +451,10 @@ The manual `Performance evidence` workflow produces and finalizes broader
 exploratory artifacts on a hosted runner or controlled artifacts only on a
 self-hosted runner carrying the `csv2-perf` label. It checks out the exact
 candidate, verifies `HEAD`, loads the preconfigured
-`CSV2_PERF_MACHINE_PROFILE` on a controlled runner, then uses only the
+`CSV2_PERF_MACHINE_PROFILE` on a controlled runner. Controlled dispatch also
+requires `cpu_affinity`: the workflow normalizes that explicit CPU list and
+checks its actual taskset affinity against the profile before any build, then
+passes the same list to fixed metrics, A/A, and A/B. It uses only the
 owned-build APIs for common drivers and current-tree metrics; no workflow-local
 archive/compile path can stamp unrelated sources as that revision. Its
 `operations` input must include `rows_cells` because fixed metrics binds that
@@ -460,7 +465,7 @@ produced; failed runs upload a separate diagnostics artifact, never an evidence 
 Controlled execution is additionally restricted to a repository-owner manual
 dispatch from the default branch with explicit full baseline/candidate SHAs and
 the `csv2-perf` Environment; compiler caches remain disabled on that path.
-This Stage B infrastructure change makes no library performance claim.
+This infrastructure makes no library performance claim.
 
 Owned builds accept only controlled code-generation flags and bind sanitized
 compiler environment plus same-compilation first-party dependency evidence.

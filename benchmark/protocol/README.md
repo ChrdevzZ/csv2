@@ -144,6 +144,9 @@ GNU peak-RSS and section-size collection is Linux-only. On other platforms,
 including macOS, exploratory reports record `peak_rss: null` and code size as
 filesystem `file_bytes` with `method: "filesystem"`. These fallbacks do not satisfy
 controlled evidence requirements. Errors from supported Linux tools remain fatal.
+Non-Linux component collection does not imply complete evidence-finalization
+support: finalization still requires observable, non-empty affinity and matching
+machine identities; unavailable CPU affinity is never replaced with a fabricated value.
 
 Every current and common wire carries a stable `semantic_case_id`, `scope`,
 `source`, and `byte_basis`. These fields state what was measured independently
@@ -187,7 +190,12 @@ Controlled A/A, A/B, and fixed metrics carry the same resolved
 `csv2-machine-profile-v1` digest and runtime observation. The observation must
 match the profile's CPU model, architecture, logical CPU count, allowed
 affinity, kernel release, governor, and turbo/boost state. A generic Linux host
-or affinity setting cannot self-declare controlled status. Exploratory evidence
+or affinity setting cannot self-declare controlled status. Collectors reobserve
+this state before warmup/sampling and before completion; comparisons also check
+case boundaries. Partially readable governor state is rejected. These are
+boundary checks, not continuous monitoring or a guarantee against all benchmark
+noise. Offline binding validation and finalization never observe the reviewer's
+machine. Exploratory evidence
 does not require a profile and is never decision-eligible. The finalizer
 reparses the bound profile artifact and requires its JSON content to equal the
 profile embedded in all three component reports; a matching filename or digest

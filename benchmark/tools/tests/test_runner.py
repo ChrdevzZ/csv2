@@ -37,6 +37,76 @@ def result(revision: str, elapsed: int = 100) -> dict[str, str]:
 
 
 class RunnerTests(unittest.TestCase):
+    def test_runtime_boundaries_prevent_completed_publication_after_drift(self) -> None:
+        import test_protocol
+
+        for level, drift in (("controlled", "before"), ("controlled", "after"),
+                             ("controlled", None), ("exploratory", None)):
+            with self.subTest(level=level, drift=drift), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory).resolve()
+                executable = root / "driver"
+                executable.write_text("fixture", encoding="utf-8")
+                (root / "input.csv").write_text("a,b\n", encoding="utf-8")
+                adapter = root / "benchmark/compare/common_driver.cpp"
+                adapter.parent.mkdir(parents=True)
+                adapter.write_text("adapter", encoding="utf-8")
+                profile = {"artifact": runner.artifacts.metadata(executable),
+                           "observation": {"process_affinity": [2]}}
+                built = test_protocol.controlled_comparison_report()["baseline"]["build"]
+                built.update(output={"path": str(executable)}, capabilities=["legacy-reader"])
+                built["header_export"].update(root=str(root), files=[])
+                owned = {"baseline": built, "candidate": built,
+                         "adapter": {"root": str(root), "commit": "e" * 40}}
+                description = test_protocol.comparison_report()["baseline"]["description"]
+                description.update(revision=built["revision"], capabilities="legacy-reader",
+                                   _command='["benchmark", "--describe"]', _stdout="", _stderr="")
+                events = []
+
+                def check(binding):
+                    self.assertEqual(binding, profile)
+                    phase = "after" if "sample" in events else "before"
+                    events.append(phase)
+                    if drift == phase:
+                        raise RuntimeError("runtime state changed: governor")
+
+                def sample(*args, **kwargs):
+                    events.append("sample")
+                    return {}
+
+                output = root / "report.json"
+                argv = ["run_suite", "--baseline-ref", "HEAD", "--candidate-ref", "HEAD",
+                        "--compiler-executable", sys.executable, "--compiler-flags=-O3",
+                        "--datasets", str(root), "--operations", "rows_cells", "--sources", "buffer",
+                        "--mode", "aa", "--runs", "20", "--evidence-level", level,
+                        "--output", str(output)]
+                if level == "controlled":
+                    argv += ["--cpu-affinity", "2", "--machine-profile", str(executable)]
+                with contextlib.ExitStack() as stack:
+                    stack.enter_context(unittest.mock.patch.object(sys, "argv", argv))
+                    for obj, name, kwargs in (
+                        (runner.platform, "system", {"return_value": "Linux"}),
+                        (runner.os, "sched_getaffinity", {"return_value": {2}, "create": True}),
+                        (runner.builds, "build_common_pair", {"return_value": owned}),
+                        (runner.builds, "assert_compatible_builds", {}),
+                        (runner.machine, "load", {"return_value": profile}),
+                        (runner.machine, "verify_runtime", {"side_effect": check}),
+                        (runner, "describe", {"return_value": description}),
+                        (runner, "measure_case", {"side_effect": sample}),
+                        (runner.wire, "validate_comparison_report", {}),
+                        (runner.wire, "validate_artifact_manifest", {}),
+                    ):
+                        stack.enter_context(unittest.mock.patch.object(obj, name, **kwargs))
+                    if drift:
+                        with self.assertRaisesRegex(RuntimeError, "runtime state changed"):
+                            runner.main()
+                    else:
+                        runner.main()
+                report = json.loads(output.read_text(encoding="utf-8"))
+                self.assertEqual(report["status"], "failed" if drift else "completed")
+                self.assertEqual(output.with_suffix(".json.sha256.json").exists(), drift is None)
+                self.assertEqual(events, ["before"] if drift == "before" else
+                                 ["before", "sample", "after"] if level == "controlled" else ["sample"])
+
     def test_mode_invariants_distinguish_calibration_from_comparison(self) -> None:
         runner.validate_mode_invariants(
             "aa", "same", "same", "a" * 64, "a" * 64, "b" * 64, "b" * 64
@@ -53,16 +123,6 @@ class RunnerTests(unittest.TestCase):
             runner.validate_mode_invariants(
                 "aa", "same", "same", "a" * 64, "a" * 64, "b" * 64, "c" * 64
             )
-    def test_manifest_artifact_metadata_does_not_require_a_revision(self) -> None:
-        with tempfile.TemporaryDirectory() as directory:
-            artifact = Path(directory) / "report.json"
-            artifact.write_text("{}", encoding="utf-8")
-
-            metadata = runner.artifact_metadata(artifact)
-
-        self.assertEqual(metadata["path"], str(artifact.resolve()))
-        self.assertNotIn("revision", metadata)
-
     def test_parser_rejects_old_common_protocol(self) -> None:
         line = " ".join(f"{key}={value}" for key, value in result("x").items())
         self.assertEqual(runner.parse_output(line)["revision"], "x")

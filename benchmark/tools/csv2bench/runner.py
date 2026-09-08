@@ -69,76 +69,8 @@ Executable = Path | Sequence[Path | str]
 Invoke = Callable[[Executable, str, Path, str, int], dict[str, str]]
 
 
-def sha256_file(path: Path) -> str:
-    return artifacts.sha256_file(path)
-
-
-def canonical_existing(path: Path, label: str) -> Path:
-    return artifacts.canonical_existing(path, label)
-
-
-def canonical_output(path: Path) -> Path:
-    return artifacts.canonical_output(path)
-
-
-def paths_alias(left: Path, right: Path) -> bool:
-    return artifacts.paths_alias(left, right)
-
-
-def reject_output_alias(
-    output: Path, protected_paths: Iterable[tuple[str, Path]]
-) -> None:
-    artifacts.reject_output_alias(output, protected_paths)
-
-
-def cpu_identity() -> tuple[str, str]:
-    if platform.system() == "Linux":
-        try:
-            with Path("/proc/cpuinfo").open(
-                "r", encoding="utf-8", errors="replace"
-            ) as cpuinfo:
-                for line in cpuinfo:
-                    name, separator, value = line.partition(":")
-                    if (
-                        separator
-                        and name.strip() in {"model name", "Hardware", "Processor"}
-                        and value.strip()
-                    ):
-                        return value.strip(), f"/proc/cpuinfo:{name.strip()}"
-        except OSError:
-            pass
-    elif platform.system() == "Darwin":
-        sysctl = Path("/usr/sbin/sysctl")
-        if sysctl.is_file():
-            for name in ("machdep.cpu.brand_string", "hw.model"):
-                try:
-                    completed = subprocess.run(
-                        [str(sysctl), "-n", name],
-                        capture_output=True,
-                        text=True,
-                        timeout=2,
-                    )
-                except (OSError, subprocess.TimeoutExpired):
-                    continue
-                value = completed.stdout.strip()
-                if completed.returncode == 0 and value:
-                    return value, f"sysctl:{name}"
-    elif platform.system() == "Windows":
-        value = os.environ.get("PROCESSOR_IDENTIFIER", "").strip()
-        if value:
-            return value, "environment:PROCESSOR_IDENTIFIER"
-
-    for source, value in (
-        ("platform.processor", platform.processor()),
-        ("platform.uname.processor", platform.uname().processor),
-    ):
-        if value.strip():
-            return value.strip(), source
-    return "unknown", "unavailable"
-
-
 def host_metadata() -> dict[str, object]:
-    model, model_source = cpu_identity()
+    model, model_source = machine.cpu_identity()
     affinity = None
     if hasattr(os, "sched_getaffinity"):
         affinity = sorted(os.sched_getaffinity(0))
@@ -161,12 +93,8 @@ def command_prefix(executable: Executable) -> list[str]:
     return [str(part) for part in executable]
 
 
-def parse_key_value_line(output: str, required: set[str]) -> dict[str, str]:
-    return wire.parse_key_value_line(output, required)
-
-
 def parse_output(output: str) -> dict[str, str]:
-    result = parse_key_value_line(output, RESULT_FIELDS)
+    result = wire.parse_key_value_line(output, RESULT_FIELDS)
     if result["protocol"] != PROTOCOL:
         raise RuntimeError(f"unsupported benchmark protocol: {result['protocol']}")
     if result["instrumentation"] != "none":
@@ -212,7 +140,7 @@ def invoke(
 def describe(executable: Executable) -> dict[str, str]:
     command = [*command_prefix(executable), "--describe"]
     completed = run_command(command)
-    result = parse_key_value_line(
+    result = wire.parse_key_value_line(
         completed.stdout,
         {
             "protocol",
@@ -234,16 +162,6 @@ def describe(executable: Executable) -> dict[str, str]:
     return result
 
 
-def artifact_metadata(
-    path: Path, revision: str | None = None
-) -> dict[str, object]:
-    return artifacts.metadata(path, revision)
-
-
-def verify_artifact_unchanged(metadata: dict[str, object], label: str) -> None:
-    artifacts.verify_unchanged(metadata, label)
-
-
 def runner_source_paths() -> list[Path]:
     benchmark_root = Path(__file__).resolve().parents[2]
     package_root = Path(__file__).resolve().parent
@@ -258,7 +176,7 @@ def dataset_metadata(path: Path, logical_name: str | None = None) -> dict[str, o
         "name": logical_name if logical_name is not None else path.name,
         "path": str(resolved),
         "size": resolved.stat().st_size,
-        "sha256": sha256_file(resolved),
+        "sha256": artifacts.sha256_file(resolved),
     }
 
 
@@ -762,13 +680,9 @@ def main() -> None:
         if args.machine_profile is None:
             parser.error("controlled comparisons require --machine-profile")
         try:
-            requested_affinity = sorted(
-                {int(value) for value in args.cpu_affinity.split(",") if value != ""}
-            )
-        except ValueError:
-            parser.error("--cpu-affinity must be a comma-separated integer list")
-        if not requested_affinity or requested_affinity[0] < 0:
-            parser.error("--cpu-affinity must contain non-negative CPU indices")
+            requested_affinity = machine.parse_affinity(args.cpu_affinity)
+        except RuntimeError as error:
+            parser.error(str(error))
         if requested_affinity != sorted(os.sched_getaffinity(0)):
             parser.error("current process affinity does not match --cpu-affinity")
     elif args.machine_profile is not None:
@@ -787,13 +701,13 @@ def main() -> None:
                 "selected sources are incompatible with operations: "
                 + ", ".join(incompatible)
             )
-        args.datasets = canonical_existing(args.datasets, "dataset directory")
+        args.datasets = artifacts.canonical_existing(args.datasets, "dataset directory")
         if not args.datasets.is_dir():
             raise RuntimeError(f"dataset path is not a directory: {args.datasets}")
         discovered_datasets = sorted(args.datasets.glob("*.csv"))
         dataset_paths: list[tuple[str, Path]] = []
         for path in discovered_datasets:
-            resolved = canonical_existing(path, f"dataset {path.name}")
+            resolved = artifacts.canonical_existing(path, f"dataset {path.name}")
             if not resolved.is_file():
                 raise RuntimeError(f"dataset is not a file: {path.name}")
             dataset_paths.append((path.name, resolved))
@@ -810,7 +724,7 @@ def main() -> None:
     owned_builds: dict[str, object] | None = None
     if not args.external_artifacts:
         try:
-            repository = canonical_existing(args.repository, "benchmark repository")
+            repository = artifacts.canonical_existing(args.repository, "benchmark repository")
             compiler_flags = shlex.split(args.compiler_flags, posix=os.name != "nt")
             if not compiler_flags:
                 raise RuntimeError("--compiler-flags must contain at least one flag")
@@ -820,7 +734,7 @@ def main() -> None:
                 candidate_reference=args.candidate_ref,
                 compiler=args.compiler_executable,
                 compiler_flags=compiler_flags,
-                workspace=canonical_output(args.build_root),
+                workspace=artifacts.canonical_output(args.build_root),
                 enable_modern_writer_operations=enable_modern_writer_operations,
             )
             args.compiler_flags = " ".join(compiler_flags)
@@ -846,17 +760,17 @@ def main() -> None:
     machine_profile: dict[str, object] | None = None
     try:
         runner_paths = [
-            canonical_existing(path, "runner source") for path in runner_source_paths()
+            artifacts.canonical_existing(path, "runner source") for path in runner_source_paths()
         ]
-        runner_root = canonical_existing(
+        runner_root = artifacts.canonical_existing(
             Path(__file__).resolve().parents[2], "runner source root"
         )
         runner_bundle = artifacts.bundle_metadata(
             runner_root, runner_paths, "runner-tool-bundle"
         )
-        args.baseline = canonical_existing(args.baseline, "baseline executable")
-        args.candidate = canonical_existing(args.candidate, "candidate executable")
-        args.adapter_source = canonical_existing(args.adapter_source, "adapter source")
+        args.baseline = artifacts.canonical_existing(args.baseline, "baseline executable")
+        args.candidate = artifacts.canonical_existing(args.candidate, "candidate executable")
+        args.adapter_source = artifacts.canonical_existing(args.adapter_source, "adapter source")
         if args.machine_profile is not None:
             machine_profile = machine.load(args.machine_profile)
             if machine_profile["observation"]["process_affinity"] != requested_affinity:
@@ -871,11 +785,11 @@ def main() -> None:
             if not path.is_file():
                 raise RuntimeError(f"{label} is not a file: {path}")
         if args.calibration is not None:
-            args.calibration = canonical_existing(args.calibration, "calibration")
+            args.calibration = artifacts.canonical_existing(args.calibration, "calibration")
             if not args.calibration.is_file():
                 raise RuntimeError(f"calibration is not a file: {args.calibration}")
-        args.output = canonical_output(args.output)
-        args.manifest = canonical_output(
+        args.output = artifacts.canonical_output(args.output)
+        args.manifest = artifacts.canonical_output(
             args.manifest
             or args.output.with_suffix(args.output.suffix + ".sha256.json")
         )
@@ -908,9 +822,9 @@ def main() -> None:
         )
         if args.calibration is not None:
             protected_paths.append(("calibration", args.calibration))
-        reject_output_alias(args.output, protected_paths)
-        reject_output_alias(args.manifest, protected_paths)
-        if paths_alias(args.output, args.manifest):
+        artifacts.reject_output_alias(args.output, protected_paths)
+        artifacts.reject_output_alias(args.manifest, protected_paths)
+        if artifacts.paths_alias(args.output, args.manifest):
             raise RuntimeError("report and manifest paths must be distinct")
     except RuntimeError as error:
         parser.error(str(error))
@@ -953,8 +867,8 @@ def main() -> None:
     except RuntimeError as error:
         parser.error(str(error))
 
-    baseline_artifact = artifact_metadata(args.baseline, args.baseline_revision)
-    candidate_artifact = artifact_metadata(args.candidate, args.candidate_revision)
+    baseline_artifact = artifacts.metadata(args.baseline, args.baseline_revision)
+    candidate_artifact = artifacts.metadata(args.candidate, args.candidate_revision)
     try:
         validate_mode_invariants(
             args.mode,
@@ -1017,7 +931,7 @@ def main() -> None:
         "host": host_metadata(),
         "machine_profile": machine_profile,
         "runner": runner_bundle,
-        "adapter_source": artifact_metadata(
+        "adapter_source": artifacts.metadata(
             args.adapter_source,
             str(owned_builds["adapter"]["commit"])
             if owned_builds is not None
@@ -1064,6 +978,8 @@ def main() -> None:
                         raise RuntimeError(
                             f"calibration lacks {dataset_name}/{operation}/{source}"
                         )
+                    if machine_profile is not None:
+                        machine.verify_runtime(machine_profile)
                     case = measure_case(
                         args.baseline,
                         args.candidate,
@@ -1083,20 +999,20 @@ def main() -> None:
                     )
                     report["cases"].append(case)
                     write_report(args.output, report)
-        verify_artifact_unchanged(report["runner"], "runner")
-        verify_artifact_unchanged(report["adapter_source"], "adapter source")
-        verify_artifact_unchanged(baseline_artifact, "baseline executable")
-        verify_artifact_unchanged(candidate_artifact, "candidate executable")
+        artifacts.verify_unchanged(report["runner"], "runner")
+        artifacts.verify_unchanged(report["adapter_source"], "adapter source")
+        artifacts.verify_unchanged(baseline_artifact, "baseline executable")
+        artifacts.verify_unchanged(candidate_artifact, "candidate executable")
         if owned_builds is not None:
             builds.assert_compatible_builds(
                 owned_builds["baseline"], owned_builds["candidate"]
             )
         for dataset in report["datasets"]:
-            verify_artifact_unchanged(dataset, f"dataset {dataset['name']}")
+            artifacts.verify_unchanged(dataset, f"dataset {dataset['name']}")
         if calibration_metadata is not None:
-            verify_artifact_unchanged(calibration_metadata, "calibration")
+            artifacts.verify_unchanged(calibration_metadata, "calibration")
         if machine_profile is not None:
-            verify_artifact_unchanged(machine_profile["artifact"], "machine profile")
+            machine.verify_runtime(machine_profile)
         report["status"] = "completed"
         report["controlled_complete"] = wire.controlled_complete(
             args.evidence_level,
@@ -1109,7 +1025,7 @@ def main() -> None:
         artifact_manifest = {
             "schema": ARTIFACT_MANIFEST_SCHEMA,
             "kind": "comparison",
-            "report": artifact_metadata(args.output),
+            "report": artifacts.metadata(args.output),
             "inputs": {
                 "baseline": baseline_artifact,
                 "candidate": candidate_artifact,
@@ -1121,7 +1037,7 @@ def main() -> None:
                     if owned_builds is not None
                     else None,
                 },
-                "datasets": [artifact_metadata(by_name[name]) for name in datasets],
+                "datasets": [artifacts.metadata(by_name[name]) for name in datasets],
                 "machine_profile": (
                     machine_profile["artifact"] if machine_profile is not None else None
                 ),
