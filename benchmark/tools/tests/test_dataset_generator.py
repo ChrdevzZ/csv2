@@ -52,12 +52,16 @@ class DatasetGeneratorTests(unittest.TestCase):
 
     def test_generation_once_and_manifest_reads_written_files(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
+            root = Path(directory) / "corpus [normal root]"
             with mock.patch.object(generator, "generated_datasets", wraps=generator.generated_datasets) as generate:
-                with mock.patch.object(sys, "argv", [str(MODULE_PATH), "--output", str(root / "fixtures")]):
+                with mock.patch.object(sys, "argv", [str(MODULE_PATH), "--output-root", str(root)]):
                     self.assertEqual(generator.main(), 0)
                 generate.assert_called_once_with(1)
             self.assertEqual((root / "manifest.json").read_bytes(), (MODULE_PATH.parent / "manifest.json").read_bytes())
+            for record in json.loads((root / "manifest.json").read_text())["datasets"]:
+                dataset = root / record["path"]
+                self.assertTrue(dataset.is_file())
+                self.assertEqual(hashlib.sha256(dataset.read_bytes()).hexdigest(), record["sha256"])
             parameters = {name: values for name, (_, values) in generator.generated_datasets().items()}
             changed = b"changed,on,disk\n"
             (root / "fixtures" / "small_startup.csv").write_bytes(changed)
@@ -80,76 +84,66 @@ class DatasetGeneratorTests(unittest.TestCase):
                 else:
                     (fixtures / "stale.csv").write_bytes(b"stale\n")
                 with mock.patch.object(generator, "__file__", str(root / "generate.py")):
-                    with mock.patch.object(sys, "argv", [str(MODULE_PATH), "--output", str(root / "output")]):
+                    with mock.patch.object(sys, "argv", [str(MODULE_PATH), "--output-root", str(root / "output")]):
                         with self.assertRaisesRegex(RuntimeError, "committed benchmark fixture inventory differs"):
                             generator.main()
                 self.assertFalse((root / "output").exists())
 
     def test_generation_preflights_layout_and_preserves_existing_corpus(self) -> None:
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            source = root / "source"
-            shutil.copytree(MODULE_PATH.parent, source)
-            output = root / "corpus" / "fixtures"
-            manifest = output.parent / "manifest.json"
-
-            def run(scale: int, destination: Path = manifest) -> int:
-                with mock.patch.object(generator, "__file__", str(source / "generate.py")):
-                    with mock.patch.object(sys, "argv", [str(MODULE_PATH), "--output", str(output),
-                                                        "--manifest", str(destination), "--scale", str(scale)]):
-                        with mock.patch.object(sys, "stderr", io.StringIO()):
-                            return generator.main()
-
-            self.assertEqual(run(1), 0)
-            paths = list(output.glob("*.csv")) + [manifest, source / "generate.py"]
-            paths += list((source / "fixtures").glob("*.csv"))
-
-            def snapshot() -> dict[Path, tuple[bytes, int, int]]:
-                return {path: (path.read_bytes(), path.stat().st_mtime_ns, path.stat().st_ino)
-                        for path in paths}
-
-            baseline = snapshot()
-            destinations = [output / "short_unquoted.csv", output / "manifest.CSV", output,
-                            root, source / "generate.py", source / "fixtures" / "small_startup.csv",
-                            source / "fixtures" / "manifest.csv",
-                            output / "short_unquoted.csv" / "manifest.json",
-                            manifest / "child" / "manifest.json"]
-            if os.name != "nt":
-                alias = root / "corpus-alias"
-                alias.symlink_to(output, target_is_directory=True)
-                destinations.append(alias / "short_unquoted.csv")
-            for destination in destinations:
-                with self.subTest(manifest=destination):
-                    with self.assertRaises(SystemExit) as failure:
-                        run(2, destination)
-                    self.assertEqual(failure.exception.code, 2)
-                    self.assertEqual(snapshot(), baseline)
-            self.assertFalse((output / "manifest.CSV").exists())
-            stale = output / "stale.csv"
-            stale.write_bytes(b"stale\n")
-            paths.append(stale)
-            baseline = snapshot()
-            with self.assertRaises(SystemExit) as failure:
-                run(2)
-            self.assertEqual(failure.exception.code, 2)
-            self.assertEqual(snapshot(), baseline)
-            stale.unlink()
-            self.assertEqual(run(2), 0)
-            document = json.loads(manifest.read_text())
-            self.assertEqual(document["scale"], 2)
-            self.assertEqual({item["name"] for item in document["datasets"]},
-                             {path.name for path in output.glob("*.csv")})
-            for item in document["datasets"]:
-                contents = (output / item["name"]).read_bytes()
-                self.assertEqual(item["sha256"], hashlib.sha256(contents).hexdigest())
-                self.assertEqual(item["size"], len(contents))
-            output = root / "new-corpus" / "fixtures"
-            for destination in (output / "short_unquoted.csv" / "manifest.json", output.parent):
-                with self.subTest(new_manifest=destination):
-                    with self.assertRaises(SystemExit) as failure:
-                        run(2, destination)
-                    self.assertEqual(failure.exception.code, 2)
-                    self.assertFalse(output.parent.exists())
+        layouts = ["stale", "root-file", "ancestor-file", "fixtures-file", "fixtures-junction", "manifest-directory", "csv-directory"]
+        if os.name != "nt":
+            layouts += ["fixtures-link", "manifest-link", "csv-link", "csv-fifo"]
+        for layout in layouts:
+            with self.subTest(layout=layout), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory).resolve() / "corpus"
+                fixtures = root / "fixtures"
+                fixtures.mkdir(parents=True)
+                self.write_generated(fixtures)
+                manifest = root / "manifest.json"
+                manifest.write_bytes(b"previous manifest")
+                target = Path(directory) / "outside"
+                target.write_bytes(b"protected outside")
+                if layout == "stale":
+                    (fixtures / "stale.csv").write_bytes(b"stale\n")
+                elif layout in ("root-file", "ancestor-file"):
+                    root = target if layout == "root-file" else target / "nested"
+                elif layout == "fixtures-file":
+                    shutil.rmtree(fixtures)
+                    fixtures.write_bytes(b"not a directory")
+                elif layout == "fixtures-junction":
+                    (Path(directory) / "outside-fixtures").mkdir()
+                elif layout == "fixtures-link":
+                    outside = Path(directory) / "outside-fixtures"
+                    fixtures.rename(outside)
+                    fixtures.symlink_to(outside, target_is_directory=True)
+                else:
+                    destination = manifest if layout.startswith("manifest") else fixtures / "short_unquoted.csv"
+                    destination.unlink()
+                    if layout.endswith("directory"):
+                        destination.mkdir()
+                    elif layout.endswith("fifo"):
+                        os.mkfifo(destination)
+                    else:
+                        destination.symlink_to(target)
+                paths = [path for path in Path(directory).rglob("*") if path.is_file()]
+                def snapshot() -> dict[Path, tuple[bytes, int, int]]:
+                    return {path: (path.read_bytes(), path.stat().st_mtime_ns, path.stat().st_ino)
+                            for path in paths}
+                baseline = snapshot()
+                original_resolve = Path.resolve
+                def resolve(path: Path, *args, **kwargs) -> Path:
+                    # Windows junctions resolve elsewhere without being symbolic links.
+                    if layout == "fixtures-junction" and path == fixtures:
+                        return Path(directory) / "outside-fixtures"
+                    return original_resolve(path, *args, **kwargs)
+                with mock.patch.object(Path, "resolve", resolve), mock.patch.object(
+                    sys, "argv", [str(MODULE_PATH), "--output-root", str(root), "--scale", "2"]
+                ):
+                    with mock.patch.object(sys, "stderr", io.StringIO()):
+                        with self.assertRaises(SystemExit) as failure:
+                            generator.main()
+                self.assertEqual(failure.exception.code, 2)
+                self.assertEqual(snapshot(), baseline)
 
     def test_cmake_incremental_corpus(self) -> None:
         cmake = shutil.which("cmake")

@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import contextlib
+import sys
 import os
 import tempfile
 import unittest
@@ -12,6 +14,79 @@ from csv2bench import metrics
 
 
 class MetricsTests(unittest.TestCase):
+    def test_runtime_boundaries_prevent_completed_publication_after_drift(self) -> None:
+        import test_protocol
+
+        for level, drift in (("controlled", "before"), ("controlled", "after"),
+                             ("controlled", None), ("exploratory", None)):
+            with self.subTest(level=level, drift=drift), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory).resolve()
+                executable = root / "driver"
+                executable.write_text("fixture", encoding="utf-8")
+                dataset = root / "input.csv"
+                dataset.write_text("x", encoding="utf-8")
+                commands = root / "compile_commands.json"
+                commands.write_text(json.dumps([
+                    {"arguments": [str(executable), "-c", "source.cpp"]}
+                ]), encoding="utf-8")
+                fixture = test_protocol.controlled_metrics_report()
+                owned = fixture["build"]
+                owned["compiler"]["artifact"] = metrics.artifacts.metadata(executable)
+                for target in owned["targets"].values():
+                    target["path"] = str(executable)
+                owned["compile_commands"]["path"] = str(commands)
+                profile = {"artifact": metrics.artifacts.metadata(executable),
+                           "observation": {"process_affinity": [2]}}
+                events = []
+
+                def check(binding):
+                    self.assertEqual(binding, profile)
+                    phase = "after" if "sample" in events else "before"
+                    events.append(phase)
+                    if drift == phase:
+                        raise RuntimeError("runtime state changed: governor")
+
+                def sample(*args, **kwargs):
+                    events.append("pmu" if kwargs.get("pmu") else "sample")
+                    return {}, {}
+
+                output = root / "report.json"
+                argv = ["collect_metrics", "--candidate-ref", "HEAD",
+                        "--compiler-executable", str(executable), "--compiler-flags=-O3",
+                        "--input", str(dataset), "--operation", "traversal/rows-cells",
+                        "--runs", "20", "--evidence-level", level, "--output", str(output)]
+                if level == "controlled":
+                    argv += ["--cpu-affinity", "2", "--machine-profile", str(executable)]
+                verified = fixture["verification"]
+                with contextlib.ExitStack() as stack:
+                    stack.enter_context(unittest.mock.patch.object(sys, "argv", argv))
+                    for obj, name, kwargs in (
+                        (metrics.platform, "system", {"return_value": "Linux"}),
+                        (metrics.os, "sched_getaffinity", {"return_value": {2}, "create": True}),
+                        (metrics.builds, "build_current_tree", {"return_value": owned}),
+                        (metrics.builds, "verify_current_build_manifest", {}),
+                        (metrics.machine, "load", {"return_value": profile}),
+                        (metrics.machine, "verify_runtime", {"side_effect": check}),
+                        (metrics, "verify", {"return_value": (verified["result"], verified["invocation"])}),
+                        (metrics, "collect_timing", {"side_effect": sample}),
+                        (metrics, "collect_peak_rss", {"return_value": {}}),
+                        (metrics, "collect_code_size", {"return_value": {}}),
+                        (metrics.protocol, "validate_fixed_metrics_report", {}),
+                        (metrics.protocol, "validate_artifact_manifest", {}),
+                    ):
+                        stack.enter_context(unittest.mock.patch.object(obj, name, **kwargs))
+                    if drift:
+                        with self.assertRaisesRegex(RuntimeError, "runtime state changed"):
+                            metrics.main()
+                    else:
+                        metrics.main()
+                report = json.loads(output.read_text(encoding="utf-8"))
+                self.assertEqual(report["status"], "failed" if drift else "completed")
+                self.assertEqual(output.with_suffix(".json.sha256.json").exists(), drift is None)
+                self.assertEqual(events, ["before"] if drift == "before" else
+                                 ["before", "sample", "pmu", "after"] if level == "controlled" else
+                                 ["sample", "pmu"])
+
     def test_owned_collection_reuses_the_built_compiler_identity(self) -> None:
         class ReportCollected(Exception):
             pass
@@ -347,13 +422,6 @@ class MetricsTests(unittest.TestCase):
             path.write_text(json.dumps(document), encoding="utf-8")
             with self.assertRaisesRegex(RuntimeError, "missing required PMU counters"):
                 metrics.parse_timing_report(path, 1, require_pmu=True)
-
-    def test_affinity_parser_is_strict_and_canonical(self) -> None:
-        self.assertEqual(metrics.parse_affinity("2,0,2"), [0, 2])
-        for value in ("", "-1", "x"):
-            with self.subTest(value=value):
-                with self.assertRaises(RuntimeError):
-                    metrics.parse_affinity(value)
 
     def test_compile_commands_bind_the_declared_compiler(self) -> None:
         compiler = Path(__import__("sys").executable).resolve()

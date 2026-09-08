@@ -61,6 +61,11 @@ on:
         required: true
         default: "100"
         type: string
+      cpu_affinity:
+        description: Controlled CPU indices (comma-separated; required for controlled evidence)
+        required: false
+        default: ""
+        type: string
       evidence:
         description: Evidence class
         required: true
@@ -378,6 +383,7 @@ jobs:
 
       - name: Validate runner and resolve immutable revisions
         env:
+          AFFINITY_INPUT: ${{ inputs.cpu_affinity }}
           BASELINE_SHA: ${{ needs.authorize-controlled.outputs.baseline_sha }}
           CANDIDATE_SHA: ${{ needs.authorize-controlled.outputs.candidate_sha }}
           RUNS: ${{ inputs.runs }}
@@ -397,8 +403,19 @@ jobs:
           cp --no-clobber "$CSV2_PERF_MACHINE_PROFILE" \
             build-perf/reports/machine-profile.json
           chmod 0444 build-perf/reports/machine-profile.json
-          printf 'PROFILE_PATH=%s\n' \
-            "$GITHUB_WORKSPACE/build-perf/reports/machine-profile.json" >> "$GITHUB_ENV"
+          PROFILE_PATH="$GITHUB_WORKSPACE/build-perf/reports/machine-profile.json"
+          AFFINITY=$(python3 -c 'import sys; sys.path.insert(0,"benchmark/tools"); from csv2bench import machine; print(",".join(map(str,machine.parse_affinity(sys.argv[1]))))' "$AFFINITY_INPUT")
+          taskset -c "$AFFINITY" python3 - "$PROFILE_PATH" "$AFFINITY" <<'PYTHON'
+          import sys
+          from pathlib import Path
+          sys.path.insert(0, "benchmark/tools")
+          from csv2bench import machine
+          binding = machine.load(Path(sys.argv[1]))
+          if binding["observation"]["process_affinity"] != machine.parse_affinity(sys.argv[2]):
+              raise RuntimeError("taskset affinity differs from requested CPUs")
+          PYTHON
+          printf 'PROFILE_PATH=%s\nAFFINITY=%s\n' \
+            "$PROFILE_PATH" "$AFFINITY" >> "$GITHUB_ENV"
 
       - name: Collect controlled current-tree metrics from owned build
         env:
@@ -410,7 +427,7 @@ jobs:
             'import sys; v=sys.argv[1]; print("short_unquoted.csv" if v=="all" else v.split(",",1)[0].strip())' \
             "$FILES")
           test -n "$metrics_file"
-          taskset -c 0 python3 benchmark/collect_metrics.py \
+          taskset -c "$AFFINITY" python3 benchmark/collect_metrics.py \
             --repository . --candidate-ref "$CANDIDATE_SHA" \
             --build-root build-perf/current-owned \
             --corpus-scale "$CORPUS_SCALE" \
@@ -419,7 +436,7 @@ jobs:
             --operation traversal/rows-cells \
             --input "$metrics_file" --source buffer --runs "$RUNS" \
             --minimum-time 0.5s --warmup-seconds 0.5 \
-            --evidence-level controlled --cpu-affinity 0 \
+            --evidence-level controlled --cpu-affinity "$AFFINITY" \
             --machine-profile "$PROFILE_PATH" \
             --output build-perf/reports/current-metrics.json
 
@@ -439,7 +456,7 @@ jobs:
         run: |
           datasets=build-perf/current-owned/build/benchmark-corpus/fixtures
           compiler=$(command -v g++)
-          taskset -c 0 python3 benchmark/run_suite.py \
+          taskset -c "$AFFINITY" python3 benchmark/run_suite.py \
             --repository . \
             --baseline-ref "$CANDIDATE_SHA" \
             --candidate-ref "$CANDIDATE_SHA" \
@@ -449,10 +466,10 @@ jobs:
             --datasets "$datasets" --runs "$RUNS" --warmups 3 --iterations 10 \
             --operations "$OPERATIONS" \
             --sources buffer,mmap --files "$FILES" --mode aa \
-            --evidence-level controlled --cpu-affinity 0 \
+            --evidence-level controlled --cpu-affinity "$AFFINITY" \
             --machine-profile "$PROFILE_PATH" \
             --output build-perf/reports/aa.json
-          taskset -c 0 python3 benchmark/run_suite.py \
+          taskset -c "$AFFINITY" python3 benchmark/run_suite.py \
             --repository . \
             --baseline-ref "$BASELINE_SHA" \
             --candidate-ref "$CANDIDATE_SHA" \
@@ -463,7 +480,7 @@ jobs:
             --operations "$OPERATIONS" \
             --sources buffer,mmap --files "$FILES" --mode compare \
             --calibration build-perf/reports/aa.json \
-            --evidence-level controlled --cpu-affinity 0 \
+            --evidence-level controlled --cpu-affinity "$AFFINITY" \
             --machine-profile "$PROFILE_PATH" \
             --output build-perf/reports/ab.json
 

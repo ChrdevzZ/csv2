@@ -31,8 +31,7 @@ if(csv2_benchmark_enable_generated_corpus)
   add_custom_command(
     OUTPUT ${csv2_corpus_outputs}
     COMMAND ${CSV2_PYTHON_EXECUTABLE} -B ${CMAKE_CURRENT_SOURCE_DIR}/generate.py
-      --output ${csv2_generated_corpus_directory}
-      --manifest ${csv2_generated_corpus_manifest}
+      --output-root ${csv2_generated_corpus_root}
       --scale ${CSV2_BENCHMARK_CORPUS_SCALE}
     DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/generate.py" "${csv2_corpus_parameters}"
     COMMENT

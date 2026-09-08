@@ -32,27 +32,8 @@ def collector_source_paths() -> list[Path]:
     )
 
 
-def cpu_identity() -> tuple[str, str]:
-    if platform.system() == "Linux":
-        try:
-            for line in Path("/proc/cpuinfo").read_text(
-                encoding="utf-8", errors="replace"
-            ).splitlines():
-                name, separator, value = line.partition(":")
-                if separator and name.strip() in {"model name", "Hardware", "Processor"}:
-                    if value.strip():
-                        return value.strip(), f"/proc/cpuinfo:{name.strip()}"
-        except OSError:
-            pass
-    value = os.environ.get("PROCESSOR_IDENTIFIER", "").strip()
-    if value:
-        return value, "environment:PROCESSOR_IDENTIFIER"
-    value = platform.processor().strip()
-    return (value, "platform.processor") if value else ("unknown", "unavailable")
-
-
 def machine_metadata() -> dict[str, object]:
-    model, source = cpu_identity()
+    model, source = machine.cpu_identity()
     affinity = None
     if hasattr(os, "sched_getaffinity"):
         affinity = sorted(os.sched_getaffinity(0))
@@ -332,16 +313,6 @@ def run_post_build(command_text: str) -> dict[str, object]:
     }
 
 
-def parse_affinity(value: str) -> list[int]:
-    try:
-        cpus = sorted({int(entry) for entry in value.split(",") if entry != ""})
-    except ValueError as error:
-        raise RuntimeError("CPU affinity must be a comma-separated integer list") from error
-    if not cpus or cpus[0] < 0:
-        raise RuntimeError("CPU affinity must contain non-negative CPU indices")
-    return cpus
-
-
 def validate_compile_commands(path: Path, compiler: Path) -> int:
     try:
         document = json.loads(path.read_text(encoding="utf-8"))
@@ -566,7 +537,7 @@ def main() -> None:
         parser.error(str(error))
 
     if args.evidence_level == "controlled":
-        requested = parse_affinity(args.cpu_affinity)
+        requested = machine.parse_affinity(args.cpu_affinity)
         actual = sorted(os.sched_getaffinity(0))
         if requested != actual:
             parser.error(f"process affinity {actual} does not match requested affinity {requested}")
@@ -722,6 +693,8 @@ def main() -> None:
             "bytes": int(allocation["allocated_bytes"]),
             "invocation": allocation_invocation,
         }
+        if machine_profile is not None:
+            machine.verify_runtime(machine_profile)
         report["timing"], report["timing_invocation"] = collect_timing(args)
         if not args.skip_pmu:
             if platform.system() == "Linux":
@@ -740,7 +713,7 @@ def main() -> None:
         for label, identity in identities.items():
             artifacts.verify_unchanged(identity, label)
         if machine_profile is not None:
-            artifacts.verify_unchanged(machine_profile["artifact"], "machine profile")
+            machine.verify_runtime(machine_profile)
         if owned_build is not None:
             builds.verify_current_build_manifest(owned_build)
         report["status"] = "completed"
