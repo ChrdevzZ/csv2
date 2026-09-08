@@ -27,11 +27,15 @@ class RunFuzzTargetsTests(unittest.TestCase):
             path.write_bytes(b"executable")
         for path in (reader_corpus, writer_corpus):
             path.mkdir()
+            (path / "input.txt").write_bytes(path.name.encode())
         calls: list[list[str]] = []
 
         def fake_run(command: list[str], *, check: bool) -> subprocess.CompletedProcess[str]:
             self.assertFalse(check)
             calls.append(command)
+            corpora = [Path(value) for value in command[1:] if not value.startswith("-")]
+            seed = (corpora[-1] / "input.txt").read_bytes()
+            (corpora[0] / "generated-input").write_bytes(seed + b"-generated")
             status = reader_status if Path(command[0]) == reader else writer_status
             if status:
                 prefix = next(
@@ -51,6 +55,14 @@ class RunFuzzTargetsTests(unittest.TestCase):
             artifact_root=root / "artifacts",
             run_fn=fake_run,
         )
+        for name in ("reader", "writer"):
+            source = root / f"{name}-corpus"
+            self.assertEqual({p.name: p.read_bytes() for p in source.iterdir()},
+                             {"input.txt": source.name.encode()})
+            self.assertEqual(
+                (root / "artifacts" / name / "corpus" / "generated-input").read_bytes(),
+                source.name.encode() + b"-generated",
+            )
         return status, calls, root
 
     def test_reader_failure_does_not_skip_writer_and_preserves_reproducer(self) -> None:

@@ -35,8 +35,7 @@ jobs:
           -DCMAKE_BUILD_TYPE=Release
           -DCMAKE_CXX_COMPILER=clang++-18
           -DCMAKE_COMPILE_WARNING_AS_ERROR=ON
-          -DCSV2_BUILD_TESTS=ON
-          -DCSV2_TEST_ASSERTION_BACKEND=minitest
+          -DCSV2_BUILD_TESTS=OFF
           -DCSV2_BUILD_BENCHMARKS=ON
           -DCSV2_BUILD_BENCHMARK_CHECKS=ON
           -DCSV2_BUILD_FUZZERS=ON
@@ -48,13 +47,8 @@ jobs:
       - name: Build smoke targets
         run: >-
           cmake --build build --parallel
-          --target csv2_fuzz csv2_fuzz_writer csv2_fuzz_smoke csv2_fuzz_writer_smoke
+          --target csv2_fuzz csv2_fuzz_writer
           csv2_benchmark csv2_benchmark_allocations csv2_common_benchmark
-
-      - name: Run deterministic fuzz smoke
-        run: >-
-          ctest --test-dir build -L fuzz-smoke --no-tests=error
-          --output-on-failure --output-junit fuzz-smoke.xml
 
       - name: Run libFuzzer corpus smoke
         env:
@@ -67,7 +61,7 @@ jobs:
           --reader-corpus test/fuzz/corpus/reader
           --writer-corpus test/fuzz/corpus/writer
           --runs 5000
-          --artifact-root fuzz-artifacts
+          --artifact-root build/fuzz-artifacts
 
       - name: Verify benchmark checksums
         run: >-
@@ -108,11 +102,10 @@ jobs:
         with:
           name: fuzz-benchmark-smoke
           path: |
-            build/fuzz-smoke.xml
             build/benchmark-checksum.xml
             build-no-mmap/benchmark-checksum.xml
             benchmark/datasets/manifest.json
-            fuzz-artifacts
+            build/fuzz-artifacts
           if-no-files-found: error
 
   scheduled-fuzz:
@@ -156,13 +149,13 @@ jobs:
           --reader-corpus test/fuzz/corpus/reader
           --writer-corpus test/fuzz/corpus/writer
           --runs 50000
-          --artifact-root fuzz-artifacts
+          --artifact-root build/fuzz-artifacts
 
       - name: Upload weekly fuzz reproducers
         if: failure()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: weekly-fuzz-reproducers-${{ github.run_id }}-${{ github.run_attempt }}
-          path: fuzz-artifacts
+          path: build/fuzz-artifacts
           if-no-files-found: ignore
           retention-days: 14

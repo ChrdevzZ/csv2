@@ -75,6 +75,10 @@ def commit_all(root: Path, message: str) -> str:
 
 
 class ClassifyChangesTests(unittest.TestCase):
+    def test_shared_test_entry_selects_fuzz(self) -> None:
+        self.assertEqual(classify("test/CMakeLists.txt"),
+                         dict(quick=True, benchmark=False, fuzz=True, perf=False, full=True))
+
     def test_event_plan_applies_to_normal_and_conservative_paths(self) -> None:
         for event in ("pull_request", "push", "merge_group", "workflow_dispatch"):
             for paths in ((), ("unclassified.data",), ("include/csv2/reader.hpp",),
