@@ -254,8 +254,10 @@ Writer uses ADL `begin` and `end` for arrays, containers, iterator/sentinel rang
 insertion takes precedence; otherwise contiguous character fields use direct writes and other streamable values keep the
 destination's formatting state.
 
-Quoting writers scan contiguous character fields and write segments. Other values are formatted with the destination's
-state before escaping; final stream state and one-shot width follow the normal iostream contract.
+Quoting writers scan contiguous character fields and write segments. Fields requiring formatted escaping use a
+temporary stream initialized with the destination's formatting settings and current error state. One-shot width and
+resulting error bits are propagated to the destination; a pre-existing error is not treated as a healthy stream.
+Direct contiguous-field paths remain separate from temporary formatting.
 
 ### Stream Ownership
 

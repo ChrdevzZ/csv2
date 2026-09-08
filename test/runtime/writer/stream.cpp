@@ -14,6 +14,60 @@
 
 using namespace csv2_test;
 
+namespace {
+struct ObservedState {
+  std::ios_base::iostate *state;
+};
+
+std::ostream &operator<<(std::ostream &stream, const ObservedState &value) {
+  *value.state = stream.rdstate();
+  return stream << 42;
+}
+
+template <typename Policy, typename Field>
+void check_initial_error(std::ios_base::iostate state, const Field &field) {
+  for (const int width : {0, 6}) {
+    std::ostringstream expected, actual;
+    expected.width(width);
+    actual.width(width);
+    expected.setstate(state);
+    actual.setstate(state);
+    expected << field << '\n';
+    csv2::basic_writer<csv2::delimiter<','>, std::ostringstream, csv2::stream_ownership::leave_open,
+                       Policy>
+        writer(actual);
+    writer.write_row(std::vector<Field>(1, field));
+    CSV2_CHECK(actual.width() == expected.width());
+    CSV2_CHECK(actual.rdstate() == expected.rdstate());
+    CSV2_CHECK(actual.str() == expected.str());
+    expected.clear();
+    actual.clear();
+    expected << "x";
+    actual << "x";
+    CSV2_CHECK(actual.str() == expected.str());
+  }
+}
+} // namespace
+
+CSV2_TEST_CASE("writer.stream.preserve-initial-errors-and-width-through-formatted-escaping",
+               "writer.stream") {
+  for (const auto state : {std::ios_base::failbit, std::ios_base::badbit, std::ios_base::eofbit}) {
+    check_initial_error<csv2::quote_policy::minimal>(state, 42);
+    check_initial_error<csv2::quote_policy::always>(state, 42);
+    check_initial_error<csv2::quote_policy::minimal>(state, std::string("a,b"));
+    check_initial_error<csv2::quote_policy::always>(state, std::string("a,b"));
+
+    std::ostringstream output;
+    output.setstate(state);
+    std::ios_base::iostate observed = std::ios_base::goodbit;
+    csv2::EscapingWriter<csv2::delimiter<','>, std::ostringstream,
+                         csv2::stream_ownership::leave_open>
+        writer(output);
+    writer.write_row(std::vector<ObservedState>(1, ObservedState{&observed}));
+    CSV2_CHECK(observed == state);
+  }
+}
+
 CSV2_TEST_CASE("writer.stream.write-to-streams-with-and-without-close", "writer.stream") {
   std::ostringstream memory_stream;
   {
