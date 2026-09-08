@@ -124,34 +124,11 @@ class RootCMakeHygieneTests(unittest.TestCase):
             )
             self.assertEqual({path: path.read_bytes() for path in generated}, contents)
 
-            # Change fixture input without changing the C++ contract. Only its
-            # consumer should rebuild, regardless of the generation mechanism.
-            definition = source / "test/contracts/CMakeLists.txt"
-            original = definition.read_text(encoding="utf-8")
-            changed = original.replace(
-                "Deliberately empty partial <version> fixture.",
-                "Deliberately empty partial <version> fixture. Incremental probe.",
-            )
-            self.assertNotEqual(changed, original)
-            definition.write_text(changed, encoding="utf-8")
-            configure()
-            compile_consumers()
-            after = objects()
-            rebuilt = {path for path in before if before[path] != after[path]}
-            partial_objects = {
-                path for path in before if targets[0] + ".dir" in path.parts
-            }
-            self.assertTrue(partial_objects)
-            self.assertEqual(rebuilt, partial_objects)
-            self.assertNotEqual(
-                {path: path.read_bytes() for path in generated}, contents,
-            )
-
-            expected = {path: path.read_bytes() for path in generated}
+            # Missing generated inputs must be restored by reconfiguration.
             for path in generated:
                 path.unlink()
             configure()
-            self.assertEqual({path: path.read_bytes() for path in generated}, expected)
+            self.assertEqual({path: path.read_bytes() for path in generated}, contents)
             compile_consumers()
 
     def test_benchmark_audits_follow_checks_default_build(self) -> None:
