@@ -118,6 +118,10 @@ and binds semantic verification, allocation verification, Google Benchmark
 samples, PMU counters, peak RSS, code size, and clean isolated build timing.
 The collector reuses the canonical compiler artifact selected by the owned
 builder, whether the CLI supplied a program name or an absolute path.
+Owned and external collection select the compiler's version interface: native
+MSVC uses `/Bv /?`, while GNU and Clang use `--version`. Both output streams
+are retained; failed probes and identities with no non-whitespace output are
+rejected. Probe environments remain owned by their respective collection paths.
 `build_argv` and `build_log` cover compilation and linking of the two benchmark
 executables and their declared dependencies. Corpus generation follows in
 `corpus_argv` and `corpus_log`, outside the clean-build interval; its manifest
@@ -206,7 +210,12 @@ Controlled A/A, A/B, and fixed metrics carry the same resolved
 `csv2-machine-profile-v1` digest and runtime observation. The observation must
 match the profile's CPU model, architecture, logical CPU count, allowed
 affinity, kernel release, governor, and turbo/boost state. A generic Linux host
-or affinity setting cannot self-declare controlled status. Collectors reobserve
+or affinity setting cannot self-declare controlled status. Each controlled
+report also binds its architecture, CPU model, logical CPU count, and actual
+affinity to that observation; fixed metrics additionally bind the system and
+kernel release. Agreement among components alone is insufficient. Affinity
+must equal the recorded observation, not merely belong to `allowed_affinity`.
+Collectors reobserve
 this state before warmup/sampling and before completion; comparisons also check
 case boundaries. CPU identifiers are explicit nonnegative identifiers, not
 positions in a range derived from the logical CPU count. Actual affinity must
@@ -235,7 +244,10 @@ an interrupted run cannot leave an unbound decision document. Final evidence
 paths must be new; the finalizer never overwrites a prior publication. A
 fixed-metrics manifest closes and validates the collector source bundle, timing and
 allocation executables, dataset, and (for an owned build) the paired compiler
-executable and compile-command artifacts. Evidence manifests close the seven
+executable and compile-command artifacts. External exploratory collection may
+bind only the compiler artifact, with an unverified (null) compile-command
+match count. A compile-command artifact always requires a compiler artifact;
+owned builds require both. Evidence manifests close the seven
 component/corpus inputs plus the exact finalizer source bundle. The two
 benchmark executables must declare the same revision, and every recorded digest
 is canonical SHA-256.

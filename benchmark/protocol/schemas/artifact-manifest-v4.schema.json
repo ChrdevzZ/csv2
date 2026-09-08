@@ -115,7 +115,6 @@
         "compile_commands": {"$ref": "#/$defs/artifact"}
       },
       "dependentRequired": {
-        "compiler_executable": ["compile_commands"],
         "compile_commands": ["compiler_executable"]
       },
       "additionalProperties": false

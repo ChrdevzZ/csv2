@@ -350,7 +350,7 @@ def _machine_profile(value: object, label: str) -> dict[str, object]:
     if not affinity or any(
         isinstance(cpu, bool) or not isinstance(cpu, int) or cpu < 0
         for cpu in affinity
-    ):
+    ) or affinity != sorted(set(affinity)):
         raise RuntimeError(f"{label}.observation affinity is invalid")
     for field in (
         "system", "architecture", "cpu_model", "logical_cpus", "kernel_release",
@@ -361,6 +361,35 @@ def _machine_profile(value: object, label: str) -> dict[str, object]:
     if not set(affinity) <= set(allowed):
         raise RuntimeError(f"{label}.observation affinity is outside the profile")
     return binding
+
+
+def validate_machine_profile_identity(
+    machine: dict[str, object], binding: dict[str, object], label: str,
+    *, fixed_metrics: bool = False,
+) -> None:
+    """Bind report identity to an already validated profile observation."""
+    observation = binding["observation"]
+    fields = {
+        "machine": "architecture", "cpu_model": "cpu_model",
+        "logical_cpus": "logical_cpus", "process_affinity": "process_affinity",
+    }
+    if fixed_metrics:
+        fields.update(system="system", release="kernel_release")
+    for field, observed_field in fields.items():
+        value = machine[field]
+        if field == "logical_cpus":
+            _integer(value, f"{label}.{field}", 1)
+        elif field == "process_affinity":
+            affinity = _array(value, f"{label}.{field}")
+            if not affinity or any(
+                isinstance(cpu, bool) or not isinstance(cpu, int) or cpu < 0
+                for cpu in affinity
+            ) or affinity != sorted(set(affinity)):
+                raise RuntimeError(f"{label}.{field} is invalid")
+        else:
+            _string(value, f"{label}.{field}")
+        if value != observation[observed_field]:
+            raise RuntimeError(f"{label}.{field} differs from machine profile observation")
 
 
 def _source_bundle(value: object, label: str) -> dict[str, object]:
@@ -715,10 +744,6 @@ def _common_build(value: object, label: str) -> dict[str, object]:
         audited_builds.validate_common_build_command_contract(build)
     except RuntimeError as error:
         raise RuntimeError(f"{label} {error}") from error
-    normalized_text = "\n".join(build["normalized_argv"])
-    for placeholder in ("{revision}", "{include_root}", "{adapter_source}", "{output}"):
-        if placeholder not in normalized_text:
-            raise RuntimeError(f"{label} normalized command lacks {placeholder}")
     if build["argv"][0] != compiler["artifact"]["path"]:
         raise RuntimeError(f"{label} command did not invoke the recorded compiler")
     log = _object(build["build_log"], f"{label}.build_log")
@@ -799,16 +824,7 @@ def _current_build(value: object, label: str) -> dict[str, object]:
         values = _array(build[field], f"{label}.{field}")
         if not values or not all(isinstance(item, str) and item for item in values):
             raise RuntimeError(f"{label}.{field} is malformed")
-    if len(build["configure_argv"]) != len(build["normalized_configure_argv"]):
-        raise RuntimeError(f"{label} normalized configure command differs in length")
-    normalized = "\n".join(build["normalized_configure_argv"])
-    for placeholder in ("{source_root}", "{build_root}", "{compiler}", "{revision}"):
-        if placeholder not in normalized:
-            raise RuntimeError(f"{label} configure command lacks {placeholder}")
     audited_builds.validate_current_build_command_contract(build)
-    expected_flag_argument = "-DCMAKE_CXX_FLAGS_RELEASE=" + " ".join(compiler_flags)
-    if expected_flag_argument not in build["configure_argv"]:
-        raise RuntimeError(f"{label} configure command differs from compiler_flags")
     for log_name in ("configure_log", "build_log"):
         log = _object(build[log_name], f"{label}.{log_name}")
         _required(log, {"returncode", "seconds", "stdout", "stderr"}, f"{label}.{log_name}")
@@ -931,6 +947,10 @@ def validate_comparison_report(report: object) -> None:
         "comparison report.host",
     )
     _integer(host["logical_cpus"], "comparison report.host.logical_cpus", 1)
+    if document["evidence_level"] == "controlled":
+        validate_machine_profile_identity(
+            host, document["machine_profile"], "comparison report.host"
+        )
     _source_bundle(document["runner"], "comparison report.runner")
     adapter = _artifact(
         document["adapter_source"],
@@ -1302,9 +1322,6 @@ def validate_comparison_report(report: object) -> None:
     if controlled:
         if runs < 20 or warmups < 3:
             raise RuntimeError("controlled comparison requires 20 runs and three warmups")
-        affinity = host.get("process_affinity")
-        if not isinstance(affinity, list) or not affinity:
-            raise RuntimeError("controlled comparison requires process affinity")
         if document["mode"] == "compare" and not isinstance(document["calibration"], dict):
             raise RuntimeError("controlled comparison requires calibration provenance")
     if isinstance(document["calibration"], dict):
@@ -1417,6 +1434,11 @@ def validate_fixed_metrics_report(report: object) -> None:
         "fixed-machine report.machine",
     )
     _integer(machine["logical_cpus"], "fixed-machine report.machine.logical_cpus", 1)
+    if document["evidence_level"] == "controlled":
+        validate_machine_profile_identity(
+            machine, document["machine_profile"], "fixed-machine report.machine",
+            fixed_metrics=True,
+        )
     identities = _object(document["artifacts"], "fixed-machine report.artifacts")
     _required(
         identities,
@@ -1585,9 +1607,6 @@ def validate_fixed_metrics_report(report: object) -> None:
             raise RuntimeError("controlled fixed-machine report requires an owned build")
         if runs < 20:
             raise RuntimeError("controlled fixed-machine report requires 20 runs")
-        affinity = machine.get("process_affinity")
-        if not isinstance(affinity, list) or not affinity:
-            raise RuntimeError("controlled fixed-machine report requires process affinity")
         compiler_identity = _object(
             document["compiler_identity"],
             "fixed-machine report.compiler_identity",
@@ -1624,12 +1643,15 @@ def validate_fixed_metrics_report(report: object) -> None:
         _string(
             compiler_identity["version_stdout"],
             "fixed-machine report.compiler_identity.version_stdout",
+            allow_empty=True,
         )
         _string(
             compiler_identity["version_stderr"],
             "fixed-machine report.compiler_identity.version_stderr",
             allow_empty=True,
         )
+        if not (compiler_identity["version_stdout"] + compiler_identity["version_stderr"]).strip():
+            raise RuntimeError("fixed-machine compiler version output is empty")
         _required(
             identities,
             {"compiler_executable", "compile_commands"},
@@ -1710,8 +1732,12 @@ def validate_evidence_bundle(bundle: object) -> None:
     if any(
         isinstance(value, bool) or not isinstance(value, int) or value < 0
         for value in affinity
-    ):
+    ) or affinity != sorted(set(affinity)):
         raise RuntimeError("performance evidence bundle process affinity is invalid")
+    if evidence == "controlled":
+        validate_machine_profile_identity(
+            machine, document["machine_profile"], "performance evidence bundle.machine"
+        )
 
     datasets = _array(document["datasets"], "performance evidence bundle.datasets")
     if not datasets:
@@ -1911,9 +1937,9 @@ def validate_artifact_manifest(manifest: object) -> None:
 
         has_compiler = "compiler_executable" in artifacts_document
         has_commands = "compile_commands" in artifacts_document
-        if has_compiler != has_commands:
+        if has_commands and not has_compiler:
             raise RuntimeError(
-                "artifact manifest compiler artifacts must be present as a pair"
+                "artifact manifest compile commands require a compiler artifact"
             )
         if has_compiler:
             _manifest_artifact(
@@ -1921,6 +1947,7 @@ def validate_artifact_manifest(manifest: object) -> None:
                 "artifact manifest.inputs.artifacts.compiler_executable",
                 revision=False,
             )
+        if has_commands:
             _manifest_artifact(
                 artifacts_document["compile_commands"],
                 "artifact manifest.inputs.artifacts.compile_commands",
@@ -1930,7 +1957,7 @@ def validate_artifact_manifest(manifest: object) -> None:
         build = inputs["build"]
         if build is not None:
             _hex_digest(build, "artifact manifest.inputs.build", (64,))
-            if not has_compiler:
+            if not has_compiler or not has_commands:
                 raise RuntimeError(
                     "artifact manifest owned build requires compiler artifacts"
                 )
