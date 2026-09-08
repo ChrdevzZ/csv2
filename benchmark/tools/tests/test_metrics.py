@@ -48,7 +48,7 @@ class MetricsTests(unittest.TestCase):
         from _schema_subset import validate as validate_schema
 
         report = test_protocol.fixed_metrics_report()
-        schema_path = Path(__file__).resolve().parents[2] / "protocol/schemas/fixed-machine-v8.schema.json"
+        schema_path = Path(__file__).resolve().parents[2] / "protocol/schemas/fixed-machine-v9.schema.json"
         schema = json.loads(schema_path.read_text(encoding="utf-8"))
         arguments = [sys.executable, "-c", "import json, sys; print(json.dumps(sys.argv[1:]))",
                      r"C:\Program Files\tool\input.csv", "with spaces", "", 'embedded"quote',
@@ -278,13 +278,11 @@ class MetricsTests(unittest.TestCase):
                             "allocations=0 allocated_bytes=0"
                         )
                     else:
-                        timing_output = next(value.split("=", 1)[1] for value in command
-                                             if value.startswith("--benchmark_out="))
-                        Path(timing_output).write_text(json.dumps({"benchmarks": [{
+                        stdout = json.dumps({"benchmarks": [{
                             "name": "csv2/traversal/rows-cells/buffer/input.csv/real_time",
                             "real_time": 1, "time_unit": "s",
                             "bytes_per_second": 1, "items_per_second": 1,
-                        }]}), encoding="utf-8")
+                        }]})
                         if case == "drift":
                             commands.write_text("[]", encoding="utf-8")
                     return unittest.mock.Mock(stdout=stdout, stderr="")
@@ -440,13 +438,12 @@ class MetricsTests(unittest.TestCase):
             "writer/raw-direct",
             Path("input.csv"),
             "buffer",
-            Path("result.json"),
             20,
             "0.5s",
             0.1,
         )
         self.assertIn("--benchmark_repetitions=20", command)
-        self.assertIn("--benchmark_out_format=json", command)
+        self.assertIn("--benchmark_format=json", command)
         self.assertTrue(any("writer/raw-direct" in value for value in command))
 
     def test_timing_report_requires_exact_iteration_count(self) -> None:
@@ -462,13 +459,11 @@ class MetricsTests(unittest.TestCase):
                 }
             ]
         }
-        with tempfile.TemporaryDirectory() as directory:
-            path = Path(directory) / "result.json"
-            path.write_text(json.dumps(document), encoding="utf-8")
-            parsed = metrics.parse_timing_report(path, 1)
-            self.assertEqual(parsed["runs"], 1)
-            with self.assertRaisesRegex(RuntimeError, "expected 2"):
-                metrics.parse_timing_report(path, 2)
+        raw = json.dumps(document)
+        parsed = protocol.parse_google_benchmark_json(raw, 1)
+        self.assertEqual(parsed["runs"], 1)
+        with self.assertRaisesRegex(RuntimeError, "expected 2"):
+            protocol.parse_google_benchmark_json(raw, 2)
 
     def test_timing_report_rejects_mixed_benchmark_names(self) -> None:
         records = []
@@ -482,11 +477,9 @@ class MetricsTests(unittest.TestCase):
                     "items_per_second": 1,
                 }
             )
-        with tempfile.TemporaryDirectory() as directory:
-            path = Path(directory) / "result.json"
-            path.write_text(json.dumps({"benchmarks": records}), encoding="utf-8")
-            with self.assertRaisesRegex(RuntimeError, "exactly one benchmark"):
-                metrics.parse_timing_report(path, 2)
+        raw = json.dumps({"benchmarks": records})
+        with self.assertRaisesRegex(RuntimeError, "exactly one benchmark"):
+            protocol.parse_google_benchmark_json(raw, 2)
 
     def test_timing_report_rejects_skipped_or_error_samples(self) -> None:
         for marker in ({"error_occurred": True, "error_message": "read failed"},
@@ -500,11 +493,10 @@ class MetricsTests(unittest.TestCase):
                 "items_per_second": 1,
                 **marker,
             }
-            with self.subTest(marker=marker), tempfile.TemporaryDirectory() as directory:
-                path = Path(directory) / "result.json"
-                path.write_text(json.dumps({"benchmarks": [record]}), encoding="utf-8")
+            with self.subTest(marker=marker):
+                raw = json.dumps({"benchmarks": [record]})
                 with self.assertRaisesRegex(RuntimeError, "failed or skipped"):
-                    metrics.parse_timing_report(path, 1)
+                    protocol.parse_google_benchmark_json(raw, 1)
 
     def test_controlled_timing_requires_every_pmu_counter(self) -> None:
         document = {
@@ -519,11 +511,40 @@ class MetricsTests(unittest.TestCase):
                 }
             ]
         }
-        with tempfile.TemporaryDirectory() as directory:
-            path = Path(directory) / "result.json"
-            path.write_text(json.dumps(document), encoding="utf-8")
-            with self.assertRaisesRegex(RuntimeError, "missing required PMU counters"):
-                metrics.parse_timing_report(path, 1, require_pmu=True)
+        raw = json.dumps(document)
+        with self.assertRaisesRegex(RuntimeError, "missing required PMU counters"):
+            protocol.parse_google_benchmark_json(raw, 1, require_pmu=True)
+
+    def test_google_benchmark_json_validates_consumed_fields(self) -> None:
+        record = {"name": "probe", "real_time": 1, "time_unit": "s",
+                  "bytes_per_second": 2, "items_per_second": 3}
+        for patch in ({"real_time": True}, {"real_time": float("nan")},
+                      {"real_time": 0}, {"time_unit": []},
+                      {"error_occurred": 0}, {"skipped": None},
+                      {"bytes_per_second": "2"}, {"cycles": -1},
+                      {"name": ""}, {"run_type": "other"},
+                      {"repetitions": 2}, {"repetition_index": 1},
+                      {"repetition_index": True}):
+            with self.subTest(patch=patch), self.assertRaises(RuntimeError):
+                protocol.parse_google_benchmark_json(
+                    json.dumps({"benchmarks": [{**record, **patch}]}), 1)
+        for document in ({}, [], {"benchmarks": {}}, {"benchmarks": [None]}):
+            with self.subTest(document=document), self.assertRaises(RuntimeError):
+                protocol.parse_google_benchmark_json(json.dumps(document), 1)
+        for second in ({"repetition_index": 0}, {}):
+            with self.subTest(second=second), self.assertRaises(RuntimeError):
+                protocol.parse_google_benchmark_json(json.dumps({"benchmarks": [
+                    {**record, "repetition_index": 0}, {**record, **second}]}), 2)
+
+    def test_google_benchmark_json_ignores_unconsumed_extensions(self) -> None:
+        record = {"name": "probe", "real_time": 1000, "time_unit": "ms",
+                  "bytes_per_second": 2, "items_per_second": 3}
+        plain = protocol.parse_google_benchmark_json(json.dumps({"benchmarks": [record]}), 1)
+        extended = {"context": {"future": [1]}, "future": True, "benchmarks": [
+            {**record, "future": {"new": "field"}, "repetitions": 1, "repetition_index": 0},
+            {"run_type": "aggregate", "aggregate_name": "median", "future": True}]}
+        self.assertEqual(protocol.parse_google_benchmark_json(json.dumps(extended), 1), plain)
+        self.assertEqual(plain["samples"][0]["seconds"], 1)
 
     def test_compile_commands_resolve_in_the_compilation_directory(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -641,14 +662,14 @@ class MetricsTests(unittest.TestCase):
             script = Path(directory) / "probe.py"
             script.write_text(
                 "import json, os, sys\n"
-                "from pathlib import Path\n"
-                "print(json.dumps(dict(os.environ)))\n"
                 "options = dict(arg.split('=', 1) for arg in sys.argv[1:] if '=' in arg)\n"
-                "if '--benchmark_out' in options:\n"
+                "if '--benchmark_format' in options:\n"
                 "    record = dict(name='probe', real_time=1, time_unit='s', bytes_per_second=1)\n"
                 "    if '--benchmark_perf_counters' in options:\n"
                 "        record.update({key: 1 for key in options['--benchmark_perf_counters'].split(',')})\n"
-                "    Path(options['--benchmark_out']).write_text(json.dumps({'benchmarks': [record]}))\n",
+                "    print(json.dumps({'context': {'environment': dict(os.environ)}, 'benchmarks': [record]}))\n"
+                "else:\n"
+                "    print(json.dumps(dict(os.environ)))\n",
                 encoding="utf-8",
             )
             args = argparse.Namespace(executable=Path(sys.executable), input=Path("input.csv"),
@@ -667,13 +688,13 @@ class MetricsTests(unittest.TestCase):
             ):
                 for pmu in (False, True):
                     result, invocation = metrics.collect_timing(args, pmu=pmu)
-                    environment = json.loads(invocation["stdout"])
+                    environment = json.loads(invocation["stdout"])["context"]["environment"]
                     self.assertFalse(any(key.upper().startswith("BENCHMARK_") for key in environment))
                     self.assertEqual(environment["CSV2_ENV_SENTINEL"], "retained")
                     self.assertEqual("pmu" in result["samples"][0], pmu)
                 if sys.platform.startswith("linux") and Path("/usr/bin/time").is_file():
                     rss = metrics.collect_peak_rss(args)
-                    environment = json.loads(rss["stdout"])
+                    environment = json.loads(rss["stdout"])["context"]["environment"]
                     self.assertFalse(any(key.upper().startswith("BENCHMARK_") for key in environment))
                     self.assertEqual(environment["LC_ALL"], "C")
                     self.assertEqual(environment["CSV2_ENV_SENTINEL"], "retained")

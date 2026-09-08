@@ -17,11 +17,7 @@ from pathlib import Path
 from typing import Sequence
 
 from . import ARTIFACT_MANIFEST_SCHEMA, METRICS_SCHEMA
-from . import artifacts, atomic, builds, derivation, machine, protocol, statistics
-
-
-TIME_SCALE = {"ns": 1e-9, "us": 1e-6, "ms": 1e-3, "s": 1.0}
-PMU_COUNTERS = ("cycles", "instructions", "branch-misses")
+from . import artifacts, atomic, builds, derivation, machine, protocol
 
 
 def collector_source_paths() -> list[Path]:
@@ -104,7 +100,6 @@ def timing_command(
     operation: str,
     input_path: Path,
     source: str,
-    output: Path,
     runs: int,
     minimum_time: str,
     warmup_seconds: float,
@@ -125,83 +120,11 @@ def timing_command(
         "--benchmark_enable_random_interleaving=true",
         "--benchmark_report_aggregates_only=false",
         "--benchmark_display_aggregates_only=false",
-        "--benchmark_out_format=json",
-        f"--benchmark_out={output}",
+        "--benchmark_format=json",
     ]
     if pmu:
-        command.append(f"--benchmark_perf_counters={','.join(PMU_COUNTERS)}")
+        command.append(f"--benchmark_perf_counters={','.join(protocol.PMU_COUNTERS)}")
     return command
-
-
-def parse_timing_report(
-    path: Path, expected_runs: int, *, require_pmu: bool = False
-) -> dict[str, object]:
-    try:
-        document = json.loads(path.read_text(encoding="utf-8"))
-        records = document["benchmarks"]
-    except (OSError, json.JSONDecodeError, KeyError, TypeError) as error:
-        raise RuntimeError("Google Benchmark JSON is malformed") from error
-    samples: list[dict[str, object]] = []
-    names: set[str] = set()
-    for record in records:
-        if record.get("run_type", "iteration") != "iteration":
-            continue
-        if record.get("error_occurred") or record.get("skipped"):
-            message = str(record.get("error_message", "")).strip()
-            suffix = f": {message}" if message else ""
-            raise RuntimeError(f"benchmark sample failed or skipped{suffix}")
-        unit = str(record.get("time_unit", ""))
-        if unit not in TIME_SCALE:
-            raise RuntimeError(f"unsupported Google Benchmark time unit: {unit}")
-        seconds = (
-            protocol.finite_nonnegative(record.get("real_time"), "real_time")
-            * TIME_SCALE[unit]
-        )
-        if seconds <= 0:
-            raise RuntimeError("benchmark sample duration must be positive")
-        name = str(record.get("name", ""))
-        if not name:
-            raise RuntimeError("benchmark sample has no name")
-        names.add(name)
-        sample: dict[str, object] = {
-            "name": name,
-            "seconds": seconds,
-            "bytes_per_second": protocol.finite_nonnegative(
-                record.get("bytes_per_second", 0), "bytes_per_second"
-            ),
-            "items_per_second": protocol.finite_nonnegative(
-                record.get("items_per_second", 0), "items_per_second"
-            ),
-        }
-        counters = {}
-        for counter in PMU_COUNTERS:
-            if counter in record:
-                counters[counter] = protocol.finite_nonnegative(record[counter], counter)
-        if counters:
-            sample["pmu"] = counters
-        if require_pmu and set(counters) != set(PMU_COUNTERS):
-            missing = sorted(set(PMU_COUNTERS) - set(counters))
-            raise RuntimeError(
-                "timing report is missing required PMU counters: " + ", ".join(missing)
-            )
-        samples.append(sample)
-    if len(names) != 1:
-        raise RuntimeError("timing report must contain exactly one benchmark name")
-    if len(samples) != expected_runs:
-        raise RuntimeError(
-            f"timing report contains {len(samples)} samples; expected {expected_runs}"
-        )
-    throughput = [float(sample["bytes_per_second"]) for sample in samples]
-    duration = [float(sample["seconds"]) for sample in samples]
-    throughput_median, throughput_mad = statistics.median_mad(throughput)
-    duration_median, duration_mad = statistics.median_mad(duration)
-    return {
-        "benchmark": next(iter(names)),
-        "runs": len(samples),
-        "samples": samples,
-        "bytes_per_second": {"median": throughput_median, "mad": throughput_mad},
-        "seconds": {"median": duration_median, "mad": duration_mad},
-    }
 
 
 def measurement_environment() -> dict[str, str]:
@@ -212,33 +135,19 @@ def measurement_environment() -> dict[str, str]:
 def collect_timing(
     args: argparse.Namespace, *, pmu: bool = False
 ) -> tuple[dict[str, object], dict[str, object]]:
-    with tempfile.TemporaryDirectory(prefix="csv2-current-") as directory:
-        output = Path(directory) / "benchmark.json"
-        command = timing_command(
-            args.executable,
-            args.operation,
-            args.input,
-            args.source,
-            output,
-            args.runs,
-            args.minimum_time,
-            args.warmup_seconds,
-            pmu,
-        )
-        completed = run(command, environment=measurement_environment())
-        if not output.is_file() or output.stat().st_size == 0:
-            raise RuntimeError(
-                "Google Benchmark produced no JSON report\n"
-                f"stdout:\n{completed.stdout}\n"
-                f"stderr:\n{completed.stderr}"
-            )
-        result = parse_timing_report(output, args.runs, require_pmu=pmu)
-        invocation = {
-            "command": command,
-            "stdout": completed.stdout.rstrip("\n"),
-            "stderr": completed.stderr.rstrip("\n"),
-        }
-        return result, invocation
+    command = timing_command(
+        args.executable, args.operation, args.input, args.source,
+        args.runs, args.minimum_time, args.warmup_seconds, pmu,
+    )
+    completed = run(command, environment=measurement_environment())
+    result = protocol.parse_google_benchmark_json(
+        completed.stdout, args.runs, require_pmu=pmu,
+    )
+    return result, {
+        "command": command,
+        "stdout": completed.stdout,
+        "stderr": completed.stderr,
+    }
 
 
 def collect_peak_rss(args: argparse.Namespace) -> dict[str, object] | None:
@@ -249,13 +158,11 @@ def collect_peak_rss(args: argparse.Namespace) -> dict[str, object] | None:
         return None
     with tempfile.TemporaryDirectory(prefix="csv2-rss-") as directory:
         report = Path(directory) / "time.txt"
-        timing = Path(directory) / "benchmark.json"
         benchmark = timing_command(
             args.executable,
             args.operation,
             args.input,
             args.source,
-            timing,
             1,
             args.minimum_time,
             0.0,

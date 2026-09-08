@@ -11,6 +11,8 @@
 #include <limits>
 #include <string>
 #include <system_error>
+#include <type_traits>
+#include <utility>
 #include <vector>
 
 #if CSV2_HAS_FILESYSTEM
@@ -20,6 +22,28 @@
 using namespace csv2_test;
 
 #if CSV2_HAS_MMAP
+namespace {
+template <typename Mapping>
+auto explicit_write_data(int)
+    -> decltype(std::declval<Mapping &>().template data<mio::access_mode::write, void>(),
+                std::true_type{});
+template <typename> std::false_type explicit_write_data(...);
+static_assert(!decltype(explicit_write_data<mio::mmap_source>(0))::value,
+              "read-only mappings cannot opt into writable data");
+static_assert(!decltype(explicit_write_data<mio::shared_mmap_source>(0))::value,
+              "shared read-only mappings cannot opt into writable data");
+} // namespace
+
+static_assert(std::is_same<decltype(std::declval<mio::mmap_source &>()[0]), const char &>::value,
+              "source read-only");
+static_assert(
+    std::is_same<decltype(std::declval<mio::shared_mmap_source &>()[0]), const char &>::value,
+    "shared source read-only");
+static_assert(std::is_same<decltype(std::declval<mio::mmap_sink &>()[0]), char &>::value,
+              "sink writable");
+static_assert(std::is_same<decltype(std::declval<mio::shared_mmap_sink &>()[0]), char &>::value,
+              "shared sink writable");
+
 CSV2_TEST_CASE("mio.mapping.report-mmap-errors-and-release-handles-after-mapping-failures",
                "mio.mapping") {
   ReaderWithoutHeader reader;
@@ -138,7 +162,13 @@ CSV2_TEST_CASE("mio.mapping.preserve-ownership-through-shared-and-writable-same-
   const mio::file_handle_type shared_handle = shared.file_handle();
   shared.map(shared_handle, 6, 5, error);
   CSV2_REQUIRE_FALSE(error);
-  CSV2_REQUIRE(std::string(shared.data(), shared.size()) == "1,2,3");
+  CSV2_REQUIRE(std::string(shared.begin(), shared.end()) == "1,2,3");
+  CSV2_REQUIRE(std::string(shared.rbegin(), shared.rend()) == "3,2,1");
+  const char *const shared_data = shared.data();
+  shared.map(source_path + ".missing", error);
+  CSV2_REQUIRE(error);
+  CSV2_REQUIRE(shared.data() == shared_data);
+  CSV2_REQUIRE(shared.size() == 5);
   shared.map(shared_handle, 12, 5, error);
   CSV2_REQUIRE_FALSE(error);
   CSV2_REQUIRE(std::string(shared.data(), shared.size()) == "4,5,6");
@@ -170,9 +200,21 @@ CSV2_TEST_CASE("mio.mapping.preserve-ownership-through-shared-and-writable-same-
   CSV2_REQUIRE(const_sink[0] == 'c');
   sink.unmap();
 
+  mio::shared_mmap_sink shared_sink;
+  CSV2_REQUIRE(shared_sink.data() == nullptr);
+  shared_sink.map(path, error);
+  CSV2_REQUIRE_FALSE(error);
+  shared_sink[0] = 'Q';
+  mio::shared_mmap_sink moved_sink(std::move(shared_sink));
+  CSV2_REQUIRE(shared_sink.data() == nullptr);
+  CSV2_REQUIRE(moved_sink[0] == 'Q');
+  moved_sink.sync(error);
+  CSV2_REQUIRE_FALSE(error);
+  moved_sink.unmap();
+
   std::ifstream input(path.c_str(), std::ios::binary);
   std::string persisted((std::istreambuf_iterator<char>(input)), std::istreambuf_iterator<char>());
-  CSV2_REQUIRE(persisted == "aZcdef");
+  CSV2_REQUIRE(persisted == "QZcdef");
 }
 #endif
 

@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
+import json
 import math
 import re
 from typing import Iterable
 
 from . import COMPARISON_SCHEMA, CURRENT_PROTOCOL, EVIDENCE_SCHEMA, METRICS_SCHEMA
 from . import COMMON_PROTOCOL
-from . import derivation, owned_inputs
+from . import derivation, owned_inputs, statistics
 
 UINT64_MAX = (1 << 64) - 1
 COMMON_OPERATION_CAPABILITIES = {
@@ -478,11 +479,11 @@ def _current_invocation(
         "--benchmark_enable_random_interleaving": "true",
         "--benchmark_report_aggregates_only": "false",
         "--benchmark_display_aggregates_only": "false",
-        "--benchmark_out_format": "json",
+        "--benchmark_format": "json",
     }
     if pmu:
         expected["--benchmark_perf_counters"] = "cycles,instructions,branch-misses"
-    variable = {"--benchmark_min_time", "--benchmark_min_warmup_time", "--benchmark_out"}
+    variable = {"--benchmark_min_time", "--benchmark_min_warmup_time"}
     if set(options) != expected.keys() | variable or any(
         options[key] != value for key, value in expected.items()
     ):
@@ -542,6 +543,96 @@ def _sample_statistics(
         _number(sample, f"{label}.samples[{index}]", positive=True)
         for index, sample in enumerate(samples)
     ]
+
+
+TIME_SCALE = {"ns": 1e-9, "us": 1e-6, "ms": 1e-3, "s": 1.0}
+PMU_COUNTERS = ("cycles", "instructions", "branch-misses")
+
+
+def parse_google_benchmark_json(
+    text: str, expected_runs: int, *, require_pmu: bool = False
+) -> dict[str, object]:
+    try:
+        document = json.loads(text)
+        records = _array(_object(document, "Google Benchmark JSON")["benchmarks"],
+                         "Google Benchmark JSON.benchmarks")
+    except (json.JSONDecodeError, KeyError, TypeError) as error:
+        raise RuntimeError("Google Benchmark JSON is malformed") from error
+    samples: list[dict[str, object]] = []
+    names: set[str] = set()
+    repetition_indices: set[int] = set()
+    for value in records:
+        record = _object(value, "Google Benchmark record")
+        failed = _boolean(record.get("error_occurred", False), "error_occurred")
+        skipped = _boolean(record.get("skipped", False), "skipped")
+        if failed or skipped:
+            message = str(record.get("error_message" if failed else "skip_message", "")).strip()
+            suffix = f": {message}" if message else ""
+            raise RuntimeError(f"benchmark sample failed or skipped{suffix}")
+        run_type = record.get("run_type", "iteration")
+        if run_type == "aggregate":
+            continue
+        if run_type != "iteration":
+            raise RuntimeError("unsupported Google Benchmark run type")
+        if "repetitions" in record and _integer(record["repetitions"], "repetitions", 1) != expected_runs:
+            raise RuntimeError("Google Benchmark repetitions differ from requested runs")
+        if "repetition_index" in record:
+            index = _integer(record["repetition_index"], "repetition_index")
+            if index >= expected_runs or index in repetition_indices:
+                raise RuntimeError("invalid or duplicate Google Benchmark repetition index")
+            repetition_indices.add(index)
+        unit = record.get("time_unit", "")
+        if not isinstance(unit, str) or unit not in TIME_SCALE:
+            raise RuntimeError(f"unsupported Google Benchmark time unit: {unit}")
+        seconds = (
+            _number(record.get("real_time"), "real_time")
+            * TIME_SCALE[unit]
+        )
+        if seconds <= 0:
+            raise RuntimeError("benchmark sample duration must be positive")
+        name = _string(record.get("name"), "benchmark sample name")
+        names.add(name)
+        sample: dict[str, object] = {
+            "name": name,
+            "seconds": seconds,
+            "bytes_per_second": _number(
+                record.get("bytes_per_second"), "bytes_per_second"
+            ),
+            "items_per_second": _number(
+                record.get("items_per_second", 0), "items_per_second"
+            ),
+        }
+        counters = {}
+        for counter in PMU_COUNTERS:
+            if counter in record:
+                counters[counter] = _number(record[counter], counter)
+        if counters:
+            sample["pmu"] = counters
+        if require_pmu and set(counters) != set(PMU_COUNTERS):
+            missing = sorted(set(PMU_COUNTERS) - set(counters))
+            raise RuntimeError(
+                "timing report is missing required PMU counters: " + ", ".join(missing)
+            )
+        samples.append(sample)
+    if repetition_indices and len(repetition_indices) != len(samples):
+        raise RuntimeError("Google Benchmark repetition indices are incomplete")
+    if len(names) != 1:
+        raise RuntimeError("timing report must contain exactly one benchmark name")
+    if len(samples) != expected_runs:
+        raise RuntimeError(
+            f"timing report contains {len(samples)} samples; expected {expected_runs}"
+        )
+    throughput = [float(sample["bytes_per_second"]) for sample in samples]
+    duration = [float(sample["seconds"]) for sample in samples]
+    throughput_median, throughput_mad = statistics.median_mad(throughput)
+    duration_median, duration_mad = statistics.median_mad(duration)
+    return {
+        "benchmark": next(iter(names)),
+        "runs": len(samples),
+        "samples": samples,
+        "bytes_per_second": {"median": throughput_median, "mad": throughput_mad},
+        "seconds": {"median": duration_median, "mad": duration_mad},
+    }
 
 
 def _timing(
@@ -1589,6 +1680,8 @@ def validate_fixed_metrics_report(report: object) -> None:
                 input_bytes=input_bytes, benchmark_name=benchmark_name)
         _current_invocation(document["timing_invocation"], "fixed-machine report.timing_invocation",
                             document, timing=True)
+        if parse_google_benchmark_json(document["timing_invocation"]["stdout"], runs) != document["timing"]:
+            raise RuntimeError("fixed-machine timing differs from saved Google Benchmark JSON")
         if document["clean_build"] is not None:
             _clean_build(document["clean_build"], "fixed-machine report.clean_build",
                          allow_empty_arguments=artifact_mode == "external")
@@ -1606,6 +1699,9 @@ def validate_fixed_metrics_report(report: object) -> None:
                 document.get("pmu_invocation"), "fixed-machine report.pmu_invocation",
                 document, timing=True, pmu=True,
             )
+            if parse_google_benchmark_json(document["pmu_invocation"]["stdout"], runs,
+                                           require_pmu=True) != document["pmu"]:
+                raise RuntimeError("fixed-machine PMU differs from saved Google Benchmark JSON")
         if document.get("peak_rss") is not None:
             _peak_rss(document["peak_rss"], "fixed-machine report.peak_rss", document)
         if document.get("code_size") is not None:

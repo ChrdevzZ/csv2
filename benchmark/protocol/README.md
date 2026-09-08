@@ -9,7 +9,7 @@ reject unknown and older versions; there is no implicit migration path.
 | current verify wire | `csv2-current-v4` | exact checksum, allocation, and semantic identity |
 | build manifest | `csv2-benchmark-build-v2` | immutable source and audited build identity |
 | comparison report | `csv2-benchmark-report-v7` | paired A/A or A/B primary observations and derived results |
-| fixed-machine metrics | `csv2-fixed-machine-metrics-v8` | bound timing, PMU, RSS, size, and provenance |
+| fixed-machine metrics | `csv2-fixed-machine-metrics-v9` | bound timing, PMU, RSS, size, and provenance |
 | complete evidence | `csv2-performance-evidence-bundle-v4` | cross-checked final decision gate |
 | artifact manifest | `csv2-artifact-manifest-v4` | component/evidence inputs and output digests |
 | machine profile | `csv2-machine-profile-v1` | reviewed identity and operating constraints for controlled evidence |
@@ -117,7 +117,7 @@ The online runner and finalizer share the run-count, warmup, and
 iterations-per-run comparison rule; internally valid reports with different
 sampling settings cannot form calibrated evidence.
 
-`csv2-fixed-machine-metrics-v8` embeds the owned current-tree build manifest
+`csv2-fixed-machine-metrics-v9` embeds the owned current-tree build manifest
 and binds semantic verification, allocation verification, Google Benchmark
 samples, PMU counters, peak RSS, code size, and clean isolated build timing.
 The collector reuses the canonical compiler artifact selected by the owned
@@ -151,7 +151,12 @@ revisions that executed verification twice report cumulative allocations for two
 writes; revision and build identity must be considered before comparing those
 measurements with single-execution results.
 Saved commands and benchmark names must match the bound artifacts and selected
-operation. Timing and PMU summaries are rederived from saved samples, and each
+operation. Timing and PMU invocations retain Google Benchmark JSON stdout and
+stderr. Collection and offline validation use one parser to reconstruct every
+sample, counter, median, and MAD from that raw JSON; the reconstructed result
+must equal the normalized fields. Unknown third-party JSON fields are ignored.
+Missing or malformed raw records cannot be replaced by internally consistent
+summaries. Each
 real-time sample must satisfy `seconds * bytes_per_second = input corpus size`
 within floating-point rounding tolerance. The input size is the dataset
 artifact size, which can differ from the operation's verified output bytes. A
@@ -159,7 +164,7 @@ artifact size, which can differ from the operation's verified output bytes. A
 and byte basis that must match one and only one A/B case. Controlled reports
 require cycles, instructions, branch misses, RSS, size, positive warmup, at
 least 20 repetitions, exact affinity, and complete invocation records.
-Fixed-metrics v8 retains GNU time output in `peak_rss.time_output` and GNU
+Fixed-metrics v9 also retains GNU time output in `peak_rss.time_output` and GNU
 size stdout/stderr in `code_size`. The collector and offline validator share
 the parsers used to reconstruct the structured values. RSS is whole-process
 peak resident memory (`%M` in KiB), measured with one repetition and no extra

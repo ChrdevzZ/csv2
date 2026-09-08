@@ -483,6 +483,8 @@ CSV2 was created by [Pranav (`p-ranav`)](https://github.com/p-ranav). Its
 and amalgamated distribution inherited by this fork.
 
 Memory mapping vendors [mandreyel/mio](https://github.com/mandreyel/mio) under [`LICENSE.mio`](LICENSE.mio).
+The distributed MIO source mappings expose read-only element access; code that previously obtained a writable
+reference or pointer from a source mapping must use a writable sink mapping instead.
 Verification-only Catch2 and Google Benchmark provenance is recorded in
 [`third_party/verification/README.md`](third_party/verification/README.md).
 

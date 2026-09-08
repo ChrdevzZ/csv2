@@ -11,7 +11,7 @@
     "post_build", "machine_profile"
   ],
   "properties": {
-    "schema": {"const": "csv2-fixed-machine-metrics-v8"},
+    "schema": {"const": "csv2-fixed-machine-metrics-v9"},
     "artifact_mode": {"enum": ["owned", "external"]},
     "build": {
       "oneOf": [
