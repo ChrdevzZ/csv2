@@ -225,11 +225,23 @@ CSV2_TEST_CASE(
   {
     ThrowingWriter writer(explicit_stream);
     CSV2_REQUIRE_THROWS_AS(writer.close(), CloseError);
+    writer.close();
   }
   CSV2_REQUIRE(explicit_stream.close_count == 1);
 
   ThrowingCloseStream destructor_stream;
   { ThrowingWriter writer(destructor_stream); }
   CSV2_REQUIRE(destructor_stream.close_count == 1);
+
+  ThrowingCloseStream source_stream;
+  ThrowingCloseStream replaced_stream;
+  {
+    ThrowingWriter source(source_stream);
+    ThrowingWriter destination(replaced_stream);
+    destination = std::move(source);
+    CSV2_REQUIRE(replaced_stream.close_count == 1);
+  }
+  CSV2_REQUIRE(source_stream.close_count == 1);
+  CSV2_REQUIRE(replaced_stream.close_count == 1);
 }
 #endif
