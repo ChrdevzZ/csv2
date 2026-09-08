@@ -229,6 +229,11 @@ Preflight runs the complete build-independent benchmark Python tooling suite onc
 Its `benchmark-tooling` CTest label lets other CI owners omit that duplicate
 execution while local unfiltered CTest still runs it. Standalone full, fuzz, and
 performance dispatches retain one owner; the extended full matrix uses GCC.
+Preflight also owns Linux vendor-tool safety tests. Downstream Linux jobs omit
+`vendor-safety` after preflight; independently dispatched Linux and Full workflows
+retain it on GCC. Windows uses its ordinary MSVC owner and macOS retains its
+native owner for the vendor suite's filesystem behavior. Local CTest registration
+is unchanged.
 
 Linux, Windows, and macOS own representative platform behavior. Benchmark
 changes additionally select their `benchmark-portability` slice. Exact-head
@@ -256,7 +261,10 @@ runs for 50,000 iterations, and crash reproducers are retained as failure
 artifacts. Every libFuzzer entry runs both targets even if the first fails and
 uses separate Reader/Writer artifact prefixes.
 
-Pull requests that select the full owner run the exact-head GCC 14 full profile.
+Pull requests that select the full owner run the exact-head GCC 14 full profile
+with minitest. The production standard/header/variant matrix is unchanged;
+ordinary Clang/libc++, MSVC, and AppleClang quick owners retain Catch2 integration.
+The backend choice reduces test-framework compilation, not runtime coverage.
 Pull requests that select the performance owner also run an exploratory
 end-to-end protocol smoke. Manual `full.yml`
 dispatches add Clang/libc++, Windows, macOS, coverage, and extended fuzzing.
@@ -266,7 +274,11 @@ to select this slice alone for manual runs. It validates raw profiles,
 first-party LCOV records, and the HTML report independently of the aggregate
 Gate. Coverage and full-matrix calls have separate concurrency groups.
 Compiler caches live in runner temporary storage and are excluded from source
-packages.
+packages. Linux caches share platform, architecture, and compiler-family restore
+prefixes while retaining separate owner save keys. Ccache still hashes compiler
+content and compilation inputs; restore prefixes neither merge snapshots nor
+share results between concurrently running jobs. Cache write permissions remain
+limited to trusted events and same-repository PRs.
 Manual `perf.yml` dispatches retain exploratory and controlled machine-profile
 runs. Controlled dispatches accept only repository-owner requests from the
 default branch with explicit 40-character baseline and candidate SHAs, then

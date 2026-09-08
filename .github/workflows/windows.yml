@@ -91,7 +91,7 @@ jobs:
         run: >-
           ctest --test-dir build
           -C ${{ matrix.configuration }}
-          -LE benchmark-checksum
+          -LE "benchmark-checksum${{ matrix.expected_id != 'MSVC' && '|vendor-safety' || '' }}"
           --parallel 2
           --no-tests=error
           --output-junit ctest.xml

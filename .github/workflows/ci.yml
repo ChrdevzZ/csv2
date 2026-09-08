@@ -100,6 +100,7 @@ jobs:
     needs: [classify, preflight]
     uses: ./.github/workflows/linux.yml
     with:
+      tooling_preflight: true
       quick: ${{ needs.classify.outputs.quick == 'true' }}
       benchmark: ${{ needs.classify.outputs.benchmark == 'true' }}
 

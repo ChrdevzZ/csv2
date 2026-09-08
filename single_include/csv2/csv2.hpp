@@ -871,14 +871,17 @@ bool validate_csv(const char *buffer, std::size_t size,
  * OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
  */
 
-#ifndef MIO_PAGE_HEADER
-#define MIO_PAGE_HEADER
-
 #ifdef _WIN32
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
 #include <windows.h>
 #else
 #include <unistd.h>
 #endif
+
+#ifndef MIO_PAGE_HEADER
+#define MIO_PAGE_HEADER
 
 namespace mio {
 
@@ -960,15 +963,6 @@ inline size_t make_offset_page_aligned(size_t offset) noexcept {
 #include <filesystem>
 #endif
 
-#ifdef _WIN32
-#ifndef WIN32_LEAN_AND_MEAN
-#define WIN32_LEAN_AND_MEAN
-#endif // WIN32_LEAN_AND_MEAN
-#include <windows.h>
-#else // ifdef _WIN32
-#define INVALID_HANDLE_VALUE -1
-#endif // ifdef _WIN32
-
 namespace mio {
 
 // This value may be provided as the `length` parameter to the constructor or
@@ -983,7 +977,11 @@ using file_handle_type = int;
 
 // This value represents an invalid file handle type. This can be used to
 // determine whether `basic_mmap::file_handle` is valid, for example.
+#ifdef _WIN32
 const static file_handle_type invalid_handle = INVALID_HANDLE_VALUE;
+#else
+const static file_handle_type invalid_handle = -1;
+#endif
 
 // Windows file-mapping APIs use nullptr rather than INVALID_HANDLE_VALUE.
 #ifdef _WIN32
@@ -1024,7 +1022,7 @@ private:
   // Windows systems the file handle is necessary to retrieve a file mapping
   // handle, but any subsequent operations on the mapped region must be done
   // through the latter.
-  handle_type file_handle_ = INVALID_HANDLE_VALUE;
+  handle_type file_handle_ = invalid_handle;
 #ifdef _WIN32
   handle_type file_mapping_handle_ = invalid_mapping_handle;
 #endif
