@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import copy
+import concurrent.futures
+import threading
 import hashlib
 import json
 import tempfile
@@ -357,6 +359,58 @@ class EvidenceBundleTests(unittest.TestCase):
         self.assertEqual(manifest["report"], output_identity)
         protocol.validate_artifact_manifest(manifest)
 
+    def test_concurrent_publication_preserves_winner_pair(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
+            inputs = []
+            for name in ("a", "b"):
+                source = root / name
+                source.mkdir()
+                inputs.append(self.persisted_inputs(source))
+            output, manifest = root / "evidence.json", root / "evidence.manifest.json"
+            ready = threading.Barrier(2, timeout=10)
+            manifest_ready, second_done = threading.Event(), threading.Event()
+            worker = threading.local()
+            real_stage, real_publish = evidence.atomic.stage_json, evidence.atomic.publish_staged
+
+            def stage(path, document):
+                temporary = real_stage(path, document)
+                if path == output:
+                    ready.wait()  # Both finalizers have passed the existence checks.
+                return temporary
+
+            def publish(temporary, path, **options):
+                if path == manifest and worker.index == 1:
+                    self.assertTrue(manifest_ready.wait(10))
+                real_publish(temporary, path, **options)
+                if path == manifest and worker.index == 0:
+                    manifest_ready.set()
+                    self.assertTrue(second_done.wait(10))
+
+            def finalize(index):
+                worker.index = index
+                try:
+                    return evidence.finalize(**inputs[index], output=output, output_manifest=manifest)
+                except FileExistsError as error:
+                    return error
+                finally:
+                    if index == 1:
+                        second_done.set()
+
+            with mock.patch.object(evidence, "_verify_comparison_manifest"), \
+                 mock.patch.object(evidence, "_verify_fixed_manifest"), \
+                 mock.patch.object(evidence.builds, "validate_build_manifest"), \
+                 mock.patch.object(evidence.builds, "verify_current_build_manifest"), \
+                 mock.patch.object(evidence.atomic, "stage_json", side_effect=stage), \
+                 mock.patch.object(evidence.atomic, "publish_staged", side_effect=publish), \
+                 concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
+                results = list(pool.map(finalize, (0, 1)))
+            self.assertIsInstance(results[1], FileExistsError)
+            self.assertEqual(json.loads(output.read_text(encoding="utf-8")), results[0])
+            self.assertEqual(json.loads(manifest.read_text(encoding="utf-8"))["report"],
+                             artifacts.metadata(output))
+            self.assertEqual(list(root.glob("*.tmp")), [])
+
     def test_finalizer_never_publishes_bundle_before_its_manifest(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -365,10 +419,10 @@ class EvidenceBundleTests(unittest.TestCase):
             output_manifest = root / "evidence.manifest.json"
             real_publish = evidence.atomic.publish_staged
 
-            def fail_final_publication(temporary: Path, destination: Path) -> None:
+            def fail_final_publication(temporary: Path, destination: Path, **options) -> None:
                 if destination == output.resolve(strict=False):
                     raise OSError("simulated final publication failure")
-                real_publish(temporary, destination)
+                real_publish(temporary, destination, **options)
 
             with mock.patch.object(
                 evidence.atomic,
@@ -385,6 +439,25 @@ class EvidenceBundleTests(unittest.TestCase):
             manifest = json.loads(output_manifest.read_text(encoding="utf-8"))
             self.assertEqual(manifest["kind"], "evidence-bundle")
             self.assertEqual(manifest["report"]["path"], str(output.resolve()))
+
+    def test_final_publication_rejects_target_claimed_after_precheck(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
+            paths = self.persisted_inputs(root)
+            output, manifest = root / "evidence.json", root / "evidence.manifest.json"
+            real_publish = evidence.atomic.publish_staged
+
+            def claim_bundle(temporary, destination, **options):
+                if destination == output:
+                    output.write_bytes(b"other publisher")
+                real_publish(temporary, destination, **options)
+
+            with mock.patch.object(evidence.atomic, "publish_staged", side_effect=claim_bundle):
+                with self.assertRaises(FileExistsError):
+                    self.finalize_with_isolated_manifest_checks(paths, output, manifest)
+            self.assertEqual(output.read_bytes(), b"other publisher")
+            self.assertTrue(manifest.is_file())
+            self.assertEqual(list(root.glob("*.tmp")), [])
 
     def test_finalizer_rejects_output_aliasing_an_input(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

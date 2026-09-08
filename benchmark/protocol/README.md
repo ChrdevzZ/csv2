@@ -265,11 +265,16 @@ field alone is insufficient.
 Every completed component and final evidence bundle is accompanied by
 `csv2-artifact-manifest-v4`. Writers reject direct, symlink, and hardlink
 output aliases and use unique, flushed and fsynced same-directory temporary
-files. Component reports publish before their bound SHA-256 manifest. The
-finalizer reverses that commit order: it stages the bundle, publishes the
-manifest prerequisite, and atomically publishes the eligible bundle last, so
-an interrupted run cannot leave an unbound decision document. Final evidence
-paths must be new; the finalizer never overwrites a prior publication. A
+files. Component reports use atomic replacement for lifecycle updates and publish
+before their bound SHA-256 manifest. The finalizer stages the bundle, exclusively
+publishes the manifest prerequisite, and exclusively publishes the eligible bundle
+last. Both final paths must be new: the filesystem operation rejects an existing
+destination without replacing it, even if an earlier existence check passed.
+This requires same-directory hard-link support; unsupported filesystems fail
+without an overwriting fallback. Failure cleanup removes only the attempt's
+staging files. An interruption may leave a manifest without a bundle; this is
+incomplete evidence, and retry requires fresh output paths. These two publications
+are not a multi-file transaction and assume a trusted working directory. A
 fixed-metrics manifest closes and validates the collector source bundle, timing and
 allocation executables, dataset, and (for an owned build) the paired compiler
 executable and compile-command artifacts. External exploratory collection may

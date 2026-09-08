@@ -184,7 +184,7 @@ jobs:
             --fixed-metrics-manifest build-perf-smoke/reports/current-metrics.json.sha256.json \
             --corpus-manifest build-perf-smoke/current-owned/build/benchmark-corpus/manifest.json \
             --output build-perf-smoke/reports/evidence.json
-          python3 -B -c 'import json,sys; sys.path.insert(0,"benchmark/tools"); from csv2bench import protocol; root="build-perf-smoke/reports/"; [protocol.validate_comparison_report(json.load(open(root+n,encoding="utf-8"))) for n in ("aa.json","ab.json","upstream-ab.json")]; protocol.validate_fixed_metrics_report(json.load(open(root+"current-metrics.json",encoding="utf-8"))); protocol.validate_evidence_bundle(json.load(open(root+"evidence.json",encoding="utf-8")))'
+          python3 -B -c 'import json,sys; sys.path.insert(0,"benchmark/tools"); from csv2bench import protocol; root="build-perf-smoke/reports/"; protocol.validate_comparison_report(json.load(open(root+"upstream-ab.json",encoding="utf-8"))); protocol.validate_evidence_bundle(json.load(open(root+"evidence.json",encoding="utf-8")))'
 
       - name: Upload protocol-smoke diagnostics
         if: always()

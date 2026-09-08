@@ -1,4 +1,4 @@
-"""Crash-safe, same-directory JSON report replacement."""
+"""Durable same-directory JSON staging and publication."""
 
 from __future__ import annotations
 
@@ -45,12 +45,18 @@ def stage_json(path: Path, report: dict[str, object]) -> Path:
         raise
 
 
-def publish_staged(temporary: Path, path: Path) -> None:
-    """Atomically publish a same-directory staged file and sync its directory."""
+def publish_staged(
+    temporary: Path, path: Path, *, replace_existing: bool = True
+) -> None:
+    """Publish a completed stage by replacement or exclusive creation."""
     try:
         if temporary.parent.resolve(strict=True) != path.parent.resolve(strict=True):
             raise RuntimeError("staged JSON must share its destination directory")
-        replace(temporary, path)
+        if replace_existing:
+            replace(temporary, path)
+        else:
+            os.link(temporary, path)
+            temporary.unlink()
         if os.name == "posix":
             flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
             directory_descriptor = os.open(path.parent, flags)

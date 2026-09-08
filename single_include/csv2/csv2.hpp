@@ -3433,22 +3433,7 @@ public:
 #if CSV2_HAS_STRING_VIEW
   // Borrow a string_view under the lifetime and mutation contract above.
   bool parse_view(std::string_view sv) {
-    const char *const data = sv.data();
-    const size_t size = sv.size();
-    if (size == 0) {
-      reset_source_();
-      return false;
-    }
-    const bool owned_range = owns_range_(data, size);
-    if (aliases_source_(data) && !owned_range) {
-      reset_source_();
-      return false;
-    }
-    if (!owned_range)
-      reset_source_();
-    buffer_ = data;
-    buffer_size_ = size;
-    return true;
+    return parse_borrowed(sv.data(), sv.size());
   }
 #endif
 
