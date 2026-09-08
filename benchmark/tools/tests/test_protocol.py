@@ -3,7 +3,7 @@ from __future__ import annotations
 import copy
 import json
 import unittest
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 import _support  # noqa: F401
 from _schema_subset import ValidationError as SchemaValidationError
@@ -381,12 +381,16 @@ def fixed_metrics_report() -> dict[str, object]:
 def bind_metrics_invocations(report):
     """Build authentic saved invocations for synthetic complete-report fixtures."""
     result = report["verification"]["result"]
+    paths = {
+        key: builds.owned_inputs.recorded_path(report["artifacts"][key]["path"])
+        for key in ("executable", "allocation_executable", "dataset")
+    }
     for key, artifact_key in (("verification", "executable"), ("allocations", "allocation_executable")):
         wire = dict(result)
         if key == "allocations":
             wire.update(allocations=str(report[key]["count"]), allocated_bytes=str(report[key]["bytes"]))
         report[key]["invocation"] = {
-            "command": metrics.verify_command(Path(report["artifacts"][artifact_key]["path"]), report["operation"], Path(report["artifacts"]["dataset"]["path"]), report["source"]),
+            "command": metrics.verify_command(paths[artifact_key], report["operation"], paths["dataset"], report["source"]),
             "stdout": " ".join(f"{key}={value}" for key, value in wire.items()), "stderr": "",
         }
     for key in ("timing", "pmu"):
@@ -398,15 +402,15 @@ def bind_metrics_invocations(report):
         for sample in timing["samples"]:
             sample["name"] = name
         report[key + "_invocation"] = {
-            "command": metrics.timing_command(Path(report["artifacts"]["executable"]["path"]), report["operation"], Path(report["artifacts"]["dataset"]["path"]), report["source"], Path("/benchmark.json"), report["runs"], "0.01s", 0.01, key == "pmu"),
+            "command": metrics.timing_command(paths["executable"], report["operation"], paths["dataset"], report["source"], PurePosixPath("/benchmark.json"), report["runs"], "0.01s", 0.01, key == "pmu"),
             "stdout": "", "stderr": "",
         }
     if report.get("peak_rss") is not None:
         rss = report["peak_rss"]
         rss["command"] = ["/usr/bin/time", "-f", "%M", "-o", "/time.txt",
-            *metrics.timing_command(Path(report["artifacts"]["executable"]["path"]),
-             report["operation"], Path(report["artifacts"]["dataset"]["path"]),
-             report["source"], Path("/rss.json"), 1, "0.01s", 0.0)]
+            *metrics.timing_command(paths["executable"],
+             report["operation"], paths["dataset"],
+             report["source"], PurePosixPath("/rss.json"), 1, "0.01s", 0.0)]
         rss["time_output"] = str(rss["kib"]) + "\n"
     if report.get("code_size") is not None and "text_bytes" in report["code_size"]:
         size = report["code_size"]
@@ -693,7 +697,7 @@ def controlled_metrics_report() -> dict[str, object]:
     report["artifacts"]["allocation_executable"]["revision"] = "d" * 40
     report["verification"]["result"]["revision"] = "d" * 40
     current_build["input_policy"] = builds.owned_inputs.environment()[1]
-    current_build["dependencies"] = {"schema": "csv2-compile-dependencies-v2", "files": [{"export": "source", "path": entry["path"], "sha256": entry["sha256"]} for entry in source["files"]], "trusted_system_inputs": [], "trusted_system_roots": [], "units": [{"owner": owner, "source": relative, "inputs": [str(Path(source["root"]) / entry["path"]) for entry in source["files"]]} for owner, sources in builds.current_dependency_owners().items() for relative in sources]}
+    current_build["dependencies"] = {"schema": "csv2-compile-dependencies-v2", "files": [{"export": "source", "path": entry["path"], "sha256": entry["sha256"]} for entry in source["files"]], "trusted_system_inputs": [], "trusted_system_roots": [], "units": [{"owner": owner, "source": relative, "inputs": [str(PurePosixPath(source["root"]) / entry["path"]) for entry in source["files"]]} for owner, sources in builds.current_dependency_owners().items() for relative in sources]}
     current_build["configure_argv"] = [
         current_build["cmake"]["artifact"]["path"], "-S", current_build["source_root"],
         "-B", current_build["build_root"], "-G", "Ninja", "-DCMAKE_BUILD_TYPE=Release",
