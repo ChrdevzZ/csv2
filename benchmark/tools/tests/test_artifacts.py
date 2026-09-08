@@ -88,6 +88,26 @@ class ArtifactTests(unittest.TestCase):
             self.assertIn(document["value"], range(32))
             self.assertEqual(list(Path(directory).glob("*.tmp")), [])
 
+    def test_exclusive_publication_fails_without_overwrite_or_fallback(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            output = root / "report.json"
+            atomic.write_json(output, {"status": "running"})
+            atomic.write_json(output, {"status": "completed"})
+            original = output.read_bytes()
+            temporary = atomic.stage_json(output, {"status": "other"})
+            with self.assertRaises(FileExistsError):
+                atomic.publish_staged(temporary, output, replace_existing=False)
+            self.assertEqual(output.read_bytes(), original)
+            self.assertFalse(temporary.exists())
+            absent = root / "unsupported.json"
+            temporary = atomic.stage_json(absent, {})
+            with mock.patch.object(atomic.os, "link", side_effect=OSError("unsupported filesystem")):
+                with self.assertRaisesRegex(OSError, "unsupported filesystem"):
+                    atomic.publish_staged(temporary, absent, replace_existing=False)
+            self.assertFalse(absent.exists())
+            self.assertFalse(temporary.exists())
+
     def test_atomic_write_cleans_failed_temporary_file(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             output = Path(directory) / "report.json"

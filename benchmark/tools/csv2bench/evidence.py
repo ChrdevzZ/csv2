@@ -689,9 +689,13 @@ def finalize(
         }
         protocol.validate_artifact_manifest(manifest)
         # The manifest is the prerequisite; the eligible bundle is the final
-        # atomic publication, so an interruption cannot leave it unbound.
-        atomic.write_json(output_manifest, manifest)
-        atomic.publish_staged(staged_output, output)
+        # exclusive publication. Competing attempts cannot replace either file.
+        staged_manifest = atomic.stage_json(output_manifest, manifest)
+        try:
+            atomic.publish_staged(staged_manifest, output_manifest, replace_existing=False)
+            atomic.publish_staged(staged_output, output, replace_existing=False)
+        finally:
+            atomic.discard_staged(staged_manifest)
         artifacts.verify_unchanged(report_identity, "published evidence bundle")
     except BaseException:
         atomic.discard_staged(staged_output)
