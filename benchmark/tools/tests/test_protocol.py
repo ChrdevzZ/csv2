@@ -150,7 +150,7 @@ def evidence_bundle() -> dict[str, object]:
             "comparison": json.loads(json.dumps(component)),
             "fixed_metrics": {
                 **component,
-                "schema": "csv2-fixed-machine-metrics-v8",
+                "schema": "csv2-fixed-machine-metrics-v9",
             },
         },
         "checks": checks,
@@ -294,7 +294,7 @@ def comparison_report() -> dict[str, object]:
 
 def fixed_metrics_report() -> dict[str, object]:
     report = {
-        "schema": "csv2-fixed-machine-metrics-v8",
+        "schema": "csv2-fixed-machine-metrics-v9",
         "artifact_mode": "external",
         "build": None,
         "status": "completed",
@@ -402,15 +402,22 @@ def bind_metrics_invocations(report):
         for sample in timing["samples"]:
             sample["name"] = name
         report[key + "_invocation"] = {
-            "command": metrics.timing_command(paths["executable"], report["operation"], paths["dataset"], report["source"], PurePosixPath("/benchmark.json"), report["runs"], "0.01s", 0.01, key == "pmu"),
-            "stdout": "", "stderr": "",
+            "command": metrics.timing_command(paths["executable"], report["operation"], paths["dataset"], report["source"], report["runs"], "0.01s", 0.01, key == "pmu"),
+            "stdout": json.dumps({"benchmarks": [
+                {"name": sample["name"], "run_type": "iteration",
+                 "repetition_index": index, "repetitions": report["runs"],
+                 "real_time": sample["seconds"], "time_unit": "s",
+                 "bytes_per_second": sample["bytes_per_second"],
+                 "items_per_second": sample["items_per_second"], **sample.get("pmu", {})}
+                for index, sample in enumerate(timing["samples"])
+            ]}), "stderr": "",
         }
     if report.get("peak_rss") is not None:
         rss = report["peak_rss"]
         rss["command"] = ["/usr/bin/time", "-f", "%M", "-o", "/time.txt",
             *metrics.timing_command(paths["executable"],
              report["operation"], paths["dataset"],
-             report["source"], PurePosixPath("/rss.json"), 1, "0.01s", 0.0)]
+             report["source"], 1, "0.01s", 0.0)]
         rss["time_output"] = str(rss["kib"]) + "\n"
     if report.get("code_size") is not None and "text_bytes" in report["code_size"]:
         size = report["code_size"]
@@ -770,7 +777,7 @@ class ProtocolTests(unittest.TestCase):
                 protocol.validate_fixed_metrics_report(changed)
 
         schema = json.loads((Path(__file__).resolve().parents[2]
-            / "protocol/schemas/fixed-machine-v8.schema.json").read_text(encoding="utf-8"))
+            / "protocol/schemas/fixed-machine-v9.schema.json").read_text(encoding="utf-8"))
         for candidate, field, value in ((report, "stdout", ""),
                 (controlled_metrics_report(), "method", "filesystem")):
             validate_schema(candidate, schema)
@@ -814,7 +821,16 @@ class ProtocolTests(unittest.TestCase):
             for sample in report["timing"]["samples"]:
                 sample["bytes_per_second"] *= 2
             report["timing"]["bytes_per_second"]["median"] *= 2
+        def scale_measurements(report):
+            for field, factor in (("seconds", 0.5), ("bytes_per_second", 2.0)):
+                for sample in report["timing"]["samples"]:
+                    sample[field] *= factor
+                for statistic in ("median", "mad"):
+                    report["timing"][field][statistic] *= factor
         mutations = {
+            "consistent timing scale": scale_measurements,
+            "missing raw JSON": lambda r: r["timing_invocation"].update(stdout=""),
+            "corrupt raw JSON": lambda r: r["timing_invocation"].update(stdout="{"),
             "checksum": lambda r: r["verification"]["result"].update(checksum="2"),
             "allocation count": lambda r: r["allocations"].update(count=2),
             "allocation bytes": lambda r: r["allocations"].update(bytes=2),
@@ -840,7 +856,7 @@ class ProtocolTests(unittest.TestCase):
         for option, replacement in (
             ("--benchmark_repetitions=", "1"),
             ("--benchmark_filter=", "^other"),
-            ("--benchmark_out_format=", "csv"),
+            ("--benchmark_format=", "csv"),
             ("--benchmark_report_aggregates_only=", "true"),
             ("--benchmark_perf_counters=", "cycles"),
         ):
@@ -856,6 +872,12 @@ class ProtocolTests(unittest.TestCase):
             sample["bytes_per_second"] = 2.0
         report["pmu"]["bytes_per_second"]["median"] = 2.0
         with self.assertRaisesRegex(RuntimeError, "input corpus bytes"):
+            protocol.validate_fixed_metrics_report(report)
+
+    def test_fixed_metrics_pmu_rederives_saved_counters(self) -> None:
+        report = controlled_metrics_report()
+        report["pmu"]["samples"][0]["pmu"]["cycles"] += 1
+        with self.assertRaisesRegex(RuntimeError, "saved Google Benchmark JSON"):
             protocol.validate_fixed_metrics_report(report)
 
     def test_fixed_metrics_uses_input_bytes_and_portable_dataset_names(self) -> None:
@@ -876,11 +898,12 @@ class ProtocolTests(unittest.TestCase):
         report = fixed_metrics_report()
         report["timing"]["samples"][0]["bytes_per_second"] += 1e-10
         report["timing"]["bytes_per_second"]["median"] += 1e-10
+        bind_metrics_invocations(report)
         protocol.validate_fixed_metrics_report(report)
 
     def test_raw_writer_semantics_are_canonical_in_both_directions(self) -> None:
         schema_root = Path(__file__).resolve().parents[2] / "protocol"
-        fixed_schema = json.loads((schema_root / "schemas" / "fixed-machine-v8.schema.json").read_text())
+        fixed_schema = json.loads((schema_root / "schemas" / "fixed-machine-v9.schema.json").read_text())
         for suffix in ("direct", "streamable"):
             operation = "writer/raw-" + suffix
             common_operation = "writer_raw_" + suffix
@@ -1015,7 +1038,7 @@ class ProtocolTests(unittest.TestCase):
 
     def test_hook_records_accept_empty_arguments_without_weakening_executable(self) -> None:
         schema = json.loads((Path(__file__).resolve().parents[2] /
-                             "protocol/schemas/fixed-machine-v8.schema.json").read_text())
+                             "protocol/schemas/fixed-machine-v9.schema.json").read_text())
         for field in ("clean_build", "post_build"):
             for command in (["tool", "", "argument"], [], [""], ["tool", None],
                             ["tool\0"], ["tool", "argument\0"]):
@@ -1542,7 +1565,7 @@ class ProtocolTests(unittest.TestCase):
                     with self.assertRaises(SchemaValidationError):
                         validate_schema(changed, schema)
             validate_schema(1.0, {keyword: [1] if keyword == "enum" else 1})
-        schema_path = Path(__file__).resolve().parents[2] / "protocol/schemas/fixed-machine-v8.schema.json"
+        schema_path = Path(__file__).resolve().parents[2] / "protocol/schemas/fixed-machine-v9.schema.json"
         schema = json.loads(schema_path.read_text(encoding="utf-8"))
         report = fixed_metrics_report()
         validate_schema(report, schema)

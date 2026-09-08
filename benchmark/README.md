@@ -464,7 +464,7 @@ resulting `csv2-performance-evidence-bundle-v4` can be decision-eligible.
 
 The fixed contracts are `csv2-common-v5`, `csv2-current-v4`,
 `csv2-benchmark-build-v2`, `csv2-benchmark-report-v7`,
-`csv2-fixed-machine-metrics-v8`, `csv2-performance-evidence-bundle-v4`,
+`csv2-fixed-machine-metrics-v9`, `csv2-performance-evidence-bundle-v4`,
 `csv2-artifact-manifest-v4`, and `csv2-machine-profile-v1`. Older or unknown
 versions are rejected rather than converted. Every completed component and
 evidence JSON has a sibling v4 SHA-256 artifact manifest. See

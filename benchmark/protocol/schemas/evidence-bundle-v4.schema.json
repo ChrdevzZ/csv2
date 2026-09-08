@@ -192,7 +192,7 @@
       "required": ["schema", "revision", "build_digest", "controlled_complete"],
       "properties": {
         "schema": {
-          "enum": ["csv2-benchmark-report-v7", "csv2-fixed-machine-metrics-v8"]
+          "enum": ["csv2-benchmark-report-v7", "csv2-fixed-machine-metrics-v9"]
         },
         "revision": {"$ref": "#/$defs/object_id"},
         "build_digest": {"$ref": "#/$defs/sha256"},
