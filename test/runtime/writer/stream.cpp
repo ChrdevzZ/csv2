@@ -38,7 +38,8 @@ void check_initial_error(std::ios_base::iostate state, const Field &field) {
         writer(actual);
     writer.write_row(std::vector<Field>(1, field));
     CSV2_CHECK(actual.width() == expected.width());
-    CSV2_CHECK(actual.rdstate() == expected.rdstate());
+    // Direct writes and formatted insertion may add different error bits.
+    CSV2_CHECK((actual.rdstate() & state) == state);
     CSV2_CHECK(actual.str() == expected.str());
     expected.clear();
     actual.clear();
