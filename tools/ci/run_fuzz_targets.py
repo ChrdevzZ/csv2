@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run both CSV2 libFuzzer targets and preserve isolated reproducers."""
+"""Run both CSV2 libFuzzer targets and preserve isolated corpora and reproducers."""
 
 from __future__ import annotations
 
@@ -24,11 +24,13 @@ def run_target(
     run_fn: Run,
 ) -> int:
     artifact_directory = artifact_root / name
-    artifact_directory.mkdir(parents=True, exist_ok=True)
+    generated_corpus = artifact_directory / "corpus"
+    generated_corpus.mkdir(parents=True, exist_ok=True)
     command = [
         str(executable),
         f"-artifact_prefix={artifact_directory.as_posix()}/",
         f"-runs={runs}",
+        str(generated_corpus),
         str(corpus),
     ]
     print(f"running {name}: {shlex.join(command)}", flush=True)

@@ -134,23 +134,28 @@ jobs:
       - name: Verify CMake and pkg-config consumers
         run: |
           cmake -S test/contracts/consumer -B build/consumer -G Ninja \
+            -DCMAKE_CXX_COMPILER="${{ matrix.compiler }}" \
+            -DCMAKE_CXX_FLAGS="${{ matrix.cxx_flags }}" \
             -DCMAKE_PREFIX_PATH="$PWD/build/install"
           cmake --build build/consumer --parallel
           ./build/consumer/csv2_consumer
           ./build/consumer/csv2_no_mmap_consumer
-          csv2_pc_dir="$PWD/build/install/lib/pkgconfig"
-          compiler="${{ matrix.compiler }}"
-          compiler_flags=()
-          if [[ -n "${{ matrix.cxx_flags }}" ]]; then
-            read -r -a compiler_flags <<< "${{ matrix.cxx_flags }}"
-          fi
-          read -r -a csv2_cflags <<< \
-            "$(PKG_CONFIG_LIBDIR="$csv2_pc_dir" pkg-config --cflags csv2)"
-          "$compiler" -std=c++11 "${compiler_flags[@]}" \
-            -Wall -Wextra -Wpedantic -Werror \
-            "${csv2_cflags[@]}" \
-            test/contracts/consumer/pkg_config.cpp -o build/pkg-config-consumer
-          ./build/pkg-config-consumer
+          export PKG_CONFIG_LIBDIR="$PWD/build/install/lib/pkgconfig"
+          export CXX="${{ matrix.compiler }}"
+          export CXXFLAGS="${{ matrix.cxx_flags }}"
+          python3 - <<'PYCODE'
+          import os
+          import shlex
+          import subprocess
+          flags = shlex.split(subprocess.check_output(
+              ["pkg-config", "--cflags", "csv2"], text=True))
+          subprocess.run([os.environ["CXX"], "-std=c++11",
+                          *shlex.split(os.environ["CXXFLAGS"]),
+                          "-Wall", "-Wextra", "-Wpedantic", "-Werror", *flags,
+                          "test/contracts/consumer/pkg_config.cpp",
+                          "-o", "build/pkg-config-consumer"], check=True)
+          subprocess.run(["build/pkg-config-consumer"], check=True)
+          PYCODE
 
       - name: Upload full verification artifacts
         if: always()

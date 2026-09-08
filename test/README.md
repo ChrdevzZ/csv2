@@ -222,12 +222,21 @@ that invariant:
   cell count, and exact content round-trip. Its standalone oracle rejects a
   valid first record followed by any extra record.
 
-Replay committed corpora before starting an open-ended fuzz session:
+Run bounded mutations from committed seeds, writing discoveries and crash
+artifacts into the build tree:
 
 ```bash
-./build-fuzz/test/fuzz/csv2_fuzz -runs=50000 test/fuzz/corpus/reader
-./build-fuzz/test/fuzz/csv2_fuzz_writer -runs=50000 test/fuzz/corpus/writer
+python3 tools/ci/run_fuzz_targets.py \
+  --reader build-fuzz/test/fuzz/csv2_fuzz \
+  --writer build-fuzz/test/fuzz/csv2_fuzz_writer \
+  --reader-corpus test/fuzz/corpus/reader \
+  --writer-corpus test/fuzz/corpus/writer \
+  --runs 50000 --artifact-root build-fuzz/artifacts
 ```
+
+Passing individual input files directly to a fuzzer replays those inputs without
+mutation. Passing corpus directories starts coverage-guided fuzzing; new inputs
+are written to the first directory, so keep a writable build directory first.
 
 Minimize a crash and merge useful inputs with libFuzzer's standard modes:
 

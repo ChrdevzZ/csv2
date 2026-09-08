@@ -81,7 +81,7 @@ def classify_paths(paths: Iterable[str]) -> dict[str, bool]:
             return every_owner(True)
         if under(path, "test/fixtures/"):
             return every_owner(True)
-        if under(path, "test/fuzz/", "test/support/", "test/cmake/"):
+        if under(path, "test/CMakeLists.txt", "test/fuzz/", "test/support/", "test/cmake/"):
             selected["quick"] = True
             selected["fuzz"] = True
             selected["full"] = True

@@ -144,23 +144,29 @@ jobs:
       - name: Install package
         run: cmake --install build --prefix build/install
 
-      - name: Verify installed package consumer
+      - name: Verify relocated CMake consumer
         run: |
+          mv build/install "build/relocated install"
           cmake -S test/contracts/consumer -B build/consumer-build -G Ninja \
-            -DCMAKE_PREFIX_PATH="$PWD/build/install"
+            -DCMAKE_CXX_COMPILER=g++-14 \
+            -DCMAKE_PREFIX_PATH="$PWD/build/relocated install"
           cmake --build build/consumer-build --parallel
           ./build/consumer-build/csv2_consumer
           ./build/consumer-build/csv2_no_mmap_consumer
 
       - name: Verify relocatable pkg-config consumer
         run: |
-          csv2_pc_dir="$PWD/build/install/lib/pkgconfig"
-          read -r -a csv2_cflags <<< \
-            "$(PKG_CONFIG_LIBDIR="$csv2_pc_dir" pkg-config --cflags csv2)"
-          g++-14 -std=c++11 -Wall -Wextra -Wpedantic -Werror \
-            "${csv2_cflags[@]}" \
-            test/contracts/consumer/pkg_config.cpp -o build/pkg-config-consumer
-          ./build/pkg-config-consumer
+          export PKG_CONFIG_LIBDIR="$PWD/build/relocated install/lib/pkgconfig"
+          python3 - <<'PYCODE'
+          import shlex
+          import subprocess
+          flags = shlex.split(subprocess.check_output(
+              ["pkg-config", "--cflags", "csv2"], text=True))
+          subprocess.run(["g++-14", "-std=c++11", "-Wall", "-Wextra", "-Wpedantic",
+                          "-Werror", *flags, "test/contracts/consumer/pkg_config.cpp",
+                          "-o", "build/pkg-config-consumer"], check=True)
+          subprocess.run(["build/pkg-config-consumer"], check=True)
+          PYCODE
 
       - name: Upload CTest results
         if: always()
