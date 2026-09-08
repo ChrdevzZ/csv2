@@ -6,29 +6,12 @@
 
 namespace csv2_test {
 
-class ReserveTrackingBuffer {
-public:
-  explicit ReserveTrackingBuffer(const char *prefix) : value(prefix) {}
-  std::size_t size() const { return value.size(); }
-  void reserve(std::size_t requested) {
-    last_reserve = requested;
-    value.reserve(requested);
-  }
-  void push_back(char character) { value.push_back(character); }
-  std::string value;
-  std::size_t last_reserve{0};
-};
-
 class ReserveOnlyBuffer {
 public:
   explicit ReserveOnlyBuffer(const char *prefix) : value(prefix) {}
-  void reserve(std::size_t requested) {
-    last_reserve = requested;
-    value.reserve(requested);
-  }
+  void reserve(std::size_t requested) { value.reserve(requested); }
   void push_back(char character) { value.push_back(character); }
   std::string value;
-  std::size_t last_reserve{0};
 };
 
 class AppendOnlyBuffer {

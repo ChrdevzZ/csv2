@@ -6,6 +6,7 @@
 #include <deque>
 #include <iterator>
 #include <list>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -14,6 +15,91 @@
 #endif
 
 using namespace csv2_test;
+
+namespace {
+struct AllocationCounts {
+  std::size_t calls = 0;
+  std::size_t elements = 0;
+};
+
+template <class T> struct CountingAllocator {
+  using value_type = T;
+  AllocationCounts *counts;
+  explicit CountingAllocator(AllocationCounts &value) : counts(&value) {}
+  template <class U> CountingAllocator(const CountingAllocator<U> &other) : counts(other.counts) {}
+  T *allocate(std::size_t count) {
+    ++counts->calls;
+    counts->elements += count;
+    return std::allocator<T>().allocate(count);
+  }
+  void deallocate(T *data, std::size_t count) { std::allocator<T>().deallocate(data, count); }
+  template <class U> struct rebind {
+    using other = CountingAllocator<U>;
+  };
+  template <class U> bool operator==(const CountingAllocator<U> &other) const {
+    return counts == other.counts;
+  }
+  template <class U> bool operator!=(const CountingAllocator<U> &other) const {
+    return !(*this == other);
+  }
+};
+} // namespace
+
+CSV2_TEST_CASE("reader.extract.preserve-amortized-growth-and-reuse-output-capacity",
+               "reader.extract") {
+  ReaderWithoutHeader reader;
+  std::string input = "\"" + std::string(64, 'a') + "\"\"b\"";
+  CSV2_REQUIRE(reader.parse(input));
+  const auto row = *reader.begin();
+  const auto cell = *row.begin();
+  const std::string decoded = "\"" + std::string(64, 'a') + "\"b\"";
+  using Buffer = std::vector<char, CountingAllocator<char>>;
+  for (int operation = 0; operation != 3; ++operation) {
+    const std::string &chunk = operation == 1 ? decoded : input;
+    const auto extract = [&](Buffer &output) {
+      if (operation == 0)
+        cell.read_raw_value(output);
+      else if (operation == 1)
+        cell.read_value(output);
+      else
+        row.read_raw_value(output);
+    };
+    AllocationCounts actual_counts, reference_counts;
+    Buffer actual{CountingAllocator<char>(actual_counts)};
+    Buffer reference{CountingAllocator<char>(reference_counts)};
+    extract(actual);
+    for (char character : chunk)
+      reference.push_back(character);
+    CSV2_CHECK(actual == reference);
+    CSV2_CHECK(actual_counts.calls <= reference_counts.calls);
+    actual.clear();
+    reference.clear();
+    actual.push_back(':');
+    reference.push_back(':');
+    for (std::size_t repeat = 0; repeat != 256; ++repeat) {
+      extract(actual);
+      for (char character : chunk)
+        reference.push_back(character);
+    }
+    CSV2_CHECK(actual == reference);
+    // Compare with ordinary vector growth, allowing different geometric factors.
+    CSV2_CHECK(actual_counts.calls <= 2 * reference_counts.calls);
+    CSV2_CHECK(actual_counts.elements <= 2 * reference_counts.elements);
+    actual.reserve(reference.size());
+    const std::size_t calls = actual_counts.calls;
+    for (int reuse = 0; reuse != 2; ++reuse) {
+      actual.clear();
+      extract(actual);
+      CSV2_CHECK(std::string(actual.begin(), actual.end()) == chunk);
+      actual.clear();
+      actual.push_back(':');
+      for (std::size_t repeat = 0; repeat != 256; ++repeat)
+        extract(actual);
+      CSV2_CHECK(actual == reference);
+      CSV2_CHECK(actual_counts.calls == calls);
+    }
+  }
+}
 
 CSV2_TEST_CASE("reader.extract.preserve-original-cell-bounds-for-custom-trim-policies",
                "reader.extract") {
@@ -175,16 +261,15 @@ CSV2_TEST_CASE("reader.extract.expose-an-empty-view-from-a-default-cell", "reade
 }
 #endif
 
-CSV2_TEST_CASE("reader.extract.reserve-for-existing-output-when-appending-a-raw-row",
+CSV2_TEST_CASE("reader.extract.preserve-existing-output-when-appending-a-raw-row",
                "reader.extract") {
   ReaderWithoutHeader reader;
   std::string input("a,b");
   CSV2_REQUIRE(reader.parse(input));
 
-  ReserveTrackingBuffer output("pre:");
+  std::string output("pre:");
   (*reader.begin()).read_raw_value(output);
-  CSV2_REQUIRE(output.last_reserve == 7);
-  CSV2_REQUIRE(output.value == "pre:a,b");
+  CSV2_REQUIRE(output == "pre:a,b");
 }
 
 CSV2_TEST_CASE("reader.extract.append-a-raw-row-to-a-reserve-only-output-type", "reader.extract") {
@@ -194,6 +279,5 @@ CSV2_TEST_CASE("reader.extract.append-a-raw-row-to-a-reserve-only-output-type", 
 
   ReserveOnlyBuffer output("pre:");
   (*reader.begin()).read_raw_value(output);
-  CSV2_REQUIRE(output.last_reserve == 3);
   CSV2_REQUIRE(output.value == "pre:a,b");
 }

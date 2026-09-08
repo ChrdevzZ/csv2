@@ -164,6 +164,9 @@ These operations append without clearing the destination. They support strings, 
 strings, custom append sinks, and output iterators. `has_escaped_quotes()` reports doubled quote pairs found during
 boundary scanning.
 
+When supported, container extraction reserves for an empty sized destination and leaves growth of a non-empty
+destination to the container's append policy. Callers that know the total output bound may reserve once before the complete batch.
+
 Rows expose the same raw byte view and can copy a complete logical record without rescanning its cells.
 
 ### Validation and Integer Conversion
