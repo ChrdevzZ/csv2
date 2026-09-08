@@ -298,7 +298,7 @@ The authoritative declarations are in [`include/csv2/writer.hpp`](include/csv2/w
 | Language/library level | CSV2 facilities |
 | --- | --- |
 | C++11 | Reader and Writer compatibility APIs, explicit ownership, generic sinks, strict validation, integer fallback, `RowIndex`, and escaping policies |
-| C++14 | The same public surface with additional constexpr support where permitted |
+| C++14 | The same library interfaces as C++11; `CSV2_CONSTEXPR14` enables C++14-compatible constexpr declarations |
 | C++17 | `std::string_view` input/views, `std::filesystem::path`, `std::from_chars`, and PMR container support when supplied by the library |
 | C++20 | `std::span<const char>` input and Row range/view integration |
 | C++23 | `std::expected` error adapters and consumer-side ranges facilities when supplied by the library |

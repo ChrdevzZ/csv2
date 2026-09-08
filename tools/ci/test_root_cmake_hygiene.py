@@ -61,6 +61,99 @@ class RootCMakeHygieneTests(unittest.TestCase):
                 self.assertIn("CSV2 verification requires an out-of-source build", output)
                 self.assertFalse(marker.exists(), output)
 
+    @unittest.skipIf(os.name == "nt", "include_next fixtures require GCC or Clang")
+    def test_generated_test_inputs_preserve_incremental_builds(self) -> None:
+        cmake = shutil.which("cmake")
+        self.assertIsNotNone(cmake, "cmake is required for CI policy tests")
+        targets = (
+            "csv2_standard_contract_partial_headers_module_cxx20",
+            "csv2_standard_contract_empty_headers_module_cxx20",
+            "csv2_minitest_registry_capacity",
+            "csv2_minitest_registry_duplicate",
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory) / "source"
+            build = Path(directory) / "build"
+            source.mkdir()
+            for name in ("cmake", "include", "single_include", "test"):
+                shutil.copytree(SOURCE_ROOT / name, source / name)
+            for name in ("CMakeLists.txt", "csv2Config.cmake.in", "csv2.pc.in"):
+                shutil.copy2(SOURCE_ROOT / name, source / name)
+
+            def run(*args: str) -> None:
+                completed = subprocess.run(
+                    [str(cmake), *args], capture_output=True, text=True, timeout=120,
+                )
+                self.assertEqual(
+                    completed.returncode, 0, completed.stdout + completed.stderr,
+                )
+
+            def configure() -> None:
+                run("-S", str(source), "-B", str(build),
+                    "-G", os.environ.get("CMAKE_GENERATOR", "Ninja"),
+                    "-DCSV2_BUILD_TESTS=ON",
+                    "-DCSV2_TEST_ASSERTION_BACKEND=minitest")
+
+            def compile_consumers() -> None:
+                run("--build", str(build), "--target", *targets, "--parallel", "2")
+
+            def objects() -> dict[Path, int]:
+                return {path: path.stat().st_mtime_ns for path in build.rglob("*.o")}
+
+            configure()
+            compile_consumers()
+            generated = sorted(build.glob("test/contracts/*standard_library/*"))
+            generated += sorted(build.glob("test/support/minitest_registry_*.cpp"))
+            self.assertTrue(generated)
+            contents = {path: path.read_bytes() for path in generated}
+            # Age dependencies and objects so even coarse filesystem clocks
+            # distinguish a subsequent write; keep objects newer than inputs.
+            for path in generated:
+                os.utime(path, (946684800, 946684800))
+            for path in objects():
+                os.utime(path, (946684802, 946684802))
+            compile_consumers()
+            before = objects()
+            self.assertTrue(before)
+            timestamps = {path: path.stat().st_mtime_ns for path in generated}
+            configure()
+            compile_consumers()
+            self.assertEqual(objects(), before)
+            self.assertEqual(
+                {path: path.stat().st_mtime_ns for path in generated}, timestamps,
+            )
+            self.assertEqual({path: path.read_bytes() for path in generated}, contents)
+
+            # Change fixture input without changing the C++ contract. Only its
+            # consumer should rebuild, regardless of the generation mechanism.
+            definition = source / "test/contracts/CMakeLists.txt"
+            original = definition.read_text(encoding="utf-8")
+            changed = original.replace(
+                "Deliberately empty partial <version> fixture.",
+                "Deliberately empty partial <version> fixture. Incremental probe.",
+            )
+            self.assertNotEqual(changed, original)
+            definition.write_text(changed, encoding="utf-8")
+            configure()
+            compile_consumers()
+            after = objects()
+            rebuilt = {path for path in before if before[path] != after[path]}
+            partial_objects = {
+                path for path in before if targets[0] + ".dir" in path.parts
+            }
+            self.assertTrue(partial_objects)
+            self.assertEqual(rebuilt, partial_objects)
+            self.assertNotEqual(
+                {path: path.read_bytes() for path in generated}, contents,
+            )
+
+            expected = {path: path.read_bytes() for path in generated}
+            for path in generated:
+                path.unlink()
+            configure()
+            self.assertEqual({path: path.read_bytes() for path in generated}, expected)
+            compile_consumers()
+
     def test_benchmark_audits_follow_checks_default_build(self) -> None:
         cmake = shutil.which("cmake")
         self.assertIsNotNone(cmake, "cmake is required for CI policy tests")

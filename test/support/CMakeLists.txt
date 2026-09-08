@@ -12,20 +12,23 @@ csv2_enable_test_options(csv2_minitest)
 
 set(csv2_minitest_capacity_source
   "${CMAKE_CURRENT_BINARY_DIR}/minitest_registry_capacity.cpp")
-file(WRITE "${csv2_minitest_capacity_source}"
+string(CONCAT csv2_minitest_capacity_content
   "#include <csv2_test/case_registry.hpp>\n\n"
   "namespace {\nint executed = 0;\n")
 foreach(case_index RANGE 0 599)
-  file(APPEND "${csv2_minitest_capacity_source}"
+  string(APPEND csv2_minitest_capacity_content
     "void case_${case_index}() { ++executed; }\n"
     "csv2_test::registrar registrar_${case_index}(\"registry.capacity.${case_index}\", \"registry.capacity\", &case_${case_index});\n")
 endforeach()
-file(APPEND "${csv2_minitest_capacity_source}"
+string(APPEND csv2_minitest_capacity_content
   "} // namespace\n\n"
   "int main() {\n"
   "  const int result = csv2_test::run_registered_tests(\"registry.capacity\");\n"
   "  return result == 0 && executed == 600 ? 0 : 1;\n"
   "}\n")
+
+file(GENERATE OUTPUT "${csv2_minitest_capacity_source}"
+  CONTENT "${csv2_minitest_capacity_content}")
 
 add_executable(csv2_minitest_registry_capacity
   "${csv2_minitest_capacity_source}")
@@ -43,7 +46,7 @@ set_tests_properties(csv2.minitest.registry_capacity PROPERTIES
 
 set(csv2_minitest_duplicate_source
   "${CMAKE_CURRENT_BINARY_DIR}/minitest_registry_duplicate.cpp")
-file(WRITE "${csv2_minitest_duplicate_source}"
+string(CONCAT csv2_minitest_duplicate_content
   "#include <csv2_test/case_registry.hpp>\n\n"
   "namespace {\n"
   "void first() {}\n"
@@ -54,6 +57,9 @@ file(WRITE "${csv2_minitest_duplicate_source}"
   "int main() {\n"
   "  return csv2_test::run_registered_tests(\"registry\") == 2 ? 0 : 1;\n"
   "}\n")
+
+file(GENERATE OUTPUT "${csv2_minitest_duplicate_source}"
+  CONTENT "${csv2_minitest_duplicate_content}")
 
 add_executable(csv2_minitest_registry_duplicate
   "${csv2_minitest_duplicate_source}")
