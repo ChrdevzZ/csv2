@@ -257,6 +257,7 @@ destination's formatting state.
 Quoting writers scan contiguous character fields and write segments. Fields requiring formatted escaping use a
 temporary stream initialized with the destination's formatting settings and current error state. One-shot width and
 resulting error bits are propagated to the destination; a pre-existing error is not treated as a healthy stream.
+The completed temporary buffer is moved out when the standard library supports rvalue extraction.
 Direct contiguous-field paths remain separate from temporary formatting.
 
 ### Stream Ownership
