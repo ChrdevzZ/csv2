@@ -510,14 +510,8 @@ def load_calibration(
 def validate_calibration_context(
     calibration: dict[str, object], current: dict[str, object]
 ) -> None:
-    for key in (
-        "artifact_mode",
-        "compiler",
-        "compiler_flags",
-        "runs",
-        "iterations_per_run",
-        "warmups",
-    ):
+    wire.validate_calibration_sampling(calibration, current)
+    for key in ("artifact_mode", "compiler", "compiler_flags"):
         if calibration.get(key) != current.get(key):
             raise RuntimeError(f"calibration {key} does not match this comparison")
 

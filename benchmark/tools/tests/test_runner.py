@@ -304,7 +304,7 @@ class RunnerTests(unittest.TestCase):
                     runner.load_calibration(path)
             validator.assert_called_once()
 
-    def test_calibration_rejects_affinity_mismatch(self) -> None:
+    def test_calibration_rejects_sampling_and_affinity_mismatches(self) -> None:
         calibration = {
             "artifact_mode": "external",
             "compiler": "c++",
@@ -328,10 +328,16 @@ class RunnerTests(unittest.TestCase):
             "candidate": {"artifact": {"sha256": "candidate"}},
             "datasets": [],
         }
-        current = json.loads(json.dumps(calibration))
-        current["host"]["process_affinity"] = [1]
-        with self.assertRaisesRegex(RuntimeError, "process_affinity"):
-            runner.validate_calibration_context(calibration, current)
+        runner.validate_calibration_context(calibration, calibration)
+        for field in ("runs", "warmups", "iterations_per_run", "process_affinity"):
+            with self.subTest(field=field):
+                current = json.loads(json.dumps(calibration))
+                if field == "process_affinity":
+                    current["host"][field] = [1]
+                else:
+                    current[field] += 1
+                with self.assertRaisesRegex(RuntimeError, field):
+                    runner.validate_calibration_context(calibration, current)
 
     def test_calibration_rejects_tool_bundle_drift(self) -> None:
         calibration = {

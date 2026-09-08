@@ -861,6 +861,14 @@ def _current_build(value: object, label: str) -> dict[str, object]:
     return build
 
 
+def validate_calibration_sampling(
+    calibration: dict[str, object], comparison: dict[str, object]
+) -> None:
+    for key in ("runs", "warmups", "iterations_per_run"):
+        if calibration[key] != comparison[key]:
+            raise RuntimeError(f"calibration {key} does not match this comparison")
+
+
 def validate_comparison_report(report: object) -> None:
     document = _object(report, "comparison report")
     allowed = {

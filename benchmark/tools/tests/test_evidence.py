@@ -139,12 +139,9 @@ class EvidenceBundleTests(unittest.TestCase):
 
     def assemble(self, root: Path):
         values = self.components(root)
-        with mock.patch.object(evidence.builds, "validate_build_manifest"), mock.patch.object(
-            evidence.builds, "verify_current_build_manifest"
-        ):
-            bundle = evidence.assemble_evidence(
-                *values[:4], values[4], values[5], test_protocol.bundle()
-            )
+        bundle = evidence.assemble_evidence(
+            *values[:4], values[4], values[5], test_protocol.bundle()
+        )
         return bundle, values
 
     def persisted_inputs(self, root: Path) -> dict[str, Path]:
@@ -211,12 +208,9 @@ class EvidenceBundleTests(unittest.TestCase):
                 report["evidence_level"] = "exploratory"
                 report["controlled_complete"] = False
                 report["machine_profile"] = None
-            with mock.patch.object(evidence.builds, "validate_build_manifest"), mock.patch.object(
-                evidence.builds, "verify_current_build_manifest"
-            ):
-                bundle = evidence.assemble_evidence(
-                    *values[:4], values[4], values[5], test_protocol.bundle()
-                )
+            bundle = evidence.assemble_evidence(
+                *values[:4], values[4], values[5], test_protocol.bundle()
+            )
         self.assertFalse(bundle["decision_eligible"])
 
     def test_fixed_metrics_must_bind_one_comparison_semantic_case(self) -> None:
@@ -229,15 +223,10 @@ class EvidenceBundleTests(unittest.TestCase):
                 context["semantic_case_id"] = "csv2.writer.raw-direct.decoded-content.v1"
                 context["scope"] = "writer_only"
             test_protocol.bind_metrics_invocations(fixed)
-            with mock.patch.object(
-                evidence.builds, "validate_build_manifest"
-            ), mock.patch.object(
-                evidence.builds, "verify_current_build_manifest"
-            ):
-                with self.assertRaisesRegex(RuntimeError, "exactly one"):
-                    evidence.assemble_evidence(
-                        *values[:4], values[4], values[5], test_protocol.bundle()
-                    )
+            with self.assertRaisesRegex(RuntimeError, "exactly one"):
+                evidence.assemble_evidence(
+                    *values[:4], values[4], values[5], test_protocol.bundle()
+                )
 
     def test_components_must_use_the_same_machine_profile_digest(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -245,15 +234,10 @@ class EvidenceBundleTests(unittest.TestCase):
             profile = values[2]["machine_profile"]
             profile["artifact"]["sha256"] = "b" * 64
             profile["digest"] = "b" * 64
-            with mock.patch.object(
-                evidence.builds, "validate_build_manifest"
-            ), mock.patch.object(
-                evidence.builds, "verify_current_build_manifest"
-            ):
-                with self.assertRaisesRegex(RuntimeError, "different machine profiles"):
-                    evidence.assemble_evidence(
-                        *values[:4], values[4], values[5], test_protocol.bundle()
-                    )
+            with self.assertRaisesRegex(RuntimeError, "different machine profiles"):
+                evidence.assemble_evidence(
+                    *values[:4], values[4], values[5], test_protocol.bundle()
+                )
 
     def test_machine_profile_content_must_match_the_bound_artifact(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -271,22 +255,56 @@ class EvidenceBundleTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             values = self.components(Path(directory))
             values[3]["datasets"][0]["strict_error"]["byte_offset"] = 1
-            with mock.patch.object(
-                evidence.builds, "validate_build_manifest"
-            ), mock.patch.object(evidence.builds, "verify_current_build_manifest"):
-                with self.assertRaisesRegex(RuntimeError, "valid diagnostics"):
-                    evidence.assemble_evidence(
-                        *values[:4], values[4], values[5], test_protocol.bundle()
-                    )
+            with self.assertRaisesRegex(RuntimeError, "valid diagnostics"):
+                evidence.assemble_evidence(
+                    *values[:4], values[4], values[5], test_protocol.bundle()
+                )
 
     def test_finalizer_rejects_calibration_noise_not_derived_from_aa_case(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             values = self.components(Path(directory))
             values[1]["cases"][0]["calibration_noise"] = 0.01
-            with mock.patch.object(
-                evidence.builds, "validate_build_manifest"
-            ), mock.patch.object(evidence.builds, "verify_current_build_manifest"):
-                with self.assertRaisesRegex(RuntimeError, "calibration noise"):
+            with self.assertRaisesRegex(RuntimeError, "calibration noise"):
+                evidence.assemble_evidence(
+                    *values[:4], values[4], values[5], test_protocol.bundle()
+                )
+
+    def test_finalizer_rejects_individually_valid_sampling_mismatches(self) -> None:
+        for field in ("runs", "warmups", "iterations_per_run"):
+            with self.subTest(field=field), tempfile.TemporaryDirectory() as directory:
+                values = self.components(Path(directory))
+                calibration, comparison = values[:2]
+                comparison[field] += 1
+                case = comparison["cases"][0]
+                if field == "iterations_per_run":
+                    case["semantic_signature"][1] = str(comparison[field])
+                    for launch in case["launches"]:
+                        launch["result"]["iterations"] = str(comparison[field])
+                        launch["result"]["elapsed_ns"] = str(comparison[field])
+                        launch["stdout"] = " ".join(
+                            f"{key}={value}" for key, value in launch["result"].items()
+                        )
+                else:
+                    phase = "sample" if field == "runs" else "warmup"
+                    round_index = comparison[field] - 1
+                    for order, side in enumerate(
+                        ("baseline", "candidate") if round_index % 2 == 0
+                        else ("candidate", "baseline")
+                    ):
+                        launch = copy.deepcopy(next(
+                            item for item in case["launches"] if item["side"] == side
+                        ))
+                        launch.update(phase=phase, round=round_index, order=order)
+                        insert_at = (
+                            len(case["launches"]) if phase == "sample"
+                            else 2 * round_index + order
+                        )
+                        case["launches"].insert(insert_at, launch)
+                        if phase == "sample":
+                            case[side]["samples"].append(launch["throughput_gib_per_second"])
+                protocol.validate_comparison_report(calibration)
+                protocol.validate_comparison_report(comparison)
+                with self.assertRaisesRegex(RuntimeError, f"calibration {field}"):
                     evidence.assemble_evidence(
                         *values[:4], values[4], values[5], test_protocol.bundle()
                     )
@@ -297,12 +315,9 @@ class EvidenceBundleTests(unittest.TestCase):
             adapter = values[1]["adapter_source"]
             adapter["path"] = str(Path(directory) / "other-workspace" / "adapter.cpp")
             adapter["mtime_ns"] += 1
-            with mock.patch.object(
-                evidence.builds, "validate_build_manifest"
-            ), mock.patch.object(evidence.builds, "verify_current_build_manifest"):
-                bundle = evidence.assemble_evidence(
-                    *values[:4], values[4], values[5], test_protocol.bundle()
-                )
+            bundle = evidence.assemble_evidence(
+                *values[:4], values[4], values[5], test_protocol.bundle()
+            )
 
         self.assertTrue(bundle["decision_eligible"])
 
@@ -457,13 +472,10 @@ class EvidenceBundleTests(unittest.TestCase):
             with self.subTest(label=label), tempfile.TemporaryDirectory() as directory:
                 values = self.components(Path(directory))
                 mutate(values)
-                with mock.patch.object(
-                    evidence.builds, "validate_build_manifest"
-                ), mock.patch.object(evidence.builds, "verify_current_build_manifest"):
-                    with self.assertRaises(RuntimeError):
-                        evidence.assemble_evidence(
-                            *values[:4], values[4], values[5], test_protocol.bundle()
-                        )
+                with self.assertRaises(RuntimeError):
+                    evidence.assemble_evidence(
+                        *values[:4], values[4], values[5], test_protocol.bundle()
+                    )
 
     def test_runner_bundle_drift_fails_finalization(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

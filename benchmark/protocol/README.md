@@ -107,6 +107,9 @@ report. A/A requires the same revision, owned build identity, and executable
 hash on both sides; A/B requires distinct commits. A/B accepts only a completed
 A/A report with the same candidate build identity, runner/adapter bundle,
 datasets, affinity, flags, run count, warmups, and iterations.
+The online runner and finalizer share the run-count, warmup, and
+iterations-per-run comparison rule; internally valid reports with different
+sampling settings cannot form calibrated evidence.
 
 `csv2-fixed-machine-metrics-v7` embeds the owned current-tree build manifest
 and binds semantic verification, allocation verification, Google Benchmark
@@ -121,6 +124,12 @@ contract. `clean_build` must match the recorded build command, duration, and
 output. Owned `post_build` is null: successful build and preparation records
 already reside in the build manifest. External exploratory collection retains
 its optional real post-build hook.
+Timing, PMU, and RSS subprocesses remove inherited `BENCHMARK_*` variables
+(case-insensitively), so their Google Benchmark settings come from the collector
+commands and library defaults. Ordinary timing does not inherit dry-run or PMU
+overrides. RSS also sets `LC_ALL=C`. Build and post-build hooks retain their
+existing environment policy. This is measurement-option control, not complete
+isolation of dynamic libraries or system state.
 Earlier combined build-and-corpus durations are not directly comparable, and
 subtracting a separately measured generator duration cannot recover the original
 compilation interval. These internal command contracts reject older combined
