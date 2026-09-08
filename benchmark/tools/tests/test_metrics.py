@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import json
+import argparse
+import subprocess
+import shlex
 import contextlib
 import sys
 import os
@@ -27,7 +30,7 @@ class MetricsTests(unittest.TestCase):
                 dataset.write_text("x", encoding="utf-8")
                 commands = root / "compile_commands.json"
                 commands.write_text(json.dumps([
-                    {"arguments": [str(executable), "-c", "source.cpp"]}
+                    {"directory": str(root), "arguments": [str(executable), "-c", "source.cpp"]}
                 ]), encoding="utf-8")
                 fixture = test_protocol.controlled_metrics_report()
                 owned = fixture["build"]
@@ -101,7 +104,7 @@ class MetricsTests(unittest.TestCase):
             for path in (compiler, executable, allocation, dataset):
                 path.write_text("fixture", encoding="utf-8")
             commands.write_text(json.dumps([
-                {"arguments": [str(compiler), "-c", "source.cpp"]}
+                {"directory": str(root), "arguments": [str(compiler), "-c", "source.cpp"]}
             ]), encoding="utf-8")
             owned = {
                 "revision": "a" * 40,
@@ -157,7 +160,7 @@ class MetricsTests(unittest.TestCase):
                 manifest = root / "report.json.sha256.json"
                 for path in (compiler, executable, allocation, dataset):
                     path.write_text("x", encoding="utf-8")
-                entry = {"arguments": [str(compiler), "-c", "source.cpp"]}
+                entry = {"directory": str(root), "arguments": [str(compiler), "-c", "source.cpp"]}
                 commands.write_text(json.dumps([entry]), encoding="utf-8")
                 before = metrics.artifacts.metadata(commands)
                 original_compiler = metrics.artifacts.metadata(compiler)
@@ -176,7 +179,7 @@ class MetricsTests(unittest.TestCase):
                         else:
                             entries = [entry] * (2 if case == "matches" else 1)
                             if case == "mismatch":
-                                entries = [{"arguments": [str(executable), "-c", "source.cpp"]}]
+                                entries = [{"directory": str(root), "arguments": [str(executable), "-c", "source.cpp"]}]
                             commands.write_text(json.dumps(entries), encoding="utf-8")
                             changed_time = before["mtime_ns"] + 2_000_000_000
                             os.utime(commands, ns=(changed_time, changed_time))
@@ -423,21 +426,163 @@ class MetricsTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "missing required PMU counters"):
                 metrics.parse_timing_report(path, 1, require_pmu=True)
 
-    def test_compile_commands_bind_the_declared_compiler(self) -> None:
-        compiler = Path(__import__("sys").executable).resolve()
+    def test_compile_commands_resolve_in_the_compilation_directory(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary).resolve()
+            build = root / "project" / "build"
+            collector = root / "review" / "build"
+            for directory in (build, collector):
+                directory.mkdir(parents=True)
+                (directory.parent / "toolchain").mkdir()
+            name = "cxx.exe" if os.name == "nt" else "cxx"
+            compiler = build.parent / "toolchain" / name
+            interference = collector.parent / "toolchain" / name
+            for executable in (compiler, interference):
+                executable.write_text("compiler fixture", encoding="utf-8")
+                executable.chmod(0o755)
+            database = root / "compile_commands.json"
+            probe = (
+                "from pathlib import Path; from csv2bench.metrics import validate_compile_commands; "
+                "import sys; print(validate_compile_commands(Path(sys.argv[1]), Path(sys.argv[2])))"
+            )
+            environment = {**os.environ, "PYTHONPATH": str(Path(metrics.__file__).parents[1]),
+                           "PATH": os.pathsep.join(("../toolchain", ""))}
+            for representation in ("arguments", "command"):
+                for executable in ("../toolchain/" + name, name, str(compiler)):
+                    with self.subTest(representation=representation, executable=executable):
+                        arguments = [executable, "-c", "source.cpp"]
+                        entry = {"directory": str(build), representation:
+                                 arguments if representation == "arguments" else
+                                 subprocess.list2cmdline(arguments) if os.name == "nt" else shlex.join(arguments)}
+                        database.write_text(json.dumps([entry]), encoding="utf-8")
+                        for declared, expected in ((compiler, 0), (interference, 1)):
+                            result = subprocess.run(
+                                [sys.executable, "-c", probe, str(database), str(declared)],
+                                cwd=collector, env=environment, capture_output=True, text=True,
+                            )
+                            self.assertEqual(result.returncode, expected, result.stderr)
+            # An empty PATH component searches the compilation directory itself.
+            database.write_text(json.dumps([{"directory": str(compiler.parent),
+                "arguments": [name]}]), encoding="utf-8")
+            with unittest.mock.patch.dict(os.environ, {"PATH": ""}):
+                self.assertEqual(metrics.validate_compile_commands(database, compiler), 1)
+            for directory in (None, "", "relative", str(root / "missing"), str(compiler)):
+                with self.subTest(directory=directory):
+                    database.write_text(json.dumps([{"directory": directory,
+                        "arguments": [str(compiler)]}]), encoding="utf-8")
+                    with self.assertRaisesRegex(RuntimeError, "compilation directory"):
+                        metrics.validate_compile_commands(database, compiler)
+
+    @unittest.skipUnless(os.name == "nt", "Windows drive-relative path semantics")
+    def test_windows_compiler_paths_require_an_absolute_anchor(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
-            path = Path(directory) / "compile_commands.json"
-            path.write_text(
-                json.dumps([{"arguments": [str(compiler), "-c", "source.cpp"]}]),
+            root = Path(directory).resolve()
+            compiler = root / "cxx.exe"
+            compiler.write_text("compiler fixture", encoding="utf-8")
+            database = root / "compile_commands.json"
+            drive = root.drive
+            other_drive = "D:" if drive.upper() == "C:" else "C:"
+            for executable in (drive + "cxx.exe", str(compiler)[len(drive):]):
+                database.write_text(json.dumps([{"directory": str(root),
+                    "arguments": [executable]}]), encoding="utf-8")
+                self.assertEqual(metrics.validate_compile_commands(database, compiler), 1)
+            for executable, search in ((other_drive + "cxx.exe", str(root)),
+                                       ("cxx.exe", other_drive + "tools")):
+                with self.subTest(executable=executable, search=search):
+                    database.write_text(json.dumps([{"directory": str(root),
+                        "arguments": [executable]}]), encoding="utf-8")
+                    with unittest.mock.patch.dict(os.environ, {"PATH": search}):
+                        with self.assertRaisesRegex(RuntimeError, "cannot be anchored"):
+                            metrics.validate_compile_commands(database, compiler)
+
+    def test_windows_bare_compiler_respects_pathext_order(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
+            compiler = root / "cxx.exe"
+            compiler.write_text("compiler fixture", encoding="utf-8")
+            compiler.chmod(0o755)
+            database = root / "compile_commands.json"
+            database.write_text(json.dumps([{"directory": str(root),
+                "arguments": ["cxx"]}]), encoding="utf-8")
+
+            interference = root / "cxx.com.exe"
+            interference.write_text("second expansion interference", encoding="utf-8")
+            interference.chmod(0o755)
+
+            with unittest.mock.patch.object(metrics.platform, "system", return_value="Windows"), \
+                    unittest.mock.patch.dict(os.environ, {"PATH": str(root), "PATHEXT": ".com;.exe"}):
+                self.assertEqual(metrics.validate_compile_commands(database, compiler), 1)
+                other = root / "cxx.com"
+                other.write_text("earlier extension", encoding="utf-8")
+                other.chmod(0o755)
+                with self.assertRaisesRegex(RuntimeError, "declared compiler"):
+                    metrics.validate_compile_commands(database, compiler)
+                self.assertEqual(metrics.validate_compile_commands(database, other), 1)
+
+    def test_compile_commands_reject_malformed_commands_and_use_default_path(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
+            database = root / "compile_commands.json"
+            compiler = Path(sys.executable).resolve()
+            for invalid in ({"arguments": [""]}, {"command": '"unterminated'}):
+                with self.subTest(invalid=invalid):
+                    database.write_text(json.dumps([{"directory": str(root), **invalid}]), encoding="utf-8")
+                    with self.assertRaisesRegex(RuntimeError, "empty executable|malformed command"):
+                        metrics.validate_compile_commands(database, compiler)
+            database.write_text(json.dumps([{"directory": str(root),
+                "arguments": [compiler.name]}]), encoding="utf-8")
+            environment = {key: value for key, value in os.environ.items() if key.upper() != "PATH"}
+            with unittest.mock.patch.dict(os.environ, environment, clear=True), unittest.mock.patch.object(
+                os, "defpath", str(compiler.parent)
+            ):
+                self.assertEqual(metrics.validate_compile_commands(database, compiler), 1)
+
+    def test_measurements_filter_benchmark_environment_but_hooks_inherit_it(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            script = Path(directory) / "probe.py"
+            script.write_text(
+                "import json, os, sys\n"
+                "from pathlib import Path\n"
+                "print(json.dumps(dict(os.environ)))\n"
+                "options = dict(arg.split('=', 1) for arg in sys.argv[1:] if '=' in arg)\n"
+                "if '--benchmark_out' in options:\n"
+                "    record = dict(name='probe', real_time=1, time_unit='s', bytes_per_second=1)\n"
+                "    if '--benchmark_perf_counters' in options:\n"
+                "        record.update({key: 1 for key in options['--benchmark_perf_counters'].split(',')})\n"
+                "    Path(options['--benchmark_out']).write_text(json.dumps({'benchmarks': [record]}))\n",
                 encoding="utf-8",
             )
-            self.assertEqual(metrics.validate_compile_commands(path, compiler), 1)
-            path.write_text(
-                json.dumps([{"arguments": [str(path), "-c", "source.cpp"]}]),
-                encoding="utf-8",
-            )
-            with self.assertRaisesRegex(RuntimeError, "declared compiler"):
-                metrics.validate_compile_commands(path, compiler)
+            args = argparse.Namespace(executable=Path(sys.executable), input=Path("input.csv"),
+                operation="traversal/rows", source="buffer", runs=1,
+                minimum_time="0.1s", warmup_seconds=0.0)
+            original_command = metrics.timing_command
+
+            def command(*args, **kwargs):
+                argv = original_command(*args, **kwargs)
+                return [argv[0], str(script), *argv[1:]]
+
+            injected = {"BENCHMARK_DRY_RUN": "1", "benchmark_perf_counters": "cycles",
+                        "BeNcHmArK_FUTURE_FLAG": "1", "CSV2_ENV_SENTINEL": "retained", "LC_ALL": "POSIX"}
+            with unittest.mock.patch.dict(os.environ, injected), unittest.mock.patch.object(
+                metrics, "timing_command", side_effect=command
+            ):
+                for pmu in (False, True):
+                    result, invocation = metrics.collect_timing(args, pmu=pmu)
+                    environment = json.loads(invocation["stdout"])
+                    self.assertFalse(any(key.upper().startswith("BENCHMARK_") for key in environment))
+                    self.assertEqual(environment["CSV2_ENV_SENTINEL"], "retained")
+                    self.assertEqual("pmu" in result["samples"][0], pmu)
+                if sys.platform.startswith("linux") and Path("/usr/bin/time").is_file():
+                    rss = metrics.collect_peak_rss(args)
+                    environment = json.loads(rss["stdout"])
+                    self.assertFalse(any(key.upper().startswith("BENCHMARK_") for key in environment))
+                    self.assertEqual(environment["LC_ALL"], "C")
+                    self.assertEqual(environment["CSV2_ENV_SENTINEL"], "retained")
+                hook = shlex.join([sys.executable, str(script)])
+                for invoke in (metrics.time_build, metrics.run_post_build):
+                    environment = json.loads(invoke(hook)["stdout"])
+                    for key, value in injected.items():
+                        self.assertEqual({name.upper(): item for name, item in environment.items()}[key.upper()], value)
 
 
 if __name__ == "__main__":

@@ -389,6 +389,17 @@ helper closure as one deterministic source bundle; A/B rejects an A/A
 calibration produced by a different bundle. `--skip-pmu`, `--skip-rss`, and
 `--skip-size` are exploratory smoke-only relaxations.
 
+External fixed-metrics collection validates compiler references in
+`compile_commands.json` after any build/post-build hook. Each record requires
+an existing absolute `directory`. Relative compiler paths resolve against that
+compilation directory; bare names use the collector's `PATH` order (or the
+platform default when unset), with relative and empty search entries anchored
+to the compilation directory. Windows executable lookup honors `PATHEXT`;
+paths that cannot be made absolute against the compilation directory are
+rejected. The collector's launch directory does not select the compiler. This check binds compiler references, not a replay of the original
+build environment. Post-hook rebinding and subsequent artifact drift checks
+remain required.
+
 Finalize the three component reports only after all measurements complete:
 
 ```bash

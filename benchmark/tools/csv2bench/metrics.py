@@ -204,6 +204,11 @@ def parse_timing_report(
     }
 
 
+def measurement_environment() -> dict[str, str]:
+    return {key: value for key, value in os.environ.items()
+            if not key.upper().startswith("BENCHMARK_")}
+
+
 def collect_timing(
     args: argparse.Namespace, *, pmu: bool = False
 ) -> tuple[dict[str, object], dict[str, object]]:
@@ -220,7 +225,7 @@ def collect_timing(
             args.warmup_seconds,
             pmu,
         )
-        completed = run(command)
+        completed = run(command, environment=measurement_environment())
         if not output.is_file() or output.stat().st_size == 0:
             raise RuntimeError(
                 "Google Benchmark produced no JSON report\n"
@@ -256,7 +261,7 @@ def collect_peak_rss(args: argparse.Namespace) -> dict[str, object] | None:
             0.0,
         )
         command = [str(time_tool), "-v", "-o", str(report), *benchmark]
-        completed = run(command, environment={**os.environ, "LC_ALL": "C"})
+        completed = run(command, environment={**measurement_environment(), "LC_ALL": "C"})
         for line in report.read_text(encoding="utf-8").splitlines():
             if "Maximum resident set size (kbytes):" in line:
                 return {
@@ -326,6 +331,13 @@ def validate_compile_commands(path: Path, compiler: Path) -> int:
     for entry in document:
         if not isinstance(entry, dict):
             raise RuntimeError("compile_commands.json contains a non-object entry")
+        directory = entry.get("directory")
+        if (not isinstance(directory, str) or not directory
+                or not Path(directory).is_absolute() or not Path(directory).is_dir()):
+            raise RuntimeError(
+                "compile_commands.json compilation directory must be an existing absolute directory"
+            )
+        directory_path = Path(directory)
         arguments = entry.get("arguments")
         command = entry.get("command")
         if isinstance(arguments, list) and arguments and all(
@@ -333,7 +345,10 @@ def validate_compile_commands(path: Path, compiler: Path) -> int:
         ):
             executable = arguments[0]
         elif isinstance(command, str):
-            parts = shlex.split(command, posix=os.name != "nt")
+            try:
+                parts = shlex.split(command, posix=os.name != "nt")
+            except ValueError as error:
+                raise RuntimeError("compile_commands.json contains a malformed command") from error
             if not parts:
                 raise RuntimeError("compile_commands.json contains an empty command")
             executable = parts[0].strip('"')
@@ -341,15 +356,44 @@ def validate_compile_commands(path: Path, compiler: Path) -> int:
             raise RuntimeError(
                 "compile_commands.json entry has neither command nor arguments"
             )
-        resolved = shutil.which(executable)
-        if resolved is None and Path(executable).is_absolute():
+        if not executable:
+            raise RuntimeError("compile_commands.json contains an empty executable")
+        executable_path = Path(executable)
+        if executable_path.is_absolute():
             resolved = executable
+        elif os.path.dirname(executable):
+            candidate = directory_path / executable_path
+            if not candidate.is_absolute():
+                raise RuntimeError("compiler path cannot be anchored to its compilation directory")
+            resolved = str(candidate)
+        else:
+            resolved = None
+            names = [executable]
+            if platform.system() == "Windows":
+                extensions = [extension for extension in (
+                    os.environ.get("PATHEXT") or ".COM;.EXE;.BAT;.CMD"
+                ).split(";") if extension]
+                if not any(executable.lower().endswith(extension.lower()) for extension in extensions):
+                    names = [executable + extension for extension in extensions]
+            for search in os.environ.get("PATH", os.defpath).split(os.pathsep):
+                search_path = Path(search)
+                if not search_path.is_absolute():
+                    search_path = directory_path / search_path
+                if not search_path.is_absolute():
+                    raise RuntimeError("PATH entry cannot be anchored to its compilation directory")
+                for name in names:
+                    candidate = search_path / name
+                    if candidate.is_file() and os.access(candidate, os.X_OK):
+                        resolved = str(candidate)
+                        break
+                if resolved is not None:
+                    break
         if resolved is not None:
             try:
                 resolved_compiler = Path(resolved).resolve(strict=True)
             except OSError:
                 continue
-            if resolved_compiler == compiler:
+            if resolved_compiler.is_file() and resolved_compiler == compiler:
                 matches += 1
     if matches == 0:
         raise RuntimeError(

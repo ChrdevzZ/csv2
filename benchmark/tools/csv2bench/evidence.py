@@ -295,6 +295,7 @@ def assemble_evidence(
     protocol.validate_comparison_report(calibration)
     protocol.validate_comparison_report(comparison)
     protocol.validate_fixed_metrics_report(fixed_metrics)
+    protocol.validate_calibration_sampling(calibration, comparison)
     for name, report in (
         ("calibration", calibration),
         ("comparison", comparison),
