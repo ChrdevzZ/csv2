@@ -489,6 +489,12 @@ def main() -> None:
     if args.post_build_argv and not args.build_argv:
         parser.error("--post-build-argv requires --build-argv")
 
+    if args.evidence_level == "controlled":
+        try:
+            machine.reject_runtime_injection(os.environ)
+        except RuntimeError as error:
+            parser.error(str(error))
+
     owned_build: dict[str, object] | None = None
     artifact_mode = "external" if args.external_artifacts else "owned"
     if not args.external_artifacts:

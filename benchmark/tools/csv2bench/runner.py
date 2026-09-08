@@ -29,14 +29,6 @@ OPERATIONS = (
     "writer_escaped_direct",
     "writer_escaped_streamable",
 )
-MODERN_WRITER_OPERATIONS = frozenset(
-    {
-        "writer_raw_direct",
-        "writer_raw_streamable",
-        "writer_escaped_direct",
-        "writer_escaped_streamable",
-    }
-)
 SOURCES = ("buffer", "mmap")
 OPERATION_SOURCES = {
     operation: frozenset({"buffer", "mmap"}) for operation in OPERATIONS
@@ -188,29 +180,6 @@ def selected(requested: str, available: Iterable[str]) -> list[str]:
     if unknown:
         raise ValueError(f"unknown selections: {', '.join(unknown)}")
     return wanted
-
-
-def required_capabilities(operations: Iterable[str]) -> set[str]:
-    selected_operations = set(operations)
-    capabilities: set[str] = set()
-    if selected_operations & {"rows_cells", "legacy_mmap_rows_cells"}:
-        capabilities.add("legacy-reader")
-    if "legacy_writer_raw" in selected_operations:
-        capabilities.add("legacy-writer")
-    if selected_operations & MODERN_WRITER_OPERATIONS:
-        capabilities.add("modern-writer")
-    return capabilities
-
-
-def parse_capabilities(value: str) -> set[str]:
-    entries = value.split(",")
-    if any(not entry for entry in entries) or len(entries) != len(set(entries)):
-        raise RuntimeError("benchmark capabilities are malformed")
-    capabilities = set(entries)
-    allowed = {"legacy-reader", "legacy-writer", "modern-writer"}
-    if not capabilities <= allowed:
-        raise RuntimeError("benchmark capabilities contain an unknown entry")
-    return capabilities
 
 
 def validate_mode_invariants(
@@ -415,19 +384,9 @@ def measure_case(
                 "result": public_result(result),
             }
         )
-    for round_index in range(warmups):
-        order = ((baseline, "baseline"), (candidate, "candidate"))
-        if round_index % 2:
-            order = tuple(reversed(order))
-        for position, (executable, side) in enumerate(order):
-            launch(executable, side, "warmup", round_index, position)
-
-    for round_index in range(runs):
-        order = ((baseline, "baseline"), (candidate, "candidate"))
-        if round_index % 2:
-            order = tuple(reversed(order))
-        for position, (executable, side) in enumerate(order):
-            launch(executable, side, "sample", round_index, position)
+    executables = {"baseline": baseline, "candidate": candidate}
+    for phase, round_index, order, side in derivation.launch_schedule(runs, warmups):
+        launch(executables[side], side, phase, round_index, order)
 
     case: dict[str, object] = {
         "dataset": dataset.name,
@@ -662,6 +621,7 @@ def main() -> None:
         if args.machine_profile is None:
             parser.error("controlled comparisons require --machine-profile")
         try:
+            machine.reject_runtime_injection(os.environ)
             requested_affinity = machine.parse_affinity(args.cpu_affinity)
         except RuntimeError as error:
             parser.error(str(error))
@@ -699,7 +659,7 @@ def main() -> None:
     except (OSError, RuntimeError, ValueError) as error:
         parser.error(str(error))
 
-    requested_capabilities = required_capabilities(operations)
+    requested_capabilities = set(wire.capabilities_for_operations(operations))
     enable_modern_writer_operations = "modern-writer" in requested_capabilities
 
     artifact_mode = "external" if args.external_artifacts else "owned"
@@ -826,25 +786,24 @@ def main() -> None:
         )
         if baseline_contracts != candidate_contracts:
             raise RuntimeError("baseline and candidate operation contracts differ")
-        baseline_capabilities = parse_capabilities(baseline_description["capabilities"])
-        candidate_capabilities = parse_capabilities(candidate_description["capabilities"])
+        baseline_capabilities = wire.parse_common_capabilities(baseline_description["capabilities"])
+        candidate_capabilities = wire.parse_common_capabilities(candidate_description["capabilities"])
         if baseline_capabilities != candidate_capabilities:
             raise RuntimeError("baseline and candidate capabilities differ")
-        for description, contracts, side in (
-            (baseline_description, baseline_contracts, "baseline"),
-            (candidate_description, candidate_contracts, "candidate"),
+        for description, contracts, described_capabilities, side in (
+            (baseline_description, baseline_contracts, baseline_capabilities, "baseline"),
+            (candidate_description, candidate_contracts, candidate_capabilities, "candidate"),
         ):
             described_operations = set(description["operations"].split(","))
             if described_operations != set(contracts):
                 raise RuntimeError(f"{side} operation list and contracts differ")
-            described_capabilities = parse_capabilities(description["capabilities"])
-            if required_capabilities(described_operations) != described_capabilities:
+            if wire.capabilities_for_operations(described_operations) != described_capabilities:
                 raise RuntimeError(f"{side} capabilities and operations differ")
-            if owned_builds is not None and described_capabilities != set(
+            if owned_builds is not None and described_capabilities != tuple(
                 owned_builds[side]["capabilities"]
             ):
                 raise RuntimeError(f"{side} runtime capabilities differ from its build")
-            if not requested_capabilities <= described_capabilities:
+            if not requested_capabilities <= set(described_capabilities):
                 raise RuntimeError(f"{side} executable lacks a requested capability")
     except RuntimeError as error:
         parser.error(str(error))

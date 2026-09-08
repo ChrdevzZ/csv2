@@ -53,13 +53,17 @@ class RunnerTests(unittest.TestCase):
                 profile = {"artifact": runner.artifacts.metadata(executable),
                            "observation": {"process_affinity": [2]}}
                 built = test_protocol.controlled_comparison_report()["baseline"]["build"]
-                built.update(output={"path": str(executable)}, capabilities=["legacy-reader"])
+                built.update(output={"path": str(executable)}, capabilities=["legacy-reader", "legacy-writer"])
                 built["header_export"].update(root=str(root), files=[])
                 owned = {"baseline": built, "candidate": built,
                          "adapter": {"root": str(root), "commit": "e" * 40}}
                 description = test_protocol.comparison_report()["baseline"]["description"]
-                description.update(revision=built["revision"], capabilities="legacy-reader",
+                description.update(revision=built["revision"],
                                    _command='["benchmark", "--describe"]', _stdout="", _stderr="")
+                description["operations"] += ",legacy_writer_raw"
+                description["operation_contracts"] += (
+                    ";legacy_writer_raw:writer_only:buffer:"
+                    "csv2.writer.legacy-raw.v1:input_corpus")
                 events = []
 
                 def check(binding):
@@ -201,15 +205,39 @@ class RunnerTests(unittest.TestCase):
         self.assertEqual(raised.exception.code, 2)
         build_pair.assert_not_called()
 
-    def test_operation_selection_maps_to_required_capabilities(self) -> None:
-        self.assertEqual(
-            runner.required_capabilities(("rows_cells", "legacy_writer_raw")),
-            {"legacy-reader", "legacy-writer"},
-        )
-        self.assertEqual(
-            runner.required_capabilities(("writer_raw_direct",)),
-            {"modern-writer"},
-        )
+    def test_noncanonical_capabilities_are_rejected_before_measurement(self) -> None:
+        import test_protocol
+
+        for encoded in ("legacy-writer,legacy-reader", "legacy-reader",
+                        "legacy-reader,legacy-writer,legacy-writer", "", "unknown"):
+            with self.subTest(capabilities=encoded), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                executable = root / "driver"
+                executable.write_text("fixture", encoding="utf-8")
+                (root / "input.csv").write_text("a,b\n", encoding="utf-8")
+                description = test_protocol.comparison_report()["baseline"]["description"]
+                description["capabilities"] = encoded
+                if "legacy-writer" in encoded:
+                    description["operations"] += ",legacy_writer_raw"
+                    description["operation_contracts"] += (
+                        ";legacy_writer_raw:writer_only:buffer:"
+                        "csv2.writer.legacy-raw.v1:input_corpus")
+                output = root / "report.json"
+                argv = ["run_suite", "--external-artifacts", "--baseline", str(executable),
+                        "--candidate", str(executable), "--baseline-revision", "candidate",
+                        "--candidate-revision", "candidate", "--compiler-flags=-O3",
+                        "--datasets", str(root), "--operations", "rows_cells", "--sources", "buffer",
+                        "--mode", "aa", "--output", str(output)]
+                with (unittest.mock.patch.object(sys, "argv", argv),
+                      unittest.mock.patch.object(runner, "describe", return_value=description),
+                      unittest.mock.patch.object(runner, "measure_case") as measure,
+                      contextlib.redirect_stderr(io.StringIO()) as stderr,
+                      self.assertRaises(SystemExit) as raised):
+                    runner.main()
+                self.assertEqual(raised.exception.code, 2)
+                self.assertIn("capabilities are malformed", stderr.getvalue())
+                measure.assert_not_called()
+                self.assertFalse(output.exists())
 
     def test_measurement_alternates_launch_order_and_preserves_semantics(self) -> None:
         launches: list[str] = []
@@ -236,9 +264,9 @@ class RunnerTests(unittest.TestCase):
                 "rows_cells",
                 dataset,
                 "buffer",
-                runs=2,
+                runs=3,
                 iterations=1,
-                warmups=0,
+                warmups=3,
                 expected_scope="traversal_only",
                 expected_semantic_case_id="csv2.traversal.rows-cells.v1",
                 expected_byte_basis="input_corpus",
@@ -247,7 +275,19 @@ class RunnerTests(unittest.TestCase):
                 candidate_revision="candidate",
                 invoke_fn=invoke,
             )
-        self.assertEqual(launches, ["base", "candidate", "candidate", "base"])
+        self.assertEqual(launches, ["base", "candidate", "candidate", "base", "base", "candidate"] * 2)
+        self.assertEqual(
+            [(launch["phase"], launch["round"], launch["order"], launch["side"])
+             for launch in case["launches"]],
+            [
+                ("warmup", 0, 0, "baseline"), ("warmup", 0, 1, "candidate"),
+                ("warmup", 1, 0, "candidate"), ("warmup", 1, 1, "baseline"),
+                ("warmup", 2, 0, "baseline"), ("warmup", 2, 1, "candidate"),
+                ("sample", 0, 0, "baseline"), ("sample", 0, 1, "candidate"),
+                ("sample", 1, 0, "candidate"), ("sample", 1, 1, "baseline"),
+                ("sample", 2, 0, "baseline"), ("sample", 2, 1, "candidate"),
+            ],
+        )
         self.assertFalse(case["regression"])
 
     def test_writer_only_result_rejects_timed_reader_work(self) -> None:
