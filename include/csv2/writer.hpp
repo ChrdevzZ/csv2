@@ -1,11 +1,10 @@
 #pragma once
 
-#include <cstring>
 #include <csv2/detail/config.hpp>
 #include <csv2/parameters.hpp>
 #include <fstream>
-#include <iostream>
 #include <iterator>
+#include <ostream>
 #include <sstream>
 #include <string>
 #include <type_traits>
@@ -172,6 +171,7 @@ class basic_writer {
     std::ostringstream formatted;
     formatted.copyfmt(*stream_);
     formatted.exceptions(std::ios_base::goodbit);
+    formatted.clear(stream_->rdstate());
 #if defined(__cpp_exceptions) || defined(__EXCEPTIONS) || defined(_CPPUNWIND)
     struct formatted_state_guard {
       Stream *target;
