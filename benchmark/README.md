@@ -103,7 +103,10 @@ every page resident. Each operation declares source compatibility and
 a preparation bitmask. `Context` materializes only that state: source/traversal
 kernels do not decode Writer rows or allocate Writer buffers. Reused extraction
 buffers and Writer output capacity are reserved before timing only for
-operations that need them.
+operations that need them. Cell extraction kernels use OutputIterator APIs; fresh
+and cleared/reused buffers do not measure continuous accumulation through the
+container extraction APIs. The Reader extraction tests separately cover that
+append-growth contract.
 
 Index construction and lookup are separate measurements. `index/build` owns
 the construction and allocation cost. The two lookup operations consume a
