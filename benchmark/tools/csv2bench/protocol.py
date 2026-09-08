@@ -20,6 +20,10 @@ COMMON_OPERATION_CAPABILITIES = {
     "writer_escaped_direct": "modern-writer",
     "writer_escaped_streamable": "modern-writer",
 }
+COMMON_DESCRIPTION_FIELDS = frozenset({
+    "protocol", "revision", "instrumentation", "capabilities",
+    "operations", "sources", "operation_contracts",
+})
 COMMON_CAPABILITY_ORDER = ("legacy-reader", "legacy-writer", "modern-writer")
 
 
@@ -397,11 +401,17 @@ def _source_bundle(value: object, label: str) -> dict[str, object]:
     return bundle
 
 
-def _invocation(value: object, label: str) -> dict[str, object]:
+def _invocation(
+    value: object, label: str, *, allow_empty_arguments: bool = False
+) -> dict[str, object]:
     invocation = _object(value, label)
     _required(invocation, {"command", "stdout", "stderr"}, label)
     command = _array(invocation["command"], f"{label}.command")
-    if not command or not all(isinstance(item, str) and item for item in command):
+    if allow_empty_arguments:
+        if (not command or not all(isinstance(item, str) and "\0" not in item for item in command)
+                or not command[0]):
+            raise RuntimeError(f"{label}.command requires a non-empty executable and NUL-free string arguments")
+    elif not command or not all(isinstance(item, str) and item for item in command):
         raise RuntimeError(f"{label}.command must contain non-empty strings")
     for stream in ("stdout", "stderr"):
         if not isinstance(invocation[stream], str):
@@ -555,11 +565,14 @@ def _timing(
     return timing
 
 
-def _clean_build(value: object, label: str) -> dict[str, object]:
+def _clean_build(
+    value: object, label: str, *, allow_empty_arguments: bool = False
+) -> dict[str, object]:
     build = _object(value, label)
     _required(build, {"command", "seconds", "stdout", "stderr"}, label)
     _invocation(
-        {key: build[key] for key in ("command", "stdout", "stderr")}, label
+        {key: build[key] for key in ("command", "stdout", "stderr")}, label,
+        allow_empty_arguments=allow_empty_arguments,
     )
     _number(build["seconds"], f"{label}.seconds", positive=True)
     return build
@@ -689,19 +702,7 @@ def _common_build(value: object, label: str) -> dict[str, object]:
         "benchmark/compare/common_driver.cpp"
     ]:
         raise RuntimeError(f"{label} adapter export is not the common driver")
-    compiler = _object(build["compiler"], f"{label}.compiler")
-    _required(compiler, {"artifact", "version"}, f"{label}.compiler")
-    _closed(compiler, {"artifact", "version"}, f"{label}.compiler")
-    _artifact(compiler["artifact"], f"{label}.compiler.artifact", revision=False)
-    version = _object(compiler["version"], f"{label}.compiler.version")
-    _required(version, {"command", "returncode", "stdout", "stderr"}, f"{label}.compiler.version")
-    _closed(version, {"command", "returncode", "stdout", "stderr"}, f"{label}.compiler.version")
-    _invocation(
-        {"command": version["command"], "stdout": version["stdout"], "stderr": version["stderr"]},
-        f"{label}.compiler.version",
-    )
-    if _integer(version["returncode"], f"{label}.compiler.version.returncode") != 0:
-        raise RuntimeError(f"{label}.compiler.version did not succeed")
+    compiler = _tool_identity(build["compiler"], f"{label}.compiler")
     for field in ("compiler_flags", "argv", "normalized_argv"):
         values = _array(build[field], f"{label}.{field}")
         if not values or not all(
@@ -973,10 +974,7 @@ def validate_comparison_report(report: object) -> None:
         )
         _required(
             description,
-            {
-                "protocol", "revision", "instrumentation", "capabilities",
-                "operations", "sources", "operation_contracts",
-            },
+            COMMON_DESCRIPTION_FIELDS,
             f"comparison report.{side}.description",
         )
         if description["protocol"] != COMMON_PROTOCOL:
@@ -1027,10 +1025,13 @@ def validate_comparison_report(report: object) -> None:
             )
         driver_capabilities.append(described_capabilities)
         capabilities.append(contracts)
-        _invocation(
-            side_document["description_invocation"],
-            f"comparison report.{side}.description_invocation",
-        )
+        description_label = f"comparison report.{side}.description_invocation"
+        invocation = _invocation(side_document["description_invocation"], description_label)
+        if invocation["command"] != [artifact["path"], "--describe"]:
+            raise RuntimeError(f"{description_label}.command differs from the bound executable")
+        observed = parse_key_value_line(invocation["stdout"], COMMON_DESCRIPTION_FIELDS)
+        if observed != {field: description[field] for field in COMMON_DESCRIPTION_FIELDS}:
+            raise RuntimeError(f"{description_label}.stdout differs from its structured description")
 
     if driver_capabilities[0] != driver_capabilities[1]:
         raise RuntimeError("comparison driver capabilities differ")
@@ -1059,6 +1060,7 @@ def validate_comparison_report(report: object) -> None:
         _string(document.get("error"), "comparison report.error")
 
     dataset_sizes: dict[str, int] = {}
+    dataset_paths: dict[str, str] = {}
     for index, value in enumerate(datasets):
         label = f"comparison report.datasets[{index}]"
         dataset = _object(value, label)
@@ -1066,7 +1068,7 @@ def validate_comparison_report(report: object) -> None:
         name = _string(dataset["name"], f"{label}.name")
         if name in dataset_sizes:
             raise RuntimeError("comparison report contains duplicate datasets")
-        _string(dataset["path"], f"{label}.path")
+        dataset_paths[name] = _string(dataset["path"], f"{label}.path")
         dataset_sizes[name] = _integer(dataset["size"], f"{label}.size", 1)
         _string(dataset["sha256"], f"{label}.sha256")
     case_keys: set[tuple[str, str, str]] = set()
@@ -1206,6 +1208,15 @@ def validate_comparison_report(report: object) -> None:
                 {key: launch[key] for key in ("command", "stdout", "stderr")},
                 launch_label,
             )
+            expected_command = [
+                document[side]["artifact"]["path"],
+                "--operation", operation,
+                "--input", dataset_paths[dataset_name],
+                "--source", source,
+                "--iterations", str(iterations),
+            ]
+            if launch["command"] != expected_command:
+                raise RuntimeError(f"{launch_label}.command differs from its bound execution context")
             throughput = _number(
                 launch["throughput_gib_per_second"],
                 f"{launch_label}.throughput_gib_per_second",
@@ -1542,9 +1553,11 @@ def validate_fixed_metrics_report(report: object) -> None:
         _current_invocation(document["timing_invocation"], "fixed-machine report.timing_invocation",
                             document, timing=True)
         if document["clean_build"] is not None:
-            _clean_build(document["clean_build"], "fixed-machine report.clean_build")
+            _clean_build(document["clean_build"], "fixed-machine report.clean_build",
+                         allow_empty_arguments=artifact_mode == "external")
         if document.get("post_build") is not None:
-            _invocation(document["post_build"], "fixed-machine report.post_build")
+            _invocation(document["post_build"], "fixed-machine report.post_build",
+                        allow_empty_arguments=True)
         if document.get("pmu") is not None:
             _timing(
                 document["pmu"],

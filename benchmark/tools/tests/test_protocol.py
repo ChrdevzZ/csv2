@@ -190,7 +190,11 @@ def comparison_report() -> dict[str, object]:
                 "csv2.traversal.rows-cells.v1:input_corpus"
             ),
         },
-        "description_invocation": invocation(),
+    }
+    side["description_invocation"] = {
+        "command": ["/artifact", "--describe"],
+        "stdout": " ".join(f"{key}={value}" for key, value in side["description"].items()),
+        "stderr": "",
     }
     signature = ["1", "1", "1", "1", "1", "1"]
 
@@ -222,7 +226,8 @@ def comparison_report() -> dict[str, object]:
             "round": 0,
             "order": order,
             "side": side_name,
-            "command": ["driver"],
+            "command": ["/artifact", "--operation", "rows_cells", "--input", "/input.csv",
+                        "--source", "buffer", "--iterations", "1"],
             "stdout": " ".join(f"{key}={value}" for key, value in result.items()),
             "stderr": "",
             "throughput_gib_per_second": throughput,
@@ -407,6 +412,9 @@ def controlled_comparison_report() -> dict[str, object]:
         side = report[side_name]
         side["artifact"]["revision"] = revision
         side["description"]["revision"] = revision
+        side["description_invocation"]["stdout"] = " ".join(
+            f"{key}={value}" for key, value in side["description"].items()
+        )
     for launch in report["cases"][0]["launches"]:
         launch["result"]["revision"] = revision
         launch["stdout"] = " ".join(
@@ -914,6 +922,61 @@ class ProtocolTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "median"):
             protocol.validate_fixed_metrics_report(report)
 
+    def test_comparison_invocations_bind_their_execution_context(self) -> None:
+        for factory in (comparison_report, controlled_comparison_report):
+            original = factory()
+            protocol.validate_comparison_report(original)
+            for side in ("baseline", "candidate"):
+                for index, value in ((0, "/other-driver"), (2, "legacy_writer_raw"),
+                                     (4, "/other.csv"), (6, "mmap"), (8, "2")):
+                    with self.subTest(mode=original["artifact_mode"], side=side, argument=index):
+                        report = copy.deepcopy(original)
+                        launch = next(item for item in report["cases"][0]["launches"]
+                                      if item["side"] == side)
+                        launch["command"][index] = value
+                        with self.assertRaisesRegex(RuntimeError, "command.*bound execution context"):
+                            protocol.validate_comparison_report(report)
+                for field, value in (("command", ["/other-driver", "--describe"]),
+                                     ("command", ["/artifact", "--describe", "extra"]),
+                                     ("stdout", "not a description"),
+                                     ("stdout", original[side]["description_invocation"]["stdout"].replace(
+                                         "instrumentation=none", "instrumentation=timer-audit"))):
+                    with self.subTest(mode=original["artifact_mode"], side=side, field=field, value=value):
+                        report = copy.deepcopy(original)
+                        report[side]["description_invocation"][field] = value
+                        with self.assertRaises(RuntimeError):
+                            protocol.validate_comparison_report(report)
+
+    def test_hook_records_accept_empty_arguments_without_weakening_executable(self) -> None:
+        schema = json.loads((Path(__file__).resolve().parents[2] /
+                             "protocol/schemas/fixed-machine-v7.schema.json").read_text())
+        for field in ("clean_build", "post_build"):
+            for command in (["tool", "", "argument"], [], [""], ["tool", None],
+                            ["tool\0"], ["tool", "argument\0"]):
+                with self.subTest(field=field, command=command):
+                    report = fixed_metrics_report()
+                    record = {"command": command, "stdout": "", "stderr": ""}
+                    if field == "clean_build":
+                        record["seconds"] = 1.0
+                    report[field] = record
+                    if command == ["tool", "", "argument"]:
+                        protocol.validate_fixed_metrics_report(report)
+                        validate_schema(report, schema)
+                    else:
+                        with self.assertRaises(RuntimeError):
+                            protocol.validate_fixed_metrics_report(report)
+                        with self.assertRaises(SchemaValidationError):
+                            validate_schema(report, schema)
+
+    def test_schema_prefix_items_and_remaining_items_are_distinct(self) -> None:
+        schema = {"type": "array", "prefixItems": [{"type": "string"}],
+                  "items": {"type": "integer"}}
+        for valid in ([], ["tool"], ["tool", 1, 2]):
+            validate_schema(valid, schema)
+        for invalid in ([1], ["tool", "bad"], ["tool", 1, "bad"]):
+            with self.assertRaises(SchemaValidationError):
+                validate_schema(invalid, schema)
+
     def test_completed_reports_pass_semantic_validation(self) -> None:
         protocol.validate_comparison_report(comparison_report())
         protocol.validate_fixed_metrics_report(fixed_metrics_report())
@@ -1273,6 +1336,9 @@ class ProtocolTests(unittest.TestCase):
         report["candidate"]["description"]["operation_contracts"] = (
             "rows_cells:writer_only:buffer:"
             "csv2.traversal.rows-cells.v1:input_corpus"
+        )
+        report["candidate"]["description_invocation"]["stdout"] = " ".join(
+            f"{key}={value}" for key, value in report["candidate"]["description"].items()
         )
         with self.assertRaisesRegex(RuntimeError, "scope differs"):
             protocol.validate_comparison_report(report)

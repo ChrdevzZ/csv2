@@ -163,9 +163,12 @@ def _validate(
             for index, item in enumerate(instance):
                 if any(_json_equal(item, previous) for previous in instance[:index]):
                     raise ValidationError(f"{path} contains duplicate items")
+        prefix = schema.get("prefixItems", [])
+        for index, child in enumerate(prefix[:len(instance)]):
+            _validate(instance[index], child, root, f"{path}[{index}]")
         if "items" in schema:
-            for index, item in enumerate(instance):
-                _validate(item, schema["items"], root, f"{path}[{index}]")
+            for index in range(len(prefix), len(instance)):
+                _validate(instance[index], schema["items"], root, f"{path}[{index}]")
 
     if isinstance(instance, str):
         minimum_length = schema.get("minLength")

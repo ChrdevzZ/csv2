@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import io
 import argparse
 import subprocess
 import shlex
@@ -13,10 +14,61 @@ import unittest.mock
 from pathlib import Path
 
 import _support  # noqa: F401
-from csv2bench import metrics
+from csv2bench import metrics, protocol
 
 
 class MetricsTests(unittest.TestCase):
+    def test_hook_argv_preserves_argument_boundaries(self) -> None:
+        import test_protocol
+        from _schema_subset import validate as validate_schema
+
+        report = test_protocol.fixed_metrics_report()
+        schema_path = Path(__file__).resolve().parents[2] / "protocol/schemas/fixed-machine-v7.schema.json"
+        schema = json.loads(schema_path.read_text(encoding="utf-8"))
+        arguments = [sys.executable, "-c", "import json, sys; print(json.dumps(sys.argv[1:]))",
+                     r"C:\Program Files\tool\input.csv", "with spaces", "", 'embedded"quote',
+                     "$HOME; echo unwanted", "trailing\\"]
+        parsed = metrics.parse_hook_argv(json.dumps(arguments))
+        self.assertEqual(parsed, arguments)
+        for field, invoke in (("clean_build", metrics.time_build), ("post_build", metrics.run_post_build)):
+            with self.subTest(hook=invoke.__name__):
+                result = invoke(parsed)
+                self.assertEqual(result["command"], arguments)
+                self.assertEqual(json.loads(result["stdout"]), arguments[3:])
+                report[field] = result
+                protocol.validate_fixed_metrics_report(report)
+                validate_schema(report, schema)
+
+    def test_hook_argv_rejects_invalid_cli_input_before_build(self) -> None:
+        invalid = ["not json", "{}", '"command"', "[]", '[""]', '[1]',
+                   '["tool", null]', '["tool", false]', '["tool", ["arg"]]',
+                   json.dumps(["tool", "nul\0arg"]), json.dumps(["nul\0tool"])]
+        base = ["collect_metrics", "--candidate-ref", "HEAD", "--compiler-executable", "cc",
+                "--operation", "traversal/rows-cells", "--input", "input.csv", "--output", "out.json"]
+        external = ["collect_metrics", "--external-artifacts", "--executable", "driver",
+                    "--revision", "HEAD", "--operation", "traversal/rows-cells",
+                    "--input", "input.csv", "--output", "out.json"]
+        cases = [(base + ["--build-argv", value], "hook argv") for value in invalid]
+        cases.extend([
+            (base + ["--build-argv", '["build"]'], "external build"),
+            (base + ["--post-build-argv", '["post"]'], "external build"),
+            (base + ["--build-command", "build"], "unrecognized arguments"),
+            (base + ["--post-build-command", "post"], "unrecognized arguments"),
+            (base + ["--build-arg", '["build"]'], "unrecognized arguments"),
+            (external + ["--post-build-argv", '["post"]'], "requires --build-argv"),
+        ])
+        for argv, message in cases:
+            stderr = io.StringIO()
+            with self.subTest(argv=argv), contextlib.ExitStack() as stack:
+                stack.enter_context(unittest.mock.patch.object(sys, "argv", argv))
+                stack.enter_context(contextlib.redirect_stderr(stderr))
+                build = stack.enter_context(unittest.mock.patch.object(metrics.builds, "build_current_tree"))
+                with self.assertRaises(SystemExit) as raised:
+                    metrics.main()
+                self.assertEqual(raised.exception.code, 2)
+                self.assertIn(message, stderr.getvalue())
+                build.assert_not_called()
+
     def test_runtime_boundaries_prevent_completed_publication_after_drift(self) -> None:
         import test_protocol
 
@@ -214,11 +266,11 @@ class MetricsTests(unittest.TestCase):
                     "collect_metrics", "--external-artifacts", "--executable", str(executable),
                     "--compiler-executable", str(compiler), "--compile-commands", str(commands),
                     "--revision", "candidate", "--operation", "traversal/rows-cells",
-                    "--input", str(dataset), "--runs", "1", "--build-command", "build",
+                    "--input", str(dataset), "--runs", "1", "--build-argv", '["build"]',
                     "--skip-pmu", "--skip-rss", "--skip-size", "--output", str(output),
                 ]
                 if phase == "post":
-                    argv.extend(["--post-build-command", "post"])
+                    argv.extend(["--post-build-argv", '["post"]'])
                 with unittest.mock.patch("sys.argv", argv), unittest.mock.patch.object(
                     metrics, "run", side_effect=invoke
                 ):
@@ -578,7 +630,7 @@ class MetricsTests(unittest.TestCase):
                     self.assertFalse(any(key.upper().startswith("BENCHMARK_") for key in environment))
                     self.assertEqual(environment["LC_ALL"], "C")
                     self.assertEqual(environment["CSV2_ENV_SENTINEL"], "retained")
-                hook = shlex.join([sys.executable, str(script)])
+                hook = [sys.executable, str(script)]
                 for invoke in (metrics.time_build, metrics.run_post_build):
                     environment = json.loads(invoke(hook)["stdout"])
                     for key, value in injected.items():

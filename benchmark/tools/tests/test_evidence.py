@@ -64,6 +64,9 @@ class EvidenceBundleTests(unittest.TestCase):
         baseline = comparison["baseline"]
         baseline["artifact"]["revision"] = baseline_revision
         baseline["description"]["revision"] = baseline_revision
+        baseline["description_invocation"]["stdout"] = " ".join(
+            f"{key}={value}" for key, value in baseline["description"].items()
+        )
         baseline_build = baseline["build"]
         original_build_revision = str(baseline_build["revision"])
         baseline_build["revision"] = baseline_revision
@@ -94,6 +97,9 @@ class EvidenceBundleTests(unittest.TestCase):
             path=str(dataset_path.resolve()), size=1, sha256=dataset_hash
         )
         calibration["datasets"] = copy.deepcopy(comparison["datasets"])
+        for report in (calibration, comparison):
+            for launch in report["cases"][0]["launches"]:
+                launch["command"][4] = str(dataset_path.resolve())
 
         calibration_file = root / "aa.json"
         calibration_file.write_text("{}", encoding="utf-8")
@@ -279,6 +285,7 @@ class EvidenceBundleTests(unittest.TestCase):
                 if field == "iterations_per_run":
                     case["semantic_signature"][1] = str(comparison[field])
                     for launch in case["launches"]:
+                        launch["command"][8] = str(comparison[field])
                         launch["result"]["iterations"] = str(comparison[field])
                         launch["result"]["elapsed_ns"] = str(comparison[field])
                         launch["stdout"] = " ".join(
@@ -540,6 +547,8 @@ class EvidenceBundleTests(unittest.TestCase):
                     test_protocol.bind_metrics_invocations(report)
                 else:
                     report["datasets"][0]["path"] = str(original.resolve())
+                    for launch in report["cases"][0]["launches"]:
+                        launch["command"][4] = str(original.resolve())
                     if label == "comparison":
                         identity = artifacts.metadata(paths["calibration_path"])
                         report["calibration"].update(

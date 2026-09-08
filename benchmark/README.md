@@ -327,8 +327,10 @@ taskset -c "$AFFINITY" python3 benchmark/run_suite.py \
 
 Run the process itself under the declared affinity, for example
 `taskset -c "$AFFINITY" python3 ...`; controlled mode rejects an affinity mismatch.
-Scalar numeric CLI fields accept unsigned ASCII decimal only. Signs, whitespace,
-zero iterations, and overflow are rejected before measurement.
+The Python orchestration options `--runs`, `--warmups`, and `--iterations`
+are parsed as integers and checked against their range and evidence-level
+requirements. Values passed to the native common driver are serialized as
+decimal arguments; its own numeric parser requires unsigned ASCII decimal.
 
 The report retains launch order, raw output, every sample, provenance, median,
 MAD, and deterministic paired-bootstrap 95% interval. Validation reparses every
@@ -389,6 +391,17 @@ helper closure as one deterministic source bundle; A/B rejects an A/A
 calibration produced by a different bundle. `--skip-pmu`, `--skip-rss`, and
 `--skip-size` are exploratory smoke-only relaxations.
 
+External fixed-metrics hooks accept `--build-argv` and optional
+`--post-build-argv` as JSON arrays of strings, for example
+`["cmake", "--build", "build directory", "--config", "Release"]`. The executable
+must be non-empty and every argument must be NUL-free; later empty arguments
+are preserved. Arrays are passed directly to the subprocess without shell
+parsing. Windows backslashes use normal JSON escaping, for example
+`["C:\\tools\\cmake.exe", "--build", "C:\\work\\build"]`. The outer shell must
+pass the JSON as one argument. Post-build hooks require a build hook; both
+options are external-only. The former command-string options are removed.
+Hook environments and post-hook artifact rebinding retain their existing policy.
+
 External fixed-metrics collection validates compiler references in
 `compile_commands.json` after any build/post-build hook. Each record requires
 an existing absolute `directory`. Relative compiler paths resolve against that
@@ -396,9 +409,9 @@ compilation directory; bare names use the collector's `PATH` order (or the
 platform default when unset), with relative and empty search entries anchored
 to the compilation directory. Windows executable lookup honors `PATHEXT`;
 paths that cannot be made absolute against the compilation directory are
-rejected. The collector's launch directory does not select the compiler. This check binds compiler references, not a replay of the original
-build environment. Post-hook rebinding and subsequent artifact drift checks
-remain required.
+rejected. The collector's launch directory does not select the compiler. This
+check binds compiler references, not a replay of the original build environment.
+Post-hook rebinding and subsequent artifact drift checks remain required.
 
 Finalize the three component reports only after all measurements complete:
 
