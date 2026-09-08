@@ -292,10 +292,21 @@ def collect_code_size(executable: Path) -> dict[str, object]:
     }
 
 
-def time_build(command_text: str) -> dict[str, object]:
-    command = shlex.split(command_text)
-    if not command:
-        raise RuntimeError("--build-command must not be empty")
+def parse_hook_argv(value: str) -> list[str]:
+    try:
+        command = json.loads(value)
+    except json.JSONDecodeError as error:
+        raise argparse.ArgumentTypeError("hook argv must be a JSON array of strings") from error
+    if (not isinstance(command, list) or not command
+            or any(not isinstance(arg, str) or "\0" in arg for arg in command)
+            or not command[0]):
+        raise argparse.ArgumentTypeError(
+            "hook argv must be a non-empty JSON array of NUL-free strings with a non-empty executable"
+        )
+    return command
+
+
+def time_build(command: list[str]) -> dict[str, object]:
     started = time.perf_counter()
     completed = run(command)
     return {
@@ -306,10 +317,7 @@ def time_build(command_text: str) -> dict[str, object]:
     }
 
 
-def run_post_build(command_text: str) -> dict[str, object]:
-    command = shlex.split(command_text)
-    if not command:
-        raise RuntimeError("--post-build-command must not be empty")
+def run_post_build(command: list[str]) -> dict[str, object]:
     completed = run(command)
     return {
         "command": command,
@@ -403,7 +411,7 @@ def validate_compile_commands(path: Path, compiler: Path) -> int:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser()
+    parser = argparse.ArgumentParser(allow_abbrev=False)
     parser.add_argument("--external-artifacts", action="store_true")
     parser.add_argument("--repository", type=Path, default=Path.cwd())
     parser.add_argument("--candidate-ref")
@@ -429,8 +437,8 @@ def main() -> None:
     )
     parser.add_argument("--cpu-affinity")
     parser.add_argument("--machine-profile", type=Path)
-    parser.add_argument("--build-command")
-    parser.add_argument("--post-build-command")
+    parser.add_argument("--build-argv", type=parse_hook_argv)
+    parser.add_argument("--post-build-argv", type=parse_hook_argv)
     parser.add_argument("--skip-pmu", action="store_true")
     parser.add_argument("--skip-rss", action="store_true")
     parser.add_argument("--skip-size", action="store_true")
@@ -456,7 +464,7 @@ def main() -> None:
             args.build_root = args.output.with_suffix(args.output.suffix + ".build")
         if args.corpus_scale < 1:
             parser.error("--corpus-scale must be positive")
-        if args.build_command or args.post_build_command:
+        if args.build_argv or args.post_build_argv:
             parser.error("owned metrics build internally; external build commands are forbidden")
 
     if args.runs < 1:
@@ -481,8 +489,8 @@ def main() -> None:
         parser.error("controlled evidence requires PMU, RSS, and code-size collection")
     if args.evidence_level == "controlled" and args.external_artifacts:
         parser.error("controlled evidence requires an owned current-tree build")
-    if args.post_build_command and not args.build_command:
-        parser.error("--post-build-command requires --build-command")
+    if args.post_build_argv and not args.build_argv:
+        parser.error("--post-build-argv requires --build-argv")
 
     owned_build: dict[str, object] | None = None
     artifact_mode = "external" if args.external_artifacts else "owned"
@@ -655,10 +663,10 @@ def main() -> None:
     atomic.write_json(args.output, report)
 
     try:
-        if args.build_command:
-            report["clean_build"] = time_build(args.build_command)
-            if args.post_build_command:
-                report["post_build"] = run_post_build(args.post_build_command)
+        if args.build_argv:
+            report["clean_build"] = time_build(args.build_argv)
+            if args.post_build_argv:
+                report["post_build"] = run_post_build(args.post_build_argv)
             # Build hooks may replace executables, generated inputs and the
             # compilation database. Bind the measured artifacts after all hooks
             # and repeat alias checks; the declared compiler remains immutable.

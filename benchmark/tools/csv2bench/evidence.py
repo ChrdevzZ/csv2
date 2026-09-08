@@ -52,10 +52,6 @@ def finalizer_source_paths() -> list[Path]:
     )
 
 
-def _verify_artifact(record: Document, label: str) -> None:
-    artifacts.verify_unchanged(record, label)
-
-
 def _identity_paths(value: object, label: str):
     """Yield every filesystem object embedded in a manifest input."""
     if isinstance(value, list):
@@ -94,7 +90,7 @@ def _verify_report_identity(
 ) -> None:
     if manifest["report"] != report_identity:
         raise RuntimeError(f"{label} does not bind the supplied report")
-    _verify_artifact(manifest["report"], f"{label} report")
+    artifacts.verify_unchanged(manifest["report"], f"{label} report")
 
 
 def _verify_comparison_manifest(
@@ -109,7 +105,7 @@ def _verify_comparison_manifest(
         recorded = inputs[side]
         if recorded != report[side]["artifact"]:
             raise RuntimeError(f"{label} {side} artifact differs from the report")
-        _verify_artifact(recorded, f"{label} {side} artifact")
+        artifacts.verify_unchanged(recorded, f"{label} {side} artifact")
         build = report[side]["build"]
         expected_digest = build["digest"] if isinstance(build, dict) else None
         if inputs["builds"][side] != expected_digest:
@@ -126,7 +122,7 @@ def _verify_comparison_manifest(
             recorded[field] != dataset[field] for field in ("path", "size", "sha256")
         ):
             raise RuntimeError(f"{label} dataset artifacts differ from the report")
-        _verify_artifact(recorded, f"{label} dataset {dataset['name']}")
+        artifacts.verify_unchanged(recorded, f"{label} dataset {dataset['name']}")
     expected_profile = report["machine_profile"]
     expected_artifact = (
         expected_profile["artifact"] if isinstance(expected_profile, dict) else None
@@ -134,7 +130,7 @@ def _verify_comparison_manifest(
     if inputs["machine_profile"] != expected_artifact:
         raise RuntimeError(f"{label} machine profile differs from the report")
     if expected_artifact is not None:
-        _verify_artifact(expected_artifact, f"{label} machine profile")
+        artifacts.verify_unchanged(expected_artifact, f"{label} machine profile")
 
 
 def _verify_fixed_manifest(
@@ -158,9 +154,9 @@ def _verify_fixed_manifest(
     if inputs["machine_profile"] != expected_artifact:
         raise RuntimeError("fixed-metrics manifest machine profile differs from the report")
     if expected_artifact is not None:
-        _verify_artifact(expected_artifact, "fixed-metrics machine profile")
+        artifacts.verify_unchanged(expected_artifact, "fixed-metrics machine profile")
     for name, identity in inputs["artifacts"].items():
-        _verify_artifact(identity, f"fixed-metrics {name}")
+        artifacts.verify_unchanged(identity, f"fixed-metrics {name}")
 
 
 def _safe_corpus_member(root: Path, encoded: object) -> Path:
@@ -524,7 +520,7 @@ def _verify_component_files(
         for side in ("baseline", "candidate"):
             builds.validate_build_manifest(report[side]["build"])
     builds.verify_current_build_manifest(fixed_metrics["build"])
-    _verify_artifact(comparison["runner"], "comparison runner bundle")
+    artifacts.verify_unchanged(comparison["runner"], "comparison runner bundle")
     root = corpus_path.parent.resolve(strict=True)
     corpus_paths: dict[str, Path] = {}
     for dataset in corpus["datasets"]:
@@ -650,8 +646,8 @@ def finalize(
             raise RuntimeError(f"{label} output already exists: {destination}")
 
     for name, identity in identities.items():
-        _verify_artifact(identity, name)
-    _verify_artifact(finalizer, "evidence finalizer")
+        artifacts.verify_unchanged(identity, name)
+    artifacts.verify_unchanged(finalizer, "evidence finalizer")
     # Re-read mutable dependencies before publication; loaded report statistics
     # and cross-document relationships have already been validated.
     _verify_comparison_manifest(
@@ -677,8 +673,8 @@ def finalize(
         paths["corpus_manifest"],
     )
     for name, identity in identities.items():
-        _verify_artifact(identity, name)
-    _verify_artifact(finalizer, "evidence finalizer")
+        artifacts.verify_unchanged(identity, name)
+    artifacts.verify_unchanged(finalizer, "evidence finalizer")
     staged_output = atomic.stage_json(output, bundle)
     try:
         if artifacts.paths_alias(staged_output, output_manifest):
@@ -696,7 +692,7 @@ def finalize(
         # atomic publication, so an interruption cannot leave it unbound.
         atomic.write_json(output_manifest, manifest)
         atomic.publish_staged(staged_output, output)
-        _verify_artifact(report_identity, "published evidence bundle")
+        artifacts.verify_unchanged(report_identity, "published evidence bundle")
     except BaseException:
         atomic.discard_staged(staged_output)
         raise

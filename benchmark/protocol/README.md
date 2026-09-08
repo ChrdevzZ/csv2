@@ -99,9 +99,11 @@ is valid; `/o2 /dNDEBUG` is not an equivalent spelling.
 artifacts and descriptions, operation scope/source contracts, datasets, host,
 compiler context, complete Python runner bundle, launch order, raw samples,
 and derived statistics. Its validator reparses every saved stdout wire,
-reconstructs the complete `(phase, round, order)` launch schedule, and
-recomputes per-launch throughput, medians, MADs, deterministic paired-bootstrap
-intervals, both-side comparison noise, calibrated A/A noise, thresholds, and
+reconstructs the complete `(phase, round, order)` launch schedule, and binds
+each launch argv to its side's executable, dataset path, operation,
+source, and iteration count. Description argv and saved wire output must match
+the structured driver description. Validation also recomputes per-launch
+throughput, medians, MADs, deterministic paired-bootstrap intervals, both-side comparison noise, calibrated A/A noise, thresholds, and
 verdicts. Mutation of a primary observation or a derived field invalidates the
 report. A/A requires the same revision, owned build identity, and executable
 hash on both sides; A/B requires distinct commits. A/B accepts only a completed

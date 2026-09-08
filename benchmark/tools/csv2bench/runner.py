@@ -142,15 +142,7 @@ def describe(executable: Executable) -> dict[str, str]:
     completed = run_command(command)
     result = wire.parse_key_value_line(
         completed.stdout,
-        {
-            "protocol",
-            "revision",
-            "instrumentation",
-            "capabilities",
-            "operations",
-            "sources",
-            "operation_contracts",
-        },
+        wire.COMMON_DESCRIPTION_FIELDS,
     )
     if result["protocol"] != PROTOCOL:
         raise RuntimeError(f"unsupported benchmark protocol: {result['protocol']}")
