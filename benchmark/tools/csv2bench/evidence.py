@@ -186,8 +186,6 @@ def _safe_corpus_member(root: Path, encoded: object) -> Path:
 def _corpus_index(
     document: Document,
     manifest_path: Path,
-    *,
-    verify_contents: bool = True,
 ) -> dict[str, Document]:
     required = {"schema", "generator_version", "prng", "scale", "datasets"}
     if set(document) != required or document.get("schema") != "csv2-benchmark-corpus-v2":
@@ -228,10 +226,6 @@ def _corpus_index(
         path = _safe_corpus_member(root, value["path"])
         if path.name != name:
             raise RuntimeError(f"corpus dataset path/name mismatch for {name}")
-        if path.stat().st_size != size or (
-            verify_contents and artifacts.sha256_file(path) != digest
-        ):
-            raise RuntimeError(f"corpus dataset {name} differs from its manifest")
         strict_valid = value["strict_valid"]
         if type(strict_valid) is not bool:
             raise RuntimeError(f"corpus dataset {name} has an invalid strict-valid flag")
@@ -339,7 +333,6 @@ def assemble_evidence(
         if any(profile != profiles[0] for profile in profiles[1:]):
             raise RuntimeError("machine profile observations differ across components")
         machine_profile = profiles[0]
-        machine_profile_tool.verify_binding(machine_profile, "controlled machine profile")
     else:
         if any(profile is not None for profile in profiles):
             raise RuntimeError("exploratory evidence must not bind a machine profile")
@@ -370,14 +363,6 @@ def assemble_evidence(
     comparison_build = comparison["candidate"]["build"]
     baseline_build = comparison["baseline"]["build"]
     current_build = fixed_metrics["build"]
-    for build, label in (
-        (calibration_baseline_build, "calibration baseline build"),
-        (calibration_build, "calibration candidate build"),
-        (comparison_build, "comparison candidate build"),
-        (baseline_build, "comparison baseline build"),
-    ):
-        builds.validate_build_manifest(build)
-    builds.verify_current_build_manifest(current_build)
     if (
         calibration_baseline_build["identity_digest"]
         != calibration_build["identity_digest"]
@@ -410,7 +395,6 @@ def assemble_evidence(
     machine = _machine_identity(comparison["host"], fixed_metrics["machine"])
     if calibration["runner"] != comparison["runner"]:
         raise RuntimeError("A/A and A/B runner bundles differ")
-    _verify_artifact(comparison["runner"], "comparison runner bundle")
     if not _same_revision_artifact(
         calibration["adapter_source"], comparison["adapter_source"]
     ):
@@ -524,6 +508,46 @@ def assemble_evidence(
     return bundle
 
 
+def _verify_component_files(
+    calibration: Document,
+    comparison: Document,
+    fixed_metrics: Document,
+    corpus: Document,
+    corpus_path: Path,
+) -> None:
+    """Re-read material dependencies without rebuilding report statistics."""
+    profile = calibration["machine_profile"]
+    if profile is not None:
+        machine_profile_tool.verify_binding(profile, "controlled machine profile")
+    for report in (calibration, comparison):
+        for side in ("baseline", "candidate"):
+            builds.validate_build_manifest(report[side]["build"])
+    builds.verify_current_build_manifest(fixed_metrics["build"])
+    _verify_artifact(comparison["runner"], "comparison runner bundle")
+    root = corpus_path.parent.resolve(strict=True)
+    corpus_paths: dict[str, Path] = {}
+    for dataset in corpus["datasets"]:
+        path = _safe_corpus_member(root, dataset["path"])
+        if path.name != dataset["name"]:
+            raise RuntimeError(f"corpus dataset path/name mismatch for {dataset['name']}")
+        corpus_paths[str(dataset["name"])] = path
+        if (
+            path.stat().st_size != dataset["size"]
+            or artifacts.sha256_file(path) != dataset["sha256"]
+        ):
+            raise RuntimeError(f"corpus dataset {dataset['name']} differs from its manifest")
+
+    for dataset in comparison["datasets"]:
+        if Path(str(dataset["path"])).resolve(strict=True) != corpus_paths[dataset["name"]]:
+            raise RuntimeError(
+                f"comparison dataset path is not bound to the corpus: {dataset['name']}"
+            )
+    dataset = fixed_metrics["artifacts"]["dataset"]
+    path = Path(str(dataset["path"]))
+    if path.resolve(strict=True) != corpus_paths[path.name]:
+        raise RuntimeError("fixed-metrics dataset path is not bound to the corpus")
+
+
 def finalize(
     *,
     calibration_path: Path,
@@ -550,9 +574,24 @@ def finalize(
     ):
         loaded[name], paths[name], identities[name] = load_document(path, name)
 
-    protocol.validate_comparison_report(loaded["calibration_report"])
-    protocol.validate_comparison_report(loaded["comparison_report"])
-    protocol.validate_fixed_metrics_report(loaded["fixed_metrics_report"])
+    benchmark_root = Path(__file__).resolve().parents[2]
+    finalizer = artifacts.bundle_metadata(
+        benchmark_root, finalizer_source_paths(), EVIDENCE_SCHEMA
+    )
+    bundle = assemble_evidence(
+        loaded["calibration_report"],
+        loaded["comparison_report"],
+        loaded["fixed_metrics_report"],
+        loaded["corpus_manifest"],
+        paths["corpus_manifest"],
+        identities,
+        finalizer,
+    )
+    _verify_component_files(
+        loaded["calibration_report"], loaded["comparison_report"],
+        loaded["fixed_metrics_report"], loaded["corpus_manifest"],
+        paths["corpus_manifest"],
+    )
     _verify_comparison_manifest(
         loaded["calibration_report"],
         loaded["calibration_manifest"],
@@ -571,10 +610,6 @@ def finalize(
         identities["fixed_metrics_report"],
     )
 
-    benchmark_root = Path(__file__).resolve().parents[2]
-    finalizer = artifacts.bundle_metadata(
-        benchmark_root, finalizer_source_paths(), EVIDENCE_SCHEMA
-    )
     output = artifacts.canonical_output(output)
     output_manifest = artifacts.canonical_output(output_manifest)
     protected = [(name, path) for name, path in paths.items()]
@@ -595,17 +630,12 @@ def finalize(
             _identity_paths(manifest["inputs"], f"{manifest_name} input")
         )
     corpus_root = paths["corpus_manifest"].parent.resolve(strict=True)
-    corpus_datasets = _corpus_index(
-        loaded["corpus_manifest"],
-        paths["corpus_manifest"],
-        verify_contents=False,
-    )
     protected.extend(
         (
-            f"corpus dataset {name}",
+            f"corpus dataset {dataset['name']}",
             _safe_corpus_member(corpus_root, dataset["path"]),
         )
-        for name, dataset in corpus_datasets.items()
+        for dataset in loaded["corpus_manifest"]["datasets"]
     )
     artifacts.reject_output_alias(output, protected)
     artifacts.reject_output_alias(output_manifest, protected)
@@ -618,20 +648,11 @@ def finalize(
         if destination.exists() or destination.is_symlink():
             raise RuntimeError(f"{label} output already exists: {destination}")
 
-    bundle = assemble_evidence(
-        loaded["calibration_report"],
-        loaded["comparison_report"],
-        loaded["fixed_metrics_report"],
-        loaded["corpus_manifest"],
-        paths["corpus_manifest"],
-        identities,
-        finalizer,
-    )
     for name, identity in identities.items():
         _verify_artifact(identity, name)
     _verify_artifact(finalizer, "evidence finalizer")
-    # Repeat the nested artifact/build/corpus checks after assembly so a file
-    # changed during cross-document validation cannot be published as complete.
+    # Re-read mutable dependencies before publication; loaded report statistics
+    # and cross-document relationships have already been validated.
     _verify_comparison_manifest(
         loaded["calibration_report"],
         loaded["calibration_manifest"],
@@ -649,14 +670,10 @@ def finalize(
         loaded["fixed_metrics_manifest"],
         identities["fixed_metrics_report"],
     )
-    bundle = assemble_evidence(
-        loaded["calibration_report"],
-        loaded["comparison_report"],
-        loaded["fixed_metrics_report"],
-        loaded["corpus_manifest"],
+    _verify_component_files(
+        loaded["calibration_report"], loaded["comparison_report"],
+        loaded["fixed_metrics_report"], loaded["corpus_manifest"],
         paths["corpus_manifest"],
-        identities,
-        finalizer,
     )
     for name, identity in identities.items():
         _verify_artifact(identity, name)

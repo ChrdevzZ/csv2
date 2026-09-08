@@ -186,13 +186,26 @@ an exploratory bundle always sets it to false. Protocol validity proves the
 recorded artifact and measurement relationship; it does not independently
 prove that a machine is thermally or operationally stable.
 
+Finalization validates each loaded component report and rebuilds its derived
+statistics once, then assembles one bundle. Publication still rechecks mutable
+artifacts, builds and source exports, the profile file, and every corpus member;
+those file checks do not repeat the unchanged samples' statistical calculations.
+
 Controlled A/A, A/B, and fixed metrics carry the same resolved
 `csv2-machine-profile-v1` digest and runtime observation. The observation must
 match the profile's CPU model, architecture, logical CPU count, allowed
 affinity, kernel release, governor, and turbo/boost state. A generic Linux host
 or affinity setting cannot self-declare controlled status. Collectors reobserve
 this state before warmup/sampling and before completion; comparisons also check
-case boundaries. Partially readable governor state is rejected. These are
+case boundaries. CPU identifiers are explicit nonnegative identifiers, not
+positions in a range derived from the logical CPU count. Actual affinity must
+match the requested selection and remain within the reviewed profile. Mixed
+governor observations retain each selected CPU's governor, so exchanging
+governors between CPUs changes the observation. Uniform governor and
+`unavailable` representations are unchanged. Existing profiles containing only
+a mixed governor name set must be reviewed again against the actual machine;
+the missing CPU associations cannot be inferred. Partially readable governor
+state is rejected. These are
 boundary checks, not continuous monitoring or a guarantee against all benchmark
 noise. Offline binding validation and finalization never observe the reviewer's
 machine. Exploratory evidence

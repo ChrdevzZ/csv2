@@ -586,10 +586,6 @@ def validate_calibration_context(
             raise RuntimeError(f"calibration dataset does not match: {name}")
 
 
-def write_report(path: Path, report: dict[str, object]) -> None:
-    atomic.write_json(path, report)
-
-
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--external-artifacts", action="store_true")
@@ -954,7 +950,7 @@ def main() -> None:
         "cases": [],
     }
     wire.validate_comparison_report(report)
-    write_report(args.output, report)
+    atomic.write_json(args.output, report)
 
     try:
         if calibration_report is not None:
@@ -998,7 +994,7 @@ def main() -> None:
                         candidate_revision=args.candidate_revision,
                     )
                     report["cases"].append(case)
-                    write_report(args.output, report)
+                    atomic.write_json(args.output, report)
         artifacts.verify_unchanged(report["runner"], "runner")
         artifacts.verify_unchanged(report["adapter_source"], "adapter source")
         artifacts.verify_unchanged(baseline_artifact, "baseline executable")
@@ -1021,7 +1017,7 @@ def main() -> None:
         )
         report["completed_at_utc"] = datetime.now(timezone.utc).isoformat()
         wire.validate_comparison_report(report)
-        write_report(args.output, report)
+        atomic.write_json(args.output, report)
         artifact_manifest = {
             "schema": ARTIFACT_MANIFEST_SCHEMA,
             "kind": "comparison",
@@ -1044,13 +1040,13 @@ def main() -> None:
             },
         }
         wire.validate_artifact_manifest(artifact_manifest)
-        write_report(args.manifest, artifact_manifest)
+        atomic.write_json(args.manifest, artifact_manifest)
     except BaseException as error:
         report["status"] = "failed"
         report["controlled_complete"] = False
         report["decision_eligible"] = False
         report["error"] = str(error)
-        write_report(args.output, report)
+        atomic.write_json(args.output, report)
         raise
 
 
