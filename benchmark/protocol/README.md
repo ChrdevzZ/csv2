@@ -9,7 +9,7 @@ reject unknown and older versions; there is no implicit migration path.
 | current verify wire | `csv2-current-v4` | exact checksum, allocation, and semantic identity |
 | build manifest | `csv2-benchmark-build-v2` | immutable source and audited build identity |
 | comparison report | `csv2-benchmark-report-v7` | paired A/A or A/B primary observations and derived results |
-| fixed-machine metrics | `csv2-fixed-machine-metrics-v7` | bound timing, PMU, RSS, size, and provenance |
+| fixed-machine metrics | `csv2-fixed-machine-metrics-v8` | bound timing, PMU, RSS, size, and provenance |
 | complete evidence | `csv2-performance-evidence-bundle-v4` | cross-checked final decision gate |
 | artifact manifest | `csv2-artifact-manifest-v4` | component/evidence inputs and output digests |
 | machine profile | `csv2-machine-profile-v1` | reviewed identity and operating constraints for controlled evidence |
@@ -47,7 +47,11 @@ are allowed only in objects explicitly marked extensible.
   undefinition override invalidates the build.
 
 The tools batch-read Git blobs with exact object-type, size, framing, and OID
-checks, and recheck exported files and build inputs before completion. Every
+checks, and recheck exported files and build inputs before completion. Export
+revalidation reconstructs the declared selection from the same immutable tree
+listing and requires its complete file set to equal the manifest inventory.
+Authentic blobs alone do not establish a complete export. Duplicate and
+overlapping selections are rejected. Every
 Git read disables replacement objects, including commit resolution, tree
 traversal, blob export, and manifest verification, so local replacement refs
 cannot change the content attributed to a recorded revision.
@@ -113,7 +117,7 @@ The online runner and finalizer share the run-count, warmup, and
 iterations-per-run comparison rule; internally valid reports with different
 sampling settings cannot form calibrated evidence.
 
-`csv2-fixed-machine-metrics-v7` embeds the owned current-tree build manifest
+`csv2-fixed-machine-metrics-v8` embeds the owned current-tree build manifest
 and binds semantic verification, allocation verification, Google Benchmark
 samples, PMU counters, peak RSS, code size, and clean isolated build timing.
 The collector reuses the canonical compiler artifact selected by the owned
@@ -155,6 +159,17 @@ artifact size, which can differ from the operation's verified output bytes. A
 and byte basis that must match one and only one A/B case. Controlled reports
 require cycles, instructions, branch misses, RSS, size, positive warmup, at
 least 20 repetitions, exact affinity, and complete invocation records.
+Fixed-metrics v8 retains GNU time output in `peak_rss.time_output` and GNU
+size stdout/stderr in `code_size`. The collector and offline validator share
+the parsers used to reconstruct the structured values. RSS is whole-process
+peak resident memory (`%M` in KiB), measured with one repetition and no extra
+warmup; its wrapped benchmark argv must match the bound executable, input,
+operation, and source. GNU size uses decimal Berkeley output bound to the same
+executable. Its text/data/bss total is a section measure, not filesystem size;
+Berkeley text includes read-only data. Filesystem fallback must equal the
+executable artifact size and use `method: "filesystem"`. Older fixed-metrics
+formats lack the required raw evidence and are rejected without conversion.
+
 GNU peak-RSS and section-size collection is Linux-only. On other platforms,
 including macOS, exploratory reports record `peak_rss: null` and code size as
 filesystem `file_bytes` with `method: "filesystem"`. These fallbacks do not satisfy

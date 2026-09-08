@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+import re
 from typing import Mapping, Sequence
 
 from . import statistics
@@ -254,3 +255,31 @@ def validate_timing_summary(
             raise RuntimeError(f"{label}.{field} must be an object")
         _close(summary.get("median"), median, f"{label}.{field}.median")
         _close(summary.get("mad"), mad, f"{label}.{field}.mad")
+
+
+def parse_peak_rss(output: str) -> int:
+    """Read GNU time's explicit %M output in KiB."""
+    if not isinstance(output, str) or not re.fullmatch(r"[0-9]+\n?", output):
+        raise RuntimeError("GNU time did not report peak RSS as one decimal value")
+    value = int(output)
+    if value <= 0:
+        raise RuntimeError("GNU time peak RSS must be positive")
+    return value
+
+
+def parse_code_size(output: str, executable: str) -> dict[str, int]:
+    """Reconstruct one explicit Berkeley/decimal size record, preserving its filename."""
+    if not isinstance(output, str):
+        raise RuntimeError("unexpected size tool output")
+    lines = [line for line in output.splitlines() if line.strip()]
+    if len(lines) != 2 or lines[0].split() != ["text", "data", "bss", "dec", "hex", "filename"]:
+        raise RuntimeError("unexpected size tool output")
+    fields = lines[1].split(maxsplit=5)
+    if (len(fields) != 6 or fields[5] != executable
+            or any(not re.fullmatch(r"[0-9]+", field) for field in fields[:4])
+            or not re.fullmatch(r"[0-9a-fA-F]+", fields[4])):
+        raise RuntimeError("unexpected size tool output or executable filename")
+    text, data, bss, total = map(int, fields[:4])
+    if total <= 0 or text + data + bss != total or int(fields[4], 16) != total:
+        raise RuntimeError("size tool totals are inconsistent")
+    return dict(text_bytes=text, data_bytes=data, bss_bytes=bss, total_bytes=total)

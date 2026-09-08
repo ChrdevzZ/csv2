@@ -17,7 +17,7 @@ from pathlib import Path
 from typing import Sequence
 
 from . import ARTIFACT_MANIFEST_SCHEMA, METRICS_SCHEMA
-from . import artifacts, atomic, builds, machine, protocol, statistics
+from . import artifacts, atomic, builds, derivation, machine, protocol, statistics
 
 
 TIME_SCALE = {"ns": 1e-9, "us": 1e-6, "ms": 1e-3, "s": 1.0}
@@ -260,35 +260,30 @@ def collect_peak_rss(args: argparse.Namespace) -> dict[str, object] | None:
             args.minimum_time,
             0.0,
         )
-        command = [str(time_tool), "-v", "-o", str(report), *benchmark]
+        command = [str(time_tool), "-f", "%M", "-o", str(report), *benchmark]
         completed = run(command, environment={**measurement_environment(), "LC_ALL": "C"})
-        for line in report.read_text(encoding="utf-8").splitlines():
-            if "Maximum resident set size (kbytes):" in line:
-                return {
-                    "scope": "whole_process",
-                    "kib": int(line.rsplit(":", 1)[1].strip()),
-                    "command": command,
-                    "stdout": completed.stdout.rstrip("\n"),
-                    "stderr": completed.stderr.rstrip("\n"),
-                }
-    raise RuntimeError("/usr/bin/time did not report peak RSS")
+        time_output = report.read_text(encoding="utf-8")
+        return {
+            "scope": "whole_process",
+            "kib": derivation.parse_peak_rss(time_output),
+            "time_output": time_output,
+            "command": command,
+            "stdout": completed.stdout.rstrip("\n"),
+            "stderr": completed.stderr.rstrip("\n"),
+        }
 
 
 def collect_code_size(executable: Path) -> dict[str, object]:
     size_tool = shutil.which("size") if platform.system() == "Linux" else None
     if not size_tool:
         return {"file_bytes": executable.stat().st_size, "method": "filesystem"}
-    command = [size_tool, "--format=berkeley", str(executable)]
+    command = [size_tool, "--format=berkeley", "--radix=10", str(executable)]
     completed = run(command, environment={**os.environ, "LC_ALL": "C"})
-    lines = [line.split() for line in completed.stdout.splitlines() if line.strip()]
-    if len(lines) < 2 or lines[0][:4] != ["text", "data", "bss", "dec"]:
-        raise RuntimeError("unexpected size tool output")
     return {
-        "text_bytes": int(lines[1][0]),
-        "data_bytes": int(lines[1][1]),
-        "bss_bytes": int(lines[1][2]),
-        "total_bytes": int(lines[1][3]),
+        **derivation.parse_code_size(completed.stdout, str(executable)),
         "command": command,
+        "stdout": completed.stdout,
+        "stderr": completed.stderr,
     }
 
 

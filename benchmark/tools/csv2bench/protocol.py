@@ -452,6 +452,7 @@ def _invocation(
 def _current_invocation(
     value: object, label: str, document: dict[str, object], *,
     allocation: bool = False, timing: bool = False, pmu: bool = False,
+    rss: bool = False,
 ) -> dict[str, object]:
     invocation = _invocation(value, label)
     artifacts = document["artifacts"]
@@ -473,7 +474,7 @@ def _current_invocation(
         options[key] = value
     expected = {
         "--benchmark_filter": timing_filter(document["operation"], document["source"]),
-        "--benchmark_repetitions": str(document["runs"]),
+        "--benchmark_repetitions": "1" if rss else str(document["runs"]),
         "--benchmark_enable_random_interleaving": "true",
         "--benchmark_report_aggregates_only": "false",
         "--benchmark_display_aggregates_only": "false",
@@ -492,7 +493,9 @@ def _current_invocation(
     if not minimum.endswith("x") and finite_nonnegative(minimum.rstrip("s"), label) <= 0:
         raise RuntimeError(f"{label}.command minimum time must be positive")
     warmup = finite_nonnegative(options["--benchmark_min_warmup_time"], label)
-    if document["evidence_level"] == "controlled" and warmup <= 0:
+    if rss and warmup != 0:
+        raise RuntimeError(f"{label}.command RSS warmup must be zero")
+    if not rss and document["evidence_level"] == "controlled" and warmup <= 0:
         raise RuntimeError(f"{label}.command controlled warmup must be positive")
     return invocation
 
@@ -607,35 +610,47 @@ def _clean_build(
     return build
 
 
-def _peak_rss(value: object, label: str) -> dict[str, object]:
+def _peak_rss(value: object, label: str, document: dict[str, object]) -> dict[str, object]:
     rss = _object(value, label)
-    _required(rss, {"scope", "kib", "command", "stdout", "stderr"}, label)
-    _string(rss["scope"], f"{label}.scope")
-    _integer(rss["kib"], f"{label}.kib", 1)
-    _invocation({key: rss[key] for key in ("command", "stdout", "stderr")}, label)
+    fields = {"scope", "kib", "command", "stdout", "stderr", "time_output"}
+    _required(rss, fields, label)
+    _closed(rss, fields, label)
+    if rss["scope"] != "whole_process":
+        raise RuntimeError(f"{label}.scope must be whole_process")
+    kib = _integer(rss["kib"], f"{label}.kib", 1)
+    invocation = _invocation({key: rss[key] for key in ("command", "stdout", "stderr")}, label)
+    command = invocation["command"]
+    if command[:4] != ["/usr/bin/time", "-f", "%M", "-o"] or len(command) < 6:
+        raise RuntimeError(f"{label}.command differs from GNU time collection contract")
+    _current_invocation({**invocation, "command": command[5:]}, label, document,
+                        timing=True, rss=True)
+    if derivation.parse_peak_rss(rss["time_output"]) != kib:
+        raise RuntimeError(f"{label}.kib differs from saved GNU time output")
     return rss
 
 
-def _code_size(value: object, label: str, *, require_sections: bool) -> dict[str, object]:
+def _code_size(value: object, label: str, *, require_sections: bool,
+               executable: dict[str, object]) -> dict[str, object]:
     size = _object(value, label)
-    if require_sections:
-        fields = {"text_bytes", "data_bytes", "bss_bytes", "total_bytes", "command"}
+    if "file_bytes" in size and not require_sections:
+        fields = {"file_bytes", "method"}
         _required(size, fields, label)
-        text = _integer(size["text_bytes"], f"{label}.text_bytes")
-        data = _integer(size["data_bytes"], f"{label}.data_bytes")
-        bss = _integer(size["bss_bytes"], f"{label}.bss_bytes")
-        total = _integer(size["total_bytes"], f"{label}.total_bytes", 1)
-        if total != text + data + bss:
-            raise RuntimeError(f"{label}.total_bytes is inconsistent")
-        command = _array(size["command"], f"{label}.command")
-        if not command or not all(isinstance(item, str) and item for item in command):
-            raise RuntimeError(f"{label}.command must contain non-empty strings")
-    else:
-        if "file_bytes" in size:
-            _integer(size["file_bytes"], f"{label}.file_bytes", 1)
-            _string(size.get("method"), f"{label}.method")
-        else:
-            _code_size(size, label, require_sections=True)
+        _closed(size, fields, label)
+        if size["method"] != "filesystem":
+            raise RuntimeError(f"{label}.method must be filesystem")
+        if _integer(size["file_bytes"], f"{label}.file_bytes", 1) != executable["size"]:
+            raise RuntimeError(f"{label}.file_bytes differs from executable artifact size")
+        return size
+    fields = {"text_bytes", "data_bytes", "bss_bytes", "total_bytes", "command", "stdout", "stderr"}
+    _required(size, fields, label)
+    _closed(size, fields, label)
+    invocation = _invocation({key: size[key] for key in ("command", "stdout", "stderr")}, label)
+    if invocation["command"][1:] != ["--format=berkeley", "--radix=10", executable["path"]]:
+        raise RuntimeError(f"{label}.command differs from size collection context")
+    observed = derivation.parse_code_size(size["stdout"], executable["path"])
+    for field, expected in observed.items():
+        if _integer(size[field], f"{label}.{field}") != expected:
+            raise RuntimeError(f"{label}.{field} differs from saved size output")
     return size
 
 
@@ -1592,12 +1607,13 @@ def validate_fixed_metrics_report(report: object) -> None:
                 document, timing=True, pmu=True,
             )
         if document.get("peak_rss") is not None:
-            _peak_rss(document["peak_rss"], "fixed-machine report.peak_rss")
+            _peak_rss(document["peak_rss"], "fixed-machine report.peak_rss", document)
         if document.get("code_size") is not None:
             _code_size(
                 document["code_size"],
                 "fixed-machine report.code_size",
                 require_sections=evidence == "controlled",
+                executable=identities["executable"],
             )
     elif status == "failed":
         _string(document.get("error"), "fixed-machine report.error")

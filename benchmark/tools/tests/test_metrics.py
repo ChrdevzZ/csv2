@@ -14,7 +14,7 @@ import unittest.mock
 from pathlib import Path
 
 import _support  # noqa: F401
-from csv2bench import metrics, protocol
+from csv2bench import derivation, metrics, protocol
 
 
 class MetricsTests(unittest.TestCase):
@@ -48,7 +48,7 @@ class MetricsTests(unittest.TestCase):
         from _schema_subset import validate as validate_schema
 
         report = test_protocol.fixed_metrics_report()
-        schema_path = Path(__file__).resolve().parents[2] / "protocol/schemas/fixed-machine-v7.schema.json"
+        schema_path = Path(__file__).resolve().parents[2] / "protocol/schemas/fixed-machine-v8.schema.json"
         schema = json.loads(schema_path.read_text(encoding="utf-8"))
         arguments = [sys.executable, "-c", "import json, sys; print(json.dumps(sys.argv[1:]))",
                      r"C:\Program Files\tool\input.csv", "with spaces", "", 'embedded"quote',
@@ -350,15 +350,15 @@ class MetricsTests(unittest.TestCase):
         )
 
         def collect(command, *, environment):
-            self.assertEqual(command[:3], ["/usr/bin/time", "-v", "-o"])
+            self.assertEqual(command[:4], ["/usr/bin/time", "-f", "%M", "-o"])
             self.assertEqual(environment["LC_ALL"], "C")
-            Path(command[3]).write_text(output, encoding="utf-8")
+            Path(command[4]).write_text(output, encoding="utf-8")
             return unittest.mock.Mock(stdout="", stderr="")
 
         with unittest.mock.patch.object(
             metrics.platform, "system", return_value="Linux"
         ), unittest.mock.patch.object(Path, "is_file", return_value=True):
-            output = "Maximum resident set size (kbytes): 1234\n"
+            output = "1234\n"
             with unittest.mock.patch.object(metrics, "run", side_effect=collect):
                 self.assertEqual(metrics.collect_peak_rss(args)["kib"], 1234)
                 output = "unsupported output\n"
@@ -375,13 +375,13 @@ class MetricsTests(unittest.TestCase):
             metrics.platform, "system", return_value="Linux"
         ), unittest.mock.patch.object(metrics.shutil, "which", return_value="/usr/bin/size"):
             with unittest.mock.patch.object(metrics, "run", return_value=unittest.mock.Mock(
-                stdout="text data bss dec hex filename\n10 20 30 60 3c benchmark\n"
+                stdout="text data bss dec hex filename\n10 20 30 60 3c benchmark\n", stderr=""
             )) as run:
                 result = metrics.collect_code_size(Path("benchmark"))
                 self.assertEqual(result["text_bytes"], 10)
                 self.assertEqual(result["total_bytes"], 60)
                 self.assertEqual(run.call_args.args[0], [
-                    "/usr/bin/size", "--format=berkeley", "benchmark"
+                    "/usr/bin/size", "--format=berkeley", "--radix=10", "benchmark"
                 ])
                 self.assertEqual(run.call_args.kwargs["environment"]["LC_ALL"], "C")
                 run.return_value.stdout = "unsupported output\n"
@@ -392,6 +392,19 @@ class MetricsTests(unittest.TestCase):
             ):
                 with self.assertRaisesRegex(RuntimeError, "size failed"):
                     metrics.collect_code_size(Path("benchmark"))
+
+    def test_resource_output_parsers_reject_ambiguous_observations(self) -> None:
+        executable = "/build directory/benchmark executable"
+        output = "text data bss dec hex filename\n10 20 30 60 3c " + executable + "\n"
+        self.assertEqual(derivation.parse_code_size(output, executable)["total_bytes"], 60)
+        for changed in (output.replace("60 3c", "61 3d"), output.replace("60 3c", "60 3d"),
+                        output.replace("10 20", "a 20"), output.replace(executable, "/other"),
+                        output + output.splitlines()[1] + "\n"):
+            with self.subTest(output=changed), self.assertRaises(RuntimeError):
+                derivation.parse_code_size(changed, executable)
+        for output in ("", "0\n", "1\n2\n", "-1\n", "1 KB\n"):
+            with self.subTest(rss=output), self.assertRaises(RuntimeError):
+                derivation.parse_peak_rss(output)
 
     def test_verify_command_uses_current_v4_cli(self) -> None:
         command = metrics.verify_command(

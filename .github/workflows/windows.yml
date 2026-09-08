@@ -71,6 +71,15 @@ jobs:
           cmake --build build --config ${{ matrix.configuration }} --parallel
           --target csv2_benchmark_portability
 
+      - name: Verify audit default-build selection
+        if: matrix.benchmark_owner && inputs.benchmark
+        env:
+          CMAKE_GENERATOR: Visual Studio 18 2026
+          CMAKE_GENERATOR_PLATFORM: x64
+        run: >-
+          python -m unittest discover -s tools/ci
+          -p test_root_cmake_hygiene.py -k benchmark_audits
+
       - name: Build sanitizer smoke
         if: matrix.sanitizers == 'ON'
         run: >-

@@ -776,6 +776,65 @@ class BuildTests(unittest.TestCase):
                     finally:
                         git("replace", "-d", source)
 
+    def test_export_verification_requires_complete_unique_selection(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            repository = root / "repository"
+            repository.mkdir()
+            def git(*arguments):
+                return subprocess.run(
+                    ["git", "-C", str(repository), *arguments], check=True,
+                    capture_output=True, timeout=30,
+                )
+            git("init", "-q")
+            (repository / "include").mkdir()
+            for relative in ("include/a.hpp", "include/b.hpp", "main.cpp"):
+                (repository / relative).write_text(relative, encoding="utf-8")
+            git("add", ".")
+            git("-c", "user.name=CSV2 export test", "-c",
+                "user.email=csv2-test@example.invalid", "-c", "commit.gpgsign=false",
+                "commit", "-qm", "fixture")
+            for name, selection in (("full", None), ("headers", ("include",))):
+                with self.subTest(selection=name):
+                    manifest = builds.export_git_tree(repository, "HEAD", root / name, selection)
+                    with patch.object(builds, "list_regular_files", wraps=builds.list_regular_files) as trees, \
+                         patch.object(builds, "read_git_blobs", wraps=builds.read_git_blobs) as blobs:
+                        builds.verify_git_export(manifest)
+                    self.assertEqual(trees.call_count, 1)
+                    self.assertEqual(blobs.call_count, 1)
+                    removed = manifest["files"].pop(0)
+                    (Path(manifest["root"]) / removed["path"]).unlink()
+                    manifest.pop("digest")
+                    manifest["digest"] = builds.document_digest(manifest)
+                    with patch.object(builds, "read_git_blobs") as blobs:
+                        with self.assertRaises(RuntimeError):
+                            builds.verify_git_export(manifest)
+                        blobs.assert_not_called()
+            valid = builds.export_git_tree(repository, "HEAD", root / "valid", ("include",))
+            for selections in (["main.cpp"], [], None, "include", [1],
+                               ["include", "include"], ["<full-tree>", "include"],
+                               ["include/../include"], ["missing"], [["include"]],
+                               ["include", "include/a.hpp"], ["include/a.hpp", "include"]):
+                with self.subTest(selections=selections):
+                    changed = copy.deepcopy(valid)
+                    changed["selections"] = selections
+                    changed.pop("digest")
+                    changed["digest"] = builds.document_digest(changed)
+                    with self.assertRaises(RuntimeError):
+                        builds.verify_git_export(changed)
+            for extra in (copy.deepcopy(valid["files"][0]), {"path": []}, None):
+                with self.subTest(extra=extra):
+                    changed = copy.deepcopy(valid)
+                    changed["files"].append(extra)
+                    changed.pop("digest")
+                    changed["digest"] = builds.document_digest(changed)
+                    with self.assertRaises(RuntimeError):
+                        builds.verify_git_export(changed)
+            for selections in (("include", "include/a.hpp"), ("include/a.hpp", "include")):
+                with self.subTest(overlap=selections):
+                    with self.assertRaisesRegex(RuntimeError, "overlap"):
+                        builds.export_git_tree(repository, "HEAD", root / "overlap", selections)
+
     def test_export_verification_rejects_content_drift_and_extra_files(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

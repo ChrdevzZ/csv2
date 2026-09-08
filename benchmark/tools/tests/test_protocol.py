@@ -150,7 +150,7 @@ def evidence_bundle() -> dict[str, object]:
             "comparison": json.loads(json.dumps(component)),
             "fixed_metrics": {
                 **component,
-                "schema": "csv2-fixed-machine-metrics-v7",
+                "schema": "csv2-fixed-machine-metrics-v8",
             },
         },
         "checks": checks,
@@ -294,7 +294,7 @@ def comparison_report() -> dict[str, object]:
 
 def fixed_metrics_report() -> dict[str, object]:
     report = {
-        "schema": "csv2-fixed-machine-metrics-v7",
+        "schema": "csv2-fixed-machine-metrics-v8",
         "artifact_mode": "external",
         "build": None,
         "status": "completed",
@@ -401,6 +401,21 @@ def bind_metrics_invocations(report):
             "command": metrics.timing_command(Path(report["artifacts"]["executable"]["path"]), report["operation"], Path(report["artifacts"]["dataset"]["path"]), report["source"], Path("/benchmark.json"), report["runs"], "0.01s", 0.01, key == "pmu"),
             "stdout": "", "stderr": "",
         }
+    if report.get("peak_rss") is not None:
+        rss = report["peak_rss"]
+        rss["command"] = ["/usr/bin/time", "-f", "%M", "-o", "/time.txt",
+            *metrics.timing_command(Path(report["artifacts"]["executable"]["path"]),
+             report["operation"], Path(report["artifacts"]["dataset"]["path"]),
+             report["source"], Path("/rss.json"), 1, "0.01s", 0.0)]
+        rss["time_output"] = str(rss["kib"]) + "\n"
+    if report.get("code_size") is not None and "text_bytes" in report["code_size"]:
+        size = report["code_size"]
+        executable = report["artifacts"]["executable"]["path"]
+        size["command"] = ["size", "--format=berkeley", "--radix=10", executable]
+        size["stdout"] = ("text data bss dec hex filename\n"
+            + " ".join(str(size[field]) for field in ("text_bytes", "data_bytes", "bss_bytes", "total_bytes"))
+            + f" {size['total_bytes']:x} {executable}\n")
+
 
 
 def controlled_comparison_report() -> dict[str, object]:
@@ -576,7 +591,6 @@ def controlled_metrics_report() -> dict[str, object]:
     report["peak_rss"] = {
         "scope": "whole_process",
         "kib": 1,
-        "command": ["time"],
         "stdout": "",
         "stderr": "",
     }
@@ -585,7 +599,7 @@ def controlled_metrics_report() -> dict[str, object]:
         "data_bytes": 1,
         "bss_bytes": 1,
         "total_bytes": 3,
-        "command": ["size"],
+        "stderr": "",
     }
     source: dict[str, object] = {
         "schema": "csv2-git-export-v1",
@@ -717,6 +731,53 @@ def controlled_metrics_report() -> dict[str, object]:
 
 
 class ProtocolTests(unittest.TestCase):
+    def test_resource_metrics_bind_context_and_primary_observations(self) -> None:
+        report = controlled_metrics_report()
+        protocol.validate_fixed_metrics_report(report)
+        mutations = {
+            "rss scope": lambda r: r["peak_rss"].update(scope="operation"),
+            "rss value": lambda r: r["peak_rss"].update(kib=999),
+            "rss command": lambda r: r["peak_rss"].update(command=["other"]),
+            "size command": lambda r: r["code_size"].update(command=["other"]),
+            "size values": lambda r: r["code_size"].update(text_bytes=8, total_bytes=10),
+            "rss raw": lambda r: r["peak_rss"].update(time_output="999\n"),
+            "rss input": lambda r: r["peak_rss"]["command"].__setitem__(7, "/other.csv"),
+            "rss repetitions": lambda r: r["peak_rss"]["command"].__setitem__(13, "--benchmark_repetitions=20"),
+            "rss warmup": lambda r: r["peak_rss"]["command"].__setitem__(15, "--benchmark_min_warmup_time=0.1"),
+            "size hex": lambda r: r["code_size"].update(stdout=r["code_size"]["stdout"].replace("3 3 ", "3 4 ")),
+            "size raw": lambda r: r["code_size"].update(stdout=r["code_size"]["stdout"].replace("1 1 1 3 3", "8 1 1 10 a")),
+            "size input": lambda r: r["code_size"]["command"].__setitem__(-1, "/other"),
+        }
+        for name, mutate in mutations.items():
+            with self.subTest(name=name):
+                changed = copy.deepcopy(report)
+                mutate(changed)
+                with self.assertRaises(RuntimeError):
+                    protocol.validate_fixed_metrics_report(changed)
+
+        report = fixed_metrics_report()
+        report["code_size"] = {"file_bytes": report["artifacts"]["executable"]["size"], "method": "filesystem"}
+        protocol.validate_fixed_metrics_report(report)
+        for field, value in (("file_bytes", report["artifacts"]["executable"]["size"] + 1),
+                             ("method", "other")):
+            changed = copy.deepcopy(report)
+            changed["code_size"][field] = value
+            with self.subTest(filesystem=field), self.assertRaises(RuntimeError):
+                protocol.validate_fixed_metrics_report(changed)
+
+        schema = json.loads((Path(__file__).resolve().parents[2]
+            / "protocol/schemas/fixed-machine-v8.schema.json").read_text(encoding="utf-8"))
+        for candidate, field, value in ((report, "stdout", ""),
+                (controlled_metrics_report(), "method", "filesystem")):
+            validate_schema(candidate, schema)
+            changed = copy.deepcopy(candidate)
+            changed["code_size"][field] = value
+            with self.subTest(mixed_branch=field):
+                with self.assertRaises(RuntimeError):
+                    protocol.validate_fixed_metrics_report(changed)
+                with self.assertRaises(SchemaValidationError):
+                    validate_schema(changed, schema)
+
     def test_owned_metrics_bind_build_cost_and_preparation(self) -> None:
         report = controlled_metrics_report()
         protocol.validate_fixed_metrics_report(report)
@@ -815,7 +876,7 @@ class ProtocolTests(unittest.TestCase):
 
     def test_raw_writer_semantics_are_canonical_in_both_directions(self) -> None:
         schema_root = Path(__file__).resolve().parents[2] / "protocol"
-        fixed_schema = json.loads((schema_root / "schemas" / "fixed-machine-v7.schema.json").read_text())
+        fixed_schema = json.loads((schema_root / "schemas" / "fixed-machine-v8.schema.json").read_text())
         for suffix in ("direct", "streamable"):
             operation = "writer/raw-" + suffix
             common_operation = "writer_raw_" + suffix
@@ -950,7 +1011,7 @@ class ProtocolTests(unittest.TestCase):
 
     def test_hook_records_accept_empty_arguments_without_weakening_executable(self) -> None:
         schema = json.loads((Path(__file__).resolve().parents[2] /
-                             "protocol/schemas/fixed-machine-v7.schema.json").read_text())
+                             "protocol/schemas/fixed-machine-v8.schema.json").read_text())
         for field in ("clean_build", "post_build"):
             for command in (["tool", "", "argument"], [], [""], ["tool", None],
                             ["tool\0"], ["tool", "argument\0"]):
@@ -1080,10 +1141,10 @@ class ProtocolTests(unittest.TestCase):
         report = fixed_metrics_report()
         for field in optional:
             report[field] = None
-        report["code_size"] = {"file_bytes": 42, "method": "filesystem"}
+        report["code_size"] = {"file_bytes": report["artifacts"]["executable"]["size"], "method": "filesystem"}
         protocol.validate_fixed_metrics_report(report)
         report = controlled_metrics_report()
-        report["code_size"] = {"file_bytes": 42, "method": "filesystem"}
+        report["code_size"] = {"file_bytes": report["artifacts"]["executable"]["size"], "method": "filesystem"}
         with self.assertRaises(RuntimeError):
             protocol.validate_fixed_metrics_report(report)
         for field, value in (("bytes_per_second", 2.0), ("name", "wrong/real_time")):
@@ -1477,7 +1538,7 @@ class ProtocolTests(unittest.TestCase):
                     with self.assertRaises(SchemaValidationError):
                         validate_schema(changed, schema)
             validate_schema(1.0, {keyword: [1] if keyword == "enum" else 1})
-        schema_path = Path(__file__).resolve().parents[2] / "protocol/schemas/fixed-machine-v7.schema.json"
+        schema_path = Path(__file__).resolve().parents[2] / "protocol/schemas/fixed-machine-v8.schema.json"
         schema = json.loads(schema_path.read_text(encoding="utf-8"))
         report = fixed_metrics_report()
         validate_schema(report, schema)

@@ -18,6 +18,12 @@ add_subdirectory(datasets)
 add_subdirectory(current)
 add_subdirectory(compare)
 
+if(NOT CSV2_BUILD_BENCHMARK_CHECKS)
+  set_target_properties(
+    csv2_benchmark_observer_audit csv2_common_benchmark_timer_audit
+    PROPERTIES EXCLUDE_FROM_ALL TRUE EXCLUDE_FROM_DEFAULT_BUILD TRUE)
+endif()
+
 if(CSV2_BUILD_BENCHMARK_CHECKS)
   add_subdirectory(checks)
   add_subdirectory(tools)

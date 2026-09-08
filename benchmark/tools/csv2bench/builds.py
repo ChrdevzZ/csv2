@@ -329,13 +329,18 @@ def _selected_entries(
 ) -> tuple[list[dict[str, str]], list[str]]:
     if selections is None:
         return list(entries), ["<full-tree>"]
-    if not selections:
-        raise RuntimeError("Git export selection must not be empty")
+    if not isinstance(selections, (list, tuple)) or not selections:
+        raise RuntimeError("Git export selection must be a nonempty sequence")
     normalized: list[str] = []
     for selection in selections:
+        if not isinstance(selection, str) or selection == "<full-tree>":
+            raise RuntimeError("Git export selection must be a regular Git path")
         path = safe_git_path(selection).as_posix()
         if path in normalized:
             raise RuntimeError(f"duplicate Git export selection: {path}")
+        if any(path.startswith(other + "/") or other.startswith(path + "/")
+               for other in normalized):
+            raise RuntimeError(f"overlapping Git export selection: {path}")
         normalized.append(path)
     selected: list[dict[str, str]] = []
     matched = {selection: False for selection in normalized}
@@ -459,13 +464,28 @@ def verify_git_export(manifest: dict[str, object]) -> None:
     values = manifest.get("files")
     if not isinstance(values, list) or not values:
         raise RuntimeError("Git export manifest has no files")
+    manifested_paths: set[str] = set()
     for index, value in enumerate(values):
         if not isinstance(value, dict):
             raise RuntimeError(f"Git export file {index} is not an object")
-        path = str(value.get("path", ""))
+        path = value.get("path")
+        if not isinstance(path, str):
+            raise RuntimeError(f"Git export file {index} has no valid path")
+        safe_git_path(path)
+        if path in manifested_paths:
+            raise RuntimeError(f"duplicate Git export file: {path}")
+        manifested_paths.add(path)
         source = source_entries.get(path)
         if source is None or any(value.get(field) != source[field] for field in ("mode", "type", "oid")):
             raise RuntimeError(f"Git export file is not bound to the commit tree: {path}")
+    selections = manifest.get("selections")
+    if not isinstance(selections, list) or not selections:
+        raise RuntimeError("Git export manifest has no valid selections")
+    selected, _ = _selected_entries(
+        list(source_entries.values()), None if selections == ["<full-tree>"] else selections
+    )
+    if manifested_paths != {entry["path"] for entry in selected}:
+        raise RuntimeError("Git export files differ from the complete tree selection")
     blobs = read_git_blobs(repository, [value["oid"] for value in values])
     expected_files: set[Path] = set()
     for value in values:
