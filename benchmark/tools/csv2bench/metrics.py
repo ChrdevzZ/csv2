@@ -451,6 +451,8 @@ def main() -> None:
             parser.error("--external-artifacts is restricted to exploratory evidence")
         if args.executable is None or args.revision is None:
             parser.error("--external-artifacts requires --executable and --revision")
+        if args.compile_commands is not None and args.compiler_executable is None:
+            parser.error("--compile-commands requires --compiler-executable")
         if args.candidate_ref or args.build_root:
             parser.error("external artifacts cannot use owned-build ref options")
     else:
@@ -613,8 +615,10 @@ def main() -> None:
             version_stdout = str(recorded_version["stdout"])
             version_stderr = str(recorded_version["stderr"])
         else:
-            version = run([str(args.compiler_executable), "--version"])
-            version_command = [str(args.compiler_executable), "--version"]
+            version_command = [str(args.compiler_executable), *builds.compiler_version_arguments(args.compiler_executable)]
+            version = run(version_command)
+            if not (version.stdout.strip() or version.stderr.strip()):
+                raise RuntimeError("compiler version command returned no identity")
             version_stdout = version.stdout.rstrip("\n")
             version_stderr = version.stderr.rstrip("\n")
         identities["compiler_executable"] = artifacts.metadata(
@@ -694,8 +698,6 @@ def main() -> None:
                     ("compiler executable", args.compiler_executable)
                 )
             if args.compile_commands is not None:
-                if args.compiler_executable is None or compiler_identity is None:
-                    raise RuntimeError("--compile-commands requires --compiler-executable")
                 args.compile_commands = artifacts.canonical_existing(
                     args.compile_commands, "compile commands after build"
                 )

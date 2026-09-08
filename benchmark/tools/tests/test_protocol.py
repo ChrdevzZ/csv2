@@ -551,6 +551,7 @@ def controlled_metrics_report() -> dict[str, object]:
     report["runs"] = 20
     report["compiler_flags"] = "-O3 -DNDEBUG"
     report["machine"]["process_affinity"] = [0]
+    report["machine"]["system"] = "Linux"
     report["machine_profile"] = machine_profile()
     report["timing"]["runs"] = 20
     report["timing"]["samples"] = report["timing"]["samples"] * 20
@@ -1290,6 +1291,16 @@ class ProtocolTests(unittest.TestCase):
                 protocol.validate_artifact_manifest(manifest)
                 validate_schema(manifest, schema)
 
+        manifest = fixed_metrics_manifest()
+        manifest["inputs"]["artifacts"]["compiler_executable"] = artifact()
+        protocol.validate_artifact_manifest(manifest)
+        validate_schema(manifest, schema)
+        manifest["inputs"]["build"] = "c" * 64
+        with self.assertRaisesRegex(RuntimeError, "requires compiler artifacts"):
+            protocol.validate_artifact_manifest(manifest)
+        with self.assertRaises(SchemaValidationError):
+            validate_schema(manifest, schema)
+
         structural_mutations = {
             "unknown input": lambda value: value["inputs"].__setitem__(
                 "unexpected", True
@@ -1306,9 +1317,9 @@ class ProtocolTests(unittest.TestCase):
             "invalid digest": lambda value: value["inputs"]["artifacts"][
                 "dataset"
             ].__setitem__("sha256", "not-a-digest"),
-            "compiler without commands": lambda value: value["inputs"][
+            "commands without compiler": lambda value: value["inputs"][
                 "artifacts"
-            ].__setitem__("compiler_executable", artifact()),
+            ].__setitem__("compile_commands", artifact()),
         }
         for label, mutate in structural_mutations.items():
             with self.subTest(label=label):
@@ -1374,6 +1385,52 @@ class ProtocolTests(unittest.TestCase):
         metrics["machine_profile"]["digest"] = "b" * 64
         with self.assertRaisesRegex(RuntimeError, "digest differs"):
             protocol.validate_fixed_metrics_report(metrics)
+
+    def test_controlled_compiler_version_accepts_either_output_stream(self) -> None:
+        report = controlled_metrics_report()
+        identity = report["compiler_identity"]
+        identity.update(version_stdout="", version_stderr="compiler version")
+        protocol.validate_fixed_metrics_report(report)
+        identity.update(version_stdout=" ", version_stderr="\n")
+        with self.assertRaisesRegex(RuntimeError, "version output is empty"):
+            protocol.validate_fixed_metrics_report(report)
+
+    def test_controlled_identity_matches_profile_observation(self) -> None:
+        for factory, validator, identity_key in (
+            (controlled_comparison_report, protocol.validate_comparison_report, "host"),
+            (controlled_metrics_report, protocol.validate_fixed_metrics_report, "machine"),
+            (evidence_bundle, protocol.validate_evidence_bundle, "machine"),
+        ):
+            report = factory()
+            if factory is evidence_bundle:
+                report.update(evidence_level="controlled", decision_eligible=True,
+                              machine_profile=machine_profile())
+                for component in report["components"].values():
+                    component["controlled_complete"] = True
+            validator(report)
+            mutations = {
+                "machine": "other-architecture", "cpu_model": "other-cpu",
+                "logical_cpus": 2, "process_affinity": [1],
+            }
+            if factory is controlled_metrics_report:
+                mutations.update(system="other-system", release="other-release")
+            for field, value in mutations.items():
+                with self.subTest(factory=factory.__name__, field=field):
+                    changed = copy.deepcopy(report)
+                    changed[identity_key][field] = value
+                    with self.assertRaises(RuntimeError):
+                        validator(changed)
+            for affinity in ([False], [0, 0], [1, 0]):
+                for change_observation in (False, True):
+                    with self.subTest(factory=factory.__name__, affinity=affinity,
+                                      change_observation=change_observation):
+                        changed = copy.deepcopy(report)
+                        changed[identity_key]["process_affinity"] = affinity
+                        if change_observation:
+                            changed["machine_profile"]["observation"]["process_affinity"] = affinity
+                            changed["machine_profile"]["profile"]["allowed_affinity"] = [0, 1]
+                        with self.assertRaises(RuntimeError):
+                            validator(changed)
 
     def test_evidence_schema_rejects_ineligible_documents(self) -> None:
         schema_root = Path(__file__).resolve().parents[2] / "protocol" / "schemas"

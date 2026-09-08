@@ -18,6 +18,31 @@ from csv2bench import metrics, protocol
 
 
 class MetricsTests(unittest.TestCase):
+    def test_external_compiler_identity_command_and_failure(self):
+        for name, arguments in (("CL.EXE", ["/Bv", "/?"]), ("g++", ["--version"])):
+            for returncode, stdout, stderr, message in (
+                (0, "", "compiler identity", "identity accepted"),
+                (0, " ", "\n", "no identity"),
+                (7, "", "unsupported option", "exit: 7"),
+            ):
+                with self.subTest(name=name, returncode=returncode, stderr=stderr), tempfile.TemporaryDirectory() as directory:
+                    root = Path(directory).resolve()
+                    compiler = root / name
+                    executable, dataset = root / "driver", root / "input.csv"
+                    for path in (compiler, executable, dataset):
+                        path.write_text("x", encoding="utf-8")
+                    argv = ["collect_metrics", "--external-artifacts", "--executable", str(executable),
+                            "--allocation-executable", str(executable), "--compiler-executable", str(compiler), "--revision", "candidate",
+                            "--operation", "traversal/rows-cells", "--input", str(dataset),
+                            "--skip-pmu", "--skip-rss", "--skip-size", "--output", str(root / "report.json")]
+                    completed = subprocess.CompletedProcess([str(compiler), *arguments], returncode, stdout, stderr)
+                    with unittest.mock.patch.object(sys, "argv", argv), \
+                         unittest.mock.patch.object(metrics.subprocess, "run", return_value=completed) as invoke, \
+                         unittest.mock.patch.object(metrics, "machine_metadata", side_effect=RuntimeError("identity accepted")):
+                        with self.assertRaisesRegex(RuntimeError, message):
+                            metrics.main()
+                    invoke.assert_called_once_with([str(compiler), *arguments], capture_output=True, text=True, env=None)
+
     def test_hook_argv_preserves_argument_boundaries(self) -> None:
         import test_protocol
         from _schema_subset import validate as validate_schema
@@ -52,10 +77,11 @@ class MetricsTests(unittest.TestCase):
         cases.extend([
             (base + ["--build-argv", '["build"]'], "external build"),
             (base + ["--post-build-argv", '["post"]'], "external build"),
-            (base + ["--build-command", "build"], "unrecognized arguments"),
-            (base + ["--post-build-command", "post"], "unrecognized arguments"),
             (base + ["--build-arg", '["build"]'], "unrecognized arguments"),
             (external + ["--post-build-argv", '["post"]'], "requires --build-argv"),
+            (external + ["--compile-commands", "commands.json"], "requires --compiler-executable"),
+            (external + ["--compile-commands", "commands.json", "--build-argv", '["build"]',
+                         "--post-build-argv", '["post"]'], "requires --compiler-executable"),
         ])
         for argv, message in cases:
             stderr = io.StringIO()
@@ -193,6 +219,7 @@ class MetricsTests(unittest.TestCase):
     def test_external_hooks_rebind_commands_and_preserve_drift_checks(self) -> None:
         cases = (
             ("same", "build", None),
+            ("compiler-only", "post", None),
             ("matches", "post", None),
             ("mismatch", "post", "declared compiler"),
             ("drift", "build", "compile_commands changed during collection"),
@@ -269,6 +296,9 @@ class MetricsTests(unittest.TestCase):
                     "--input", str(dataset), "--runs", "1", "--build-argv", '["build"]',
                     "--skip-pmu", "--skip-rss", "--skip-size", "--output", str(output),
                 ]
+                if case == "compiler-only":
+                    index = argv.index("--compile-commands")
+                    del argv[index:index + 2]
                 if phase == "post":
                     argv.extend(["--post-build-argv", '["post"]'])
                 with unittest.mock.patch("sys.argv", argv), unittest.mock.patch.object(
@@ -283,12 +313,16 @@ class MetricsTests(unittest.TestCase):
                 self.assertEqual(report["status"], "completed" if error is None else "failed")
                 self.assertEqual(report["compiler_identity"]["artifact"], original_compiler)
                 if error is None:
-                    self.assertNotEqual(before["mtime_ns"], rebuilt["mtime_ns"])
-                    if case == "same":
-                        self.assertEqual(before["sha256"], rebuilt["sha256"])
-                    self.assertEqual(report["artifacts"]["compile_commands"], rebuilt)
-                    self.assertEqual(report["compiler_identity"]["compile_command_matches"],
-                                     2 if case == "matches" else 1)
+                    if case == "compiler-only":
+                        self.assertNotIn("compile_commands", report["artifacts"])
+                        self.assertIsNone(report["compiler_identity"]["compile_command_matches"])
+                    else:
+                        self.assertNotEqual(before["mtime_ns"], rebuilt["mtime_ns"])
+                        if case == "same":
+                            self.assertEqual(before["sha256"], rebuilt["sha256"])
+                        self.assertEqual(report["artifacts"]["compile_commands"], rebuilt)
+                        self.assertEqual(report["compiler_identity"]["compile_command_matches"],
+                                         2 if case == "matches" else 1)
                     saved_manifest = json.loads(manifest.read_text(encoding="utf-8"))
                     self.assertEqual(saved_manifest["inputs"]["artifacts"], report["artifacts"])
 

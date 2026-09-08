@@ -483,6 +483,20 @@ foreach(csv2_contract IN ITEMS
 endforeach()
 
 if(CSV2_PYTHON_AUDITS_AVAILABLE)
+  csv2_add_benchmark_check(csv2.benchmark.current.external_collector
+    COMMAND ${CSV2_PYTHON_EXECUTABLE} -B
+      ${csv2_SOURCE_DIR}/benchmark/collect_metrics.py
+      --external-artifacts
+      --executable $<TARGET_FILE:csv2_benchmark>
+      --allocation-executable $<TARGET_FILE:csv2_benchmark_allocations>
+      --revision ${CSV2_BENCHMARK_REVISION}
+      --compiler-executable ${CMAKE_CXX_COMPILER}
+      --input ${csv2_check_fixture}
+      --operation traversal/rows-cells --source buffer
+      --runs 1 --minimum-time 0.001s --warmup-seconds 0
+      --skip-pmu --skip-rss --skip-size
+      --output ${CMAKE_CURRENT_BINARY_DIR}/external-metrics-$<CONFIG>.json
+    TIER portability)
   csv2_add_benchmark_check(csv2.benchmark.current.case_manifest.registry
     COMMAND ${CSV2_PYTHON_EXECUTABLE} -B
       ${CMAKE_CURRENT_SOURCE_DIR}/verify_case_manifest.py

@@ -112,6 +112,12 @@ def fake_dependencies(command):
 
 
 class BuildTests(unittest.TestCase):
+    def test_compiler_version_arguments(self):
+        for name in ("cl", "CL", "cl.exe", "CL.EXE", "Cl.Exe"):
+            self.assertEqual(builds.compiler_version_arguments(Path(name)), ["/Bv", "/?"])
+        for name in ("g++", "clang++", "clang-cl.exe", "icx", "my-cl.exe"):
+            self.assertEqual(builds.compiler_version_arguments(Path(name)), ["--version"])
+
     def validate_current_topology(
         self,
         owners: dict[str, dict[str, object]],
@@ -484,13 +490,13 @@ class BuildTests(unittest.TestCase):
             flags = ["-O3", "-DNDEBUG", *suffix]
             with self.subTest(flags=flags):
                 with self.assertRaises(RuntimeError):
-                    builds._validate_common_compiler_flags(flags)
+                    builds.owned_inputs.flags(flags)
                 with self.assertRaises(RuntimeError):
                     builds._validate_effective_release_flags(flags, "test")
         for flags in [("-O3", "-D", "NDEBUG", "-std=c++11", "-march=native"),
                       ("-O2", "-DNDEBUG", "-stdlib=libc++", "-mavx2"),
                       ("/O2", "/D", "NDEBUG", "/EHsc", "/arch:AVX2")]:
-            builds._validate_common_compiler_flags(flags)
+            builds.owned_inputs.flags(flags)
 
     def test_msvc_option_and_macro_spelling_is_case_sensitive(self):
         for flags in [("/O2", "/DNDEBUG"), ("/O2", "/D", "NDEBUG")]:

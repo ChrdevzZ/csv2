@@ -402,6 +402,13 @@ pass the JSON as one argument. Post-build hooks require a build hook; both
 options are external-only. The former command-string options are removed.
 Hook environments and post-hook artifact rebinding retain their existing policy.
 
+Owned and external compiler identity probes use the compiler-specific version
+interface (`/Bv /?` for native MSVC, `--version` for GNU/Clang). Both stdout and
+stderr are retained; a nonzero exit or empty identity is an error. External
+exploratory collection may record a compiler without a compilation database;
+its compile-command match count remains null. A database requires a compiler.
+Owned builds retain both artifacts and verify their relationship.
+
 External fixed-metrics collection validates compiler references in
 `compile_commands.json` after any build/post-build hook. Each record requires
 an existing absolute `directory`. Relative compiler paths resolve against that

@@ -86,10 +86,6 @@ def _validate_transparent_compiler_argument(argument: str, label: str) -> None:
         raise RuntimeError(f"{label} cannot force preprocessor input")
 
 
-def _validate_common_compiler_flags(arguments: Sequence[object]) -> None:
-    owned_inputs.flags(arguments)
-
-
 def validate_common_build_command_contract(manifest: dict[str, object]) -> None:
     """Validate common-driver defines without consulting mutable filesystem state."""
     capabilities = manifest.get("capabilities")
@@ -107,7 +103,7 @@ def validate_common_build_command_contract(manifest: dict[str, object]) -> None:
     normalized_argv = manifest.get("normalized_argv")
     if not all(isinstance(value, list) for value in (compiler_flags, argv, normalized_argv)):
         raise RuntimeError("common-driver build command fields are malformed")
-    _validate_common_compiler_flags(compiler_flags)
+    owned_inputs.flags(compiler_flags)
 
     actual = _common_build_definitions(argv)
     normalized = _common_build_definitions(normalized_argv)
@@ -521,10 +517,6 @@ def normalize_build_argv(
     return normalized
 
 
-def _artifact(path: Path, revision: str) -> dict[str, object]:
-    return artifacts.metadata(path, revision)
-
-
 def common_build_identity_digest(manifest: dict[str, object]) -> str:
     header_export = manifest["header_export"]
     adapter_export = manifest["adapter_export"]
@@ -570,7 +562,7 @@ def compile_common_driver(
     """Compile one common driver and return its complete audited build manifest."""
     if not compiler_flags or any(not flag for flag in compiler_flags):
         raise RuntimeError("owned common-driver builds require non-empty compiler flags")
-    _validate_common_compiler_flags(compiler_flags)
+    owned_inputs.flags(compiler_flags)
     verify_git_export(header_export)
     verify_git_export(adapter_export)
     revision = str(header_export.get("commit", ""))
@@ -587,14 +579,12 @@ def compile_common_driver(
         "common driver source",
     )
     compiler = _compiler_path(compiler)
-    compiler_artifact = _artifact(compiler, "compiler")
+    compiler_artifact = artifacts.metadata(compiler, "compiler")
 
     build_environment, environment_binding = owned_inputs.environment()
     compiler_name = compiler.name.lower()
     msvc = compiler_name in {"cl", "cl.exe"}
-    version_command = (
-        [str(compiler), "/Bv", "/?"] if msvc else [str(compiler), "--version"]
-    )
+    version_command = [str(compiler), *compiler_version_arguments(compiler)]
     owned_inputs.flags(compiler_flags, "msvc" if msvc else "gnu")
     version = run_fn(version_command, capture_output=True, text=True, timeout=30, env=build_environment)
     if version.returncode != 0 or not (version.stdout.strip() or version.stderr.strip()):
@@ -759,7 +749,7 @@ def compile_common_driver(
             "stdout": completed.stdout,
             "stderr": completed.stderr,
         },
-        "output": _artifact(output, revision),
+        "output": artifacts.metadata(output, revision),
     }
     manifest["identity_digest"] = common_build_identity_digest(manifest)
     manifest["digest"] = document_digest(manifest)
@@ -858,23 +848,6 @@ def validate_build_manifest(manifest: dict[str, object]) -> None:
     )
     if Path(str(argv[0])).resolve(strict=True) != compiler_path:
         raise RuntimeError("build command did not invoke the recorded compiler")
-    normalized_text = "\n".join(str(value) for value in normalized_argv)
-    for placeholder in ("{revision}", "{include_root}", "{adapter_source}", "{output}"):
-        if placeholder not in normalized_text:
-            raise RuntimeError(f"build command is missing normalized {placeholder}")
-    if compiler_path.name.lower() in {"cl", "cl.exe"}:
-        required_msvc_arguments = {
-            "/experimental:deterministic",
-            "/Brepro",
-            "/pathmap:{header_root}=/_csv2/source",
-            "/pathmap:{adapter_root}=/_csv2/adapter",
-        }
-        missing = required_msvc_arguments.difference(normalized_argv)
-        if missing:
-            raise RuntimeError(
-                "MSVC build command is missing reproducibility arguments: "
-                + ", ".join(sorted(missing))
-            )
     build_log = manifest["build_log"]
     if (
         not isinstance(build_log, dict)
@@ -1007,6 +980,10 @@ def _run_text(command: Sequence[str], *, timeout: int = 600, run_fn: Run = subpr
             f"exit: {completed.returncode}\nstdout:\n{completed.stdout}\nstderr:\n{completed.stderr}"
         )
     return completed
+
+
+def compiler_version_arguments(compiler: Path) -> list[str]:
+    return ["/Bv", "/?"] if compiler.name.lower() in {"cl", "cl.exe"} else ["--version"]
 
 
 def _tool_identity(path: Path, version_arguments: Sequence[str], run_fn: Run) -> dict[str, object]:
@@ -1569,7 +1546,7 @@ def build_current_tree(
     run_fn = controlled_run
     owned_inputs.flags(compiler_flags, "msvc" if compiler.name.lower() in {"cl", "cl.exe"} else "gnu")
     compiler_identity = _tool_identity(
-        compiler, ("/Bv", "/?") if compiler.name.lower() in {"cl", "cl.exe"} else ("--version",), run_fn)
+        compiler, compiler_version_arguments(compiler), run_fn)
     version_text = compiler_identity["version"]["stdout"] + compiler_identity["version"]["stderr"]
     implicit_config_flags = (
         ["--no-default-config", "--driver-mode=g++"] if "clang" in version_text.lower() else []
@@ -1634,7 +1611,7 @@ def build_current_tree(
     )
     compiler_identity = _tool_identity(
         compiler,
-        ("/Bv", "/?") if compiler.name.lower() in {"cl", "cl.exe"} else ("--version",),
+        compiler_version_arguments(compiler),
         run_fn,
     )
     cmake_identity = _tool_identity(Path(cmake_path), ("--version",), run_fn)

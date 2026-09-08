@@ -207,6 +207,16 @@ class EvidenceBundleTests(unittest.TestCase):
             self.assertFalse(report["decision_eligible"])
         protocol.validate_evidence_bundle(bundle)
 
+    def test_matching_component_identities_cannot_override_profile_observation(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            values = self.components(Path(directory))
+            for report, key in zip(values[:3], ("host", "host", "machine")):
+                report[key]["cpu_model"] = "other-cpu"
+            with self.assertRaisesRegex(RuntimeError, "cpu_model.*profile observation"):
+                evidence.assemble_evidence(
+                    *values[:4], values[4], values[5], test_protocol.bundle()
+                )
+
     def test_exploratory_bundle_is_never_decision_eligible(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             values = self.components(Path(directory))

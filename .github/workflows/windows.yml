@@ -196,4 +196,5 @@ jobs:
           path: |
             build/ctest.xml
             build/benchmark-portability.xml
+            build/benchmark/checks/external-metrics-*.json*
           if-no-files-found: error
