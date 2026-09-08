@@ -259,11 +259,13 @@ state before escaping; final stream state and one-shot width follow the normal i
 
 ### Stream Ownership
 
-Writer borrows a stream that must outlive it. The historical two-parameter Writer closes streams that provide `close()`
-and transfers that responsibility when moved.
+Writer borrows a stream that must outlive it. The historical two-parameter Writer invokes `close()` when callable on
+that referenced stream, discarding the return value as upstream does. Close-on-destroy responsibility transfers
+when the writer is moved. Streams without a callable `close()` remain supported.
 
-Select `stream_ownership::leave_open` when the caller owns closure. Explicit `close()` is idempotent and reports errors
-under either policy; destruction does not emit close exceptions. Closed and moved-from writers ignore writes.
+Select `stream_ownership::leave_open` when the caller owns closure. Under either policy, explicit `close()` invokes
+closure at most once and propagates stream exceptions; destruction suppresses close exceptions. Stream-specific
+return codes are not interpreted. Closed and moved-from writers ignore writes.
 
 ### Round-Trip Boundaries
 
@@ -284,7 +286,7 @@ The authoritative declarations are in [`include/csv2/writer.hpp`](include/csv2/w
 | `EscapingWriter<Delimiter, Stream, Ownership>` | Convenience alias for minimal quoting |
 | `write_row(range)` | Writes one row followed by LF |
 | `write_rows(range)` | Writes a range of rows |
-| `close()` | Closes at most once and reports stream errors |
+| `close()` | Closes at most once and propagates stream exceptions |
 
 ## Standards and Compatibility
 

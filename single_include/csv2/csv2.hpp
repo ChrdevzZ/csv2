@@ -3635,21 +3635,6 @@ struct is_direct_character_field<std::basic_string_view<char, Traits>> : std::tr
 
 } // namespace detail
 
-template <typename, typename T> struct has_close : std::false_type {};
-
-template <typename C, typename Ret, typename... Args> struct has_close<C, Ret(Args...)> {
-private:
-  template <typename T>
-  static constexpr auto check(T *) ->
-      typename std::is_same<decltype(std::declval<T &>().close(std::declval<Args>()...)),
-                            Ret>::type;
-
-  template <typename> static constexpr std::false_type check(...);
-
-public:
-  static constexpr bool value = decltype(check<C>(0))::value;
-};
-
 template <class delimiter = delimiter<','>, typename Stream = std::ofstream,
           typename Ownership = stream_ownership::close_on_destroy,
           typename QuotePolicy = quote_policy::none>
@@ -3665,9 +3650,13 @@ class basic_writer {
   Stream *stream_; // output stream for the writer
   bool active_;
 
-  static void close_stream_(Stream &stream, std::true_type) { stream.close(); }
+  template <typename CandidateStream>
+  static auto close_stream_(CandidateStream &stream,
+                            int) -> decltype(static_cast<void>(stream.close())) {
+    static_cast<void>(stream.close());
+  }
 
-  static void close_stream_(Stream &, std::false_type) {}
+  template <typename CandidateStream> static void close_stream_(CandidateStream &, long) noexcept {}
 
   void close_noexcept_() noexcept {
     if (!active_)
@@ -3675,11 +3664,11 @@ class basic_writer {
     active_ = false;
 #if defined(__cpp_exceptions) || defined(__EXCEPTIONS) || defined(_CPPUNWIND)
     try {
-      close_stream_(*stream_, std::integral_constant<bool, has_close<Stream, void()>::value>());
+      close_stream_(*stream_, 0);
     } catch (...) {
     }
 #else
-    close_stream_(*stream_, std::integral_constant<bool, has_close<Stream, void()>::value>());
+    close_stream_(*stream_, 0);
 #endif
   }
 
@@ -3996,7 +3985,7 @@ public:
     if (!active_)
       return;
     active_ = false;
-    close_stream_(*stream_, std::integral_constant<bool, has_close<Stream, void()>::value>());
+    close_stream_(*stream_, 0);
   }
 
   template <typename Container> void write_row(Container &&row) {

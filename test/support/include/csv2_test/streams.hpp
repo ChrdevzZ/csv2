@@ -18,13 +18,19 @@ namespace csv2_test {
 class LvalueCloseStream : public std::ostringstream {
 public:
   LvalueCloseStream() : closed(false) {}
-  void close() & { closed = true; }
+  int close(int = 0) & {
+    closed = true;
+    return -1;
+  }
   bool closed;
 };
 
 class CountingCloseStream : public std::ostringstream {
 public:
-  void close() { ++close_count; }
+  bool close() & {
+    ++close_count;
+    return false;
+  }
   int close_count{0};
 };
 
@@ -169,7 +175,7 @@ inline std::ostream &operator<<(std::ostream &stream, const FormattedContiguousV
 struct CloseError {};
 class ThrowingCloseStream : public std::ostringstream {
 public:
-  void close() {
+  bool close() & {
     ++close_count;
     throw CloseError();
   }
