@@ -51,7 +51,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        include: ${{ fromJSON(inputs.extended && '[{"name":"GCC 14","compiler":"g++-14","expected_id":"GNU","expected_version":"14","cxx_flags":"","fuzzers":"OFF"},{"name":"Clang 18 + libc++","compiler":"clang++-18","expected_id":"Clang","expected_version":"18","cxx_flags":"-stdlib=libc++","fuzzers":"ON"}]' || '[{"name":"GCC 14","compiler":"g++-14","expected_id":"GNU","expected_version":"14","cxx_flags":"","fuzzers":"OFF"}]') }}
+        include: ${{ fromJSON(inputs.extended && '[{"name":"GCC 14","compiler":"g++-14","expected_id":"GNU","cache_family":"gcc14","expected_version":"14","cxx_flags":"","fuzzers":"OFF"},{"name":"Clang 18 + libc++","compiler":"clang++-18","expected_id":"Clang","cache_family":"clang18-libcxx","expected_version":"18","cxx_flags":"-stdlib=libc++","fuzzers":"ON"}]' || '[{"name":"GCC 14","compiler":"g++-14","expected_id":"GNU","cache_family":"gcc14","expected_version":"14","cxx_flags":"","fuzzers":"OFF"}]') }}
     steps:
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -78,10 +78,10 @@ jobs:
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ${{ env.CCACHE_DIR }}
-          key: csv2-ccache-v2-linux-${{ matrix.expected_id }}-full-${{ env.CSV2_CACHE_PROFILE }}-${{ github.sha }}
+          key: csv2-ccache-v3-linux-${{ runner.arch }}-${{ matrix.cache_family }}-full-${{ env.CSV2_CACHE_PROFILE }}-${{ github.sha }}
           restore-keys: |
-            csv2-ccache-v2-linux-${{ matrix.expected_id }}-full-${{ env.CSV2_CACHE_PROFILE }}-
-            csv2-ccache-v2-linux-${{ matrix.expected_id }}-full-
+            csv2-ccache-v3-linux-${{ runner.arch }}-${{ matrix.cache_family }}-full-${{ env.CSV2_CACHE_PROFILE }}-
+            csv2-ccache-v3-linux-${{ runner.arch }}-${{ matrix.cache_family }}-
 
       - name: Reset compiler cache statistics
         run: ccache --zero-stats
@@ -95,6 +95,7 @@ jobs:
           -DCMAKE_CXX_FLAGS="${{ matrix.cxx_flags }}"
           -DCMAKE_COMPILE_WARNING_AS_ERROR=ON
           -DCSV2_BUILD_TESTS=ON
+          -DCSV2_TEST_ASSERTION_BACKEND=${{ matrix.expected_id == 'GNU' && 'minitest' || 'auto' }}
           -DCSV2_BUILD_BENCHMARKS=${{ inputs.benchmarks && 'ON' || 'OFF' }}
           -DCSV2_BUILD_BENCHMARK_CHECKS=${{ inputs.benchmarks && 'ON' || 'OFF' }}
           -DCSV2_BUILD_FUZZERS=${{ matrix.fuzzers }}
@@ -109,7 +110,7 @@ jobs:
       - name: Run full CTest matrix
         run: >-
           ctest --test-dir build
-          ${{ (inputs.tooling_preflight || matrix.expected_id != 'GNU') && '-LE benchmark-tooling' || '' }}
+          ${{ (inputs.tooling_preflight || matrix.expected_id != 'GNU') && '-LE "benchmark-tooling|vendor-safety"' || '' }}
           --output-on-failure
           --no-tests=error
           --output-junit full-ctest.xml
@@ -187,7 +188,7 @@ jobs:
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ${{ env.CCACHE_DIR }}
-          key: csv2-ccache-v2-linux-${{ matrix.expected_id }}-full-${{ env.CSV2_CACHE_PROFILE }}-${{ github.sha }}
+          key: csv2-ccache-v3-linux-${{ runner.arch }}-${{ matrix.cache_family }}-full-${{ env.CSV2_CACHE_PROFILE }}-${{ github.sha }}
 
   windows:
     if: inputs.extended && !inputs.coverage_only
