@@ -319,9 +319,7 @@ def _machine_profile(value: object, label: str) -> dict[str, object]:
         raise RuntimeError(f"{label}.profile schema is invalid")
     for field in profile_fields - {"logical_cpus", "allowed_affinity"}:
         _string(profile[field], f"{label}.profile.{field}")
-    logical_cpus = _integer(
-        profile["logical_cpus"], f"{label}.profile.logical_cpus", 1
-    )
+    _integer(profile["logical_cpus"], f"{label}.profile.logical_cpus", 1)
     allowed = _array(profile["allowed_affinity"], f"{label}.profile.allowed_affinity")
     if (
         not allowed
@@ -330,7 +328,6 @@ def _machine_profile(value: object, label: str) -> dict[str, object]:
             for cpu in allowed
         )
         or allowed != sorted(set(allowed))
-        or allowed[-1] >= logical_cpus
     ):
         raise RuntimeError(f"{label}.profile allowed affinity is invalid")
     observation = _object(binding["observation"], f"{label}.observation")

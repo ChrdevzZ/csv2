@@ -8,7 +8,7 @@ from pathlib import Path
 from unittest import mock
 
 import _support  # noqa: F401
-from csv2bench import machine
+from csv2bench import artifacts, machine, protocol
 
 
 def profile() -> dict[str, object]:
@@ -75,7 +75,7 @@ class MachineProfileTests(unittest.TestCase):
     def test_governor_requires_complete_or_unavailable_observation(self) -> None:
         for states, expected in (
             (["performance", "performance"], "performance"),
-            (["powersave", "performance"], "mixed:performance,powersave"),
+            (["powersave", "performance"], "mixed:2=powersave,3=performance"),
             ([None, None], "unavailable"),
         ):
             with self.subTest(states=states):
@@ -84,6 +84,95 @@ class MachineProfileTests(unittest.TestCase):
         with mock.patch.object(machine, "_read_state", side_effect=["performance", None]):
             with self.assertRaisesRegex(RuntimeError, "partial"):
                 machine.governor([2, 3])
+
+    def test_cpu_identifiers_are_independent_of_cpu_count_online_and_offline(self) -> None:
+        cases = (
+            ([0, 1, 2, 3], True),
+            ([0, 2, 4, 6], True),
+            ([6], True),
+            ([], False),
+            ([True], False),
+            ([-1], False),
+            ([1, 1], False),
+            ([2, 1], False),
+            ([1.0], False),
+            (["1"], False),
+            ("0,2", False),
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "machine.json"
+            for allowed, valid in cases:
+                document = dict(profile(), logical_cpus=4, allowed_affinity=allowed)
+                current = dict(
+                    observation(), logical_cpus=4,
+                    process_affinity=[allowed[-1]] if valid else [0],
+                )
+                path.write_text(json.dumps(document), encoding="utf-8")
+                artifact = artifacts.metadata(path.resolve())
+                binding = dict(
+                    profile=document, observation=current, artifact=artifact,
+                    digest=artifact["sha256"],
+                )
+                with self.subTest(allowed=allowed, mode="online"):
+                    with mock.patch.object(machine, "observe", return_value=current):
+                        if valid:
+                            self.assertEqual(machine.load(path), binding)
+                        else:
+                            with self.assertRaises(RuntimeError):
+                                machine.load(path)
+                with self.subTest(allowed=allowed, mode="offline"):
+                    with mock.patch.object(machine, "observe", side_effect=AssertionError("offline observation")):
+                        if valid:
+                            self.assertEqual(protocol._machine_profile(binding, "machine"), binding)
+                            machine.verify_binding(binding)
+                        else:
+                            with self.assertRaises(RuntimeError):
+                                protocol._machine_profile(binding, "machine")
+
+            document = dict(profile(), logical_cpus=4, allowed_affinity=[0, 2, 4, 6])
+            path.write_text(json.dumps(document), encoding="utf-8")
+            current = dict(observation(), logical_cpus=4, process_affinity=[5])
+            artifact = artifacts.metadata(path.resolve())
+            binding = dict(
+                profile=document, observation=current, artifact=artifact,
+                digest=artifact["sha256"],
+            )
+            with mock.patch.object(machine, "observe", return_value=current):
+                with self.assertRaisesRegex(RuntimeError, "outside"):
+                    machine.load(path)
+            with mock.patch.object(machine, "observe", side_effect=AssertionError("offline observation")):
+                with self.assertRaisesRegex(RuntimeError, "outside"):
+                    protocol._machine_profile(binding, "machine")
+
+    def test_runtime_detects_swapped_mixed_governor_associations(self) -> None:
+        states = {2: "performance", 3: "powersave"}
+
+        def read_state(path: Path) -> str:
+            return states[int(path.parent.parent.name.removeprefix("cpu"))]
+
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "machine.json"
+            document = profile()
+            with (
+                mock.patch.object(machine.os, "sched_getaffinity", return_value={2, 3}, create=True),
+                mock.patch.object(machine.os, "cpu_count", return_value=8),
+                mock.patch.object(machine.platform, "system", return_value="Linux"),
+                mock.patch.object(machine.platform, "machine", return_value="x86_64"),
+                mock.patch.object(machine.platform, "release", return_value="6.8.0"),
+                mock.patch.object(machine, "cpu_identity", return_value=("Example CPU", "test")),
+                mock.patch.object(machine, "turbo_boost", return_value="disabled"),
+                mock.patch.object(machine, "_read_state", side_effect=read_state),
+            ):
+                document["governor"] = machine.governor([2, 3])
+                path.write_text(json.dumps(document), encoding="utf-8")
+                binding = machine.load(path)
+                machine.verify_runtime(binding)
+                self.assertEqual(machine.governor([3, 2]), document["governor"])
+                states.update({2: "powersave", 3: "performance"})
+                with self.assertRaisesRegex(RuntimeError, "governor"):
+                    machine.verify_runtime(binding)
+                states.update({2: "performance", 3: "powersave"})
+                machine.verify_runtime(binding)
 
     def test_affinity_parsing_is_strict_and_canonical(self) -> None:
         self.assertEqual(machine.parse_affinity(" 3, 2,3 , 00 "), [0, 2, 3])

@@ -265,9 +265,7 @@ class EvidenceBundleTests(unittest.TestCase):
                 evidence.builds, "validate_build_manifest"
             ), mock.patch.object(evidence.builds, "verify_current_build_manifest"):
                 with self.assertRaisesRegex(RuntimeError, "content differs"):
-                    evidence.assemble_evidence(
-                        *values[:4], values[4], values[5], test_protocol.bundle()
-                    )
+                    evidence._verify_component_files(*values[:5])
 
     def test_corpus_strict_diagnostics_are_closed_and_consistent(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -380,48 +378,52 @@ class EvidenceBundleTests(unittest.TestCase):
                 )
             self.assertEqual(output.read_text(encoding="utf-8"), "old evidence")
 
+    def add_unselected_corpus_member(self, paths: dict[str, Path]) -> Path:
+        corpus_path = paths["corpus_manifest_path"]
+        corpus = json.loads(corpus_path.read_text(encoding="utf-8"))
+        extra = corpus_path.parent / "fixtures" / "unselected.csv"
+        extra.write_bytes(b"unselected")
+        corpus["datasets"].append(
+            {
+                "name": extra.name,
+                "path": f"fixtures/{extra.name}",
+                "parameters": {"kind": "test"},
+                "size": extra.stat().st_size,
+                "sha256": artifacts.sha256_file(extra),
+                "rows": 1,
+                "cells": 1,
+                "raw_checksum": "1",
+                "content_checksum": "1",
+                "strict_valid": True,
+                "strict_error": {
+                    "code": "none",
+                    "byte_offset": 0,
+                    "row": 0,
+                    "column": 0,
+                },
+            }
+        )
+        corpus_path.write_text(json.dumps(corpus), encoding="utf-8")
+
+        fixed_path = paths["fixed_metrics_path"]
+        fixed = json.loads(fixed_path.read_text(encoding="utf-8"))
+        fixed["build"]["corpus_manifest"] = artifacts.metadata(corpus_path)
+        fixed["build"]["identity_digest"] = (
+            test_protocol.builds.current_build_identity_digest(fixed["build"])
+        )
+        unsigned_build = dict(fixed["build"])
+        unsigned_build.pop("digest")
+        fixed["build"]["digest"] = test_protocol.builds.document_digest(
+            unsigned_build
+        )
+        fixed_path.write_text(json.dumps(fixed), encoding="utf-8")
+        return extra
+
     def test_finalizer_rejects_output_aliasing_an_unselected_corpus_member(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             paths = self.persisted_inputs(root)
-            corpus_path = paths["corpus_manifest_path"]
-            corpus = json.loads(corpus_path.read_text(encoding="utf-8"))
-            extra = corpus_path.parent / "fixtures" / "unselected.csv"
-            extra.write_bytes(b"unselected")
-            corpus["datasets"].append(
-                {
-                    "name": extra.name,
-                    "path": f"fixtures/{extra.name}",
-                    "parameters": {"kind": "test"},
-                    "size": extra.stat().st_size,
-                    "sha256": artifacts.sha256_file(extra),
-                    "rows": 1,
-                    "cells": 1,
-                    "raw_checksum": "1",
-                    "content_checksum": "1",
-                    "strict_valid": True,
-                    "strict_error": {
-                        "code": "none",
-                        "byte_offset": 0,
-                        "row": 0,
-                        "column": 0,
-                    },
-                }
-            )
-            corpus_path.write_text(json.dumps(corpus), encoding="utf-8")
-
-            fixed_path = paths["fixed_metrics_path"]
-            fixed = json.loads(fixed_path.read_text(encoding="utf-8"))
-            fixed["build"]["corpus_manifest"] = artifacts.metadata(corpus_path)
-            fixed["build"]["identity_digest"] = (
-                test_protocol.builds.current_build_identity_digest(fixed["build"])
-            )
-            unsigned_build = dict(fixed["build"])
-            unsigned_build.pop("digest")
-            fixed["build"]["digest"] = test_protocol.builds.document_digest(
-                unsigned_build
-            )
-            fixed_path.write_text(json.dumps(fixed), encoding="utf-8")
+            extra = self.add_unselected_corpus_member(paths)
 
             original = extra.read_bytes()
             with self.assertRaisesRegex(RuntimeError, "output path aliases"):
@@ -473,9 +475,111 @@ class EvidenceBundleTests(unittest.TestCase):
                 evidence.builds, "validate_build_manifest"
             ), mock.patch.object(evidence.builds, "verify_current_build_manifest"):
                 with self.assertRaisesRegex(RuntimeError, "source bundle"):
-                    evidence.assemble_evidence(
-                        *values[:4], values[4], values[5], test_protocol.bundle()
+                    evidence._verify_component_files(*values[:5])
+
+    def test_finalizer_rejects_dependency_drift_after_assembly(self) -> None:
+        for filename in (
+            "runner.py", "machine-profile.json",
+            "fixtures/input.csv", "fixtures/unselected.csv",
+        ):
+            with self.subTest(dependency=filename), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                paths = self.persisted_inputs(root)
+                if filename == "fixtures/unselected.csv":
+                    self.add_unselected_corpus_member(paths)
+                output = root / "evidence.json"
+                output_manifest = root / "evidence.manifest.json"
+                reject_alias = evidence.artifacts.reject_output_alias
+
+                def check_output_then_change(*args, **kwargs):
+                    reject_alias(*args, **kwargs)
+                    dependency = root / filename
+                    contents = dependency.read_bytes()
+                    dependency.write_bytes(b"y" if filename.endswith(".csv") else contents + b" ")
+
+                with mock.patch.object(
+                    evidence.artifacts, "reject_output_alias",
+                    side_effect=check_output_then_change
+                ):
+                    with self.assertRaises(RuntimeError):
+                        self.finalize_with_isolated_manifest_checks(
+                            paths, output, output_manifest
+                        )
+                self.assertFalse(output.exists())
+                self.assertFalse(output_manifest.exists())
+
+    def test_finalizer_rechecks_corpus_path_binding_before_publication(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            paths = self.persisted_inputs(root)
+            member = root / "fixtures" / "input.csv"
+            original = root / "original" / "input.csv"
+            replacement = root / "replacement" / "input.csv"
+            original.parent.mkdir()
+            replacement.parent.mkdir()
+            member.rename(original)
+            replacement.write_bytes(original.read_bytes())
+            member.symlink_to(original)
+            for label in ("calibration", "comparison", "fixed_metrics"):
+                path = paths[f"{label}_path"]
+                report = json.loads(path.read_text(encoding="utf-8"))
+                if label == "fixed_metrics":
+                    report["artifacts"]["dataset"] = artifacts.metadata(original)
+                    test_protocol.bind_metrics_invocations(report)
+                else:
+                    report["datasets"][0]["path"] = str(original.resolve())
+                    if label == "comparison":
+                        identity = artifacts.metadata(paths["calibration_path"])
+                        report["calibration"].update(
+                            {key: identity[key] for key in ("path", "size", "sha256")}
+                        )
+                path.write_text(json.dumps(report), encoding="utf-8")
+            reject_alias = evidence.artifacts.reject_output_alias
+
+            def check_output_then_redirect(*args, **kwargs):
+                reject_alias(*args, **kwargs)
+                member.unlink()
+                member.symlink_to(replacement)
+
+            output = root / "evidence.json"
+            output_manifest = root / "evidence.manifest.json"
+            with mock.patch.object(
+                evidence.artifacts, "reject_output_alias",
+                side_effect=check_output_then_redirect,
+            ):
+                with self.assertRaisesRegex(RuntimeError, "path is not bound to the corpus"):
+                    self.finalize_with_isolated_manifest_checks(
+                        paths, output, output_manifest
                     )
+            self.assertFalse(output.exists())
+            self.assertFalse(output_manifest.exists())
+
+    def test_finalizer_rechecks_unselected_corpus_basename_before_publication(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            paths = self.persisted_inputs(root)
+            member = self.add_unselected_corpus_member(paths)
+            replacement = root / "other.csv"
+            replacement.write_bytes(member.read_bytes())
+            reject_alias = evidence.artifacts.reject_output_alias
+
+            def check_output_then_redirect(*args, **kwargs):
+                reject_alias(*args, **kwargs)
+                member.unlink()
+                member.symlink_to(replacement)
+
+            output = root / "evidence.json"
+            output_manifest = root / "evidence.manifest.json"
+            with mock.patch.object(
+                evidence.artifacts, "reject_output_alias",
+                side_effect=check_output_then_redirect,
+            ):
+                with self.assertRaisesRegex(RuntimeError, "path/name mismatch"):
+                    self.finalize_with_isolated_manifest_checks(
+                        paths, output, output_manifest
+                    )
+            self.assertFalse(output.exists())
+            self.assertFalse(output_manifest.exists())
 
     def test_manifest_identity_walk_includes_nested_datasets_and_sources(self) -> None:
         source = test_protocol.bundle()

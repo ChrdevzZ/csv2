@@ -98,7 +98,11 @@ def governor(affinity: list[int]) -> str:
         return "unavailable"
     if None in states:
         raise RuntimeError("CPU governor observation is partially unavailable")
-    return next(iter(values)) if len(values) == 1 else "mixed:" + ",".join(sorted(values))
+    if len(values) == 1:
+        return next(iter(values))
+    return "mixed:" + ",".join(
+        f"{cpu}={state}" for cpu, state in sorted(zip(affinity, states))
+    )
 
 
 def turbo_boost() -> str:
@@ -158,7 +162,6 @@ def _validate_profile(document: object) -> dict[str, object]:
         or not allowed
         or any(isinstance(cpu, bool) or not isinstance(cpu, int) or cpu < 0 for cpu in allowed)
         or allowed != sorted(set(allowed))
-        or allowed[-1] >= logical_cpus
     ):
         raise RuntimeError("machine profile allowed_affinity is invalid")
     if document["system"] != "Linux":
