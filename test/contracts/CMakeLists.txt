@@ -159,53 +159,53 @@ endfunction()
 
 set(csv2_degraded_headers_directory
   "${CMAKE_CURRENT_BINARY_DIR}/degraded_standard_library")
-file(MAKE_DIRECTORY "${csv2_degraded_headers_directory}")
-file(WRITE "${csv2_degraded_headers_directory}/version"
-  "/* Deliberately empty partial <version> fixture. */\n")
-file(WRITE "${csv2_degraded_headers_directory}/string_view"
-  "#pragma GCC system_header\n#include_next <string_view>\n"
-  "#ifndef __cpp_lib_string_view\n"
-  "#define __cpp_lib_string_view 201606L\n#endif\n")
-file(WRITE "${csv2_degraded_headers_directory}/filesystem"
-  "#pragma GCC system_header\n#include_next <filesystem>\n"
-  "#ifndef __cpp_lib_filesystem\n"
-  "#define __cpp_lib_filesystem 201703L\n#endif\n")
-file(WRITE "${csv2_degraded_headers_directory}/span"
-  "#pragma GCC system_header\n#include_next <span>\n"
-  "#ifndef __cpp_lib_span\n#define __cpp_lib_span 202002L\n#endif\n")
-file(WRITE "${csv2_degraded_headers_directory}/ranges"
-  "#pragma GCC system_header\n#include_next <ranges>\n"
-  "#ifndef __cpp_lib_ranges\n#define __cpp_lib_ranges 201911L\n#endif\n")
+file(GENERATE OUTPUT "${csv2_degraded_headers_directory}/version"
+  CONTENT "/* Deliberately empty partial <version> fixture. */\n")
+foreach(header IN ITEMS string_view filesystem span ranges)
+  if(header STREQUAL "string_view")
+    set(csv2_partial_feature_version 201606L)
+  elseif(header STREQUAL "filesystem")
+    set(csv2_partial_feature_version 201703L)
+  elseif(header STREQUAL "span")
+    set(csv2_partial_feature_version 202002L)
+  else()
+    set(csv2_partial_feature_version 201911L)
+  endif()
+  string(CONCAT csv2_partial_header_content
+    "#pragma GCC system_header\n#include_next <${header}>\n"
+    "#ifndef __cpp_lib_${header}\n"
+    "#define __cpp_lib_${header} ${csv2_partial_feature_version}\n#endif\n")
+  file(GENERATE OUTPUT "${csv2_degraded_headers_directory}/${header}"
+    CONTENT "${csv2_partial_header_content}")
+endforeach()
 
 set(csv2_empty_headers_directory
   "${CMAKE_CURRENT_BINARY_DIR}/empty_standard_library")
-file(MAKE_DIRECTORY "${csv2_empty_headers_directory}")
+set(csv2_empty_header_macros
+  __cpp_lib_string_view __cpp_lib_filesystem __cpp_lib_to_chars
+  __cpp_lib_memory_resource __cpp_lib_span __cpp_lib_ranges
+  __cpp_lib_ranges_to_container __cpp_lib_expected)
 foreach(header IN ITEMS
     version string_view filesystem charconv memory_resource span ranges expected)
-  file(WRITE "${csv2_empty_headers_directory}/${header}"
+  string(CONCAT csv2_empty_header_content
     "#pragma once\n#pragma GCC system_header\n#pragma GCC diagnostic push\n"
     "#pragma GCC diagnostic ignored \"-Wpedantic\"\n"
     "#include_next <${header}>\n#pragma GCC diagnostic pop\n")
+  if(header STREQUAL "version")
+    set(csv2_header_undefinitions ${csv2_empty_header_macros})
+  elseif(header STREQUAL "charconv")
+    set(csv2_header_undefinitions __cpp_lib_to_chars)
+  elseif(header STREQUAL "ranges")
+    set(csv2_header_undefinitions __cpp_lib_ranges __cpp_lib_ranges_to_container)
+  else()
+    set(csv2_header_undefinitions "__cpp_lib_${header}")
+  endif()
+  foreach(macro IN LISTS csv2_header_undefinitions)
+    string(APPEND csv2_empty_header_content "#undef ${macro}\n")
+  endforeach()
+  file(GENERATE OUTPUT "${csv2_empty_headers_directory}/${header}"
+    CONTENT "${csv2_empty_header_content}")
 endforeach()
-file(APPEND "${csv2_empty_headers_directory}/version"
-  "#undef __cpp_lib_string_view\n#undef __cpp_lib_filesystem\n"
-  "#undef __cpp_lib_to_chars\n#undef __cpp_lib_memory_resource\n"
-  "#undef __cpp_lib_span\n#undef __cpp_lib_ranges\n"
-  "#undef __cpp_lib_ranges_to_container\n#undef __cpp_lib_expected\n")
-file(APPEND "${csv2_empty_headers_directory}/string_view"
-  "#undef __cpp_lib_string_view\n")
-file(APPEND "${csv2_empty_headers_directory}/filesystem"
-  "#undef __cpp_lib_filesystem\n")
-file(APPEND "${csv2_empty_headers_directory}/charconv"
-  "#undef __cpp_lib_to_chars\n")
-file(APPEND "${csv2_empty_headers_directory}/memory_resource"
-  "#undef __cpp_lib_memory_resource\n")
-file(APPEND "${csv2_empty_headers_directory}/span"
-  "#undef __cpp_lib_span\n")
-file(APPEND "${csv2_empty_headers_directory}/ranges"
-  "#undef __cpp_lib_ranges\n#undef __cpp_lib_ranges_to_container\n")
-file(APPEND "${csv2_empty_headers_directory}/expected"
-  "#undef __cpp_lib_expected\n")
 
 csv2_filter_supported_standards(csv2_degraded_standards 17 20 23)
 foreach(standard IN LISTS csv2_degraded_standards)

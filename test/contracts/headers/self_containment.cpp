@@ -21,5 +21,3 @@
 #if defined(CSV2_EXPECT_NO_MIO) && defined(MIO_MMAP_HEADER)
 #error "mio must not be included when CSV2_HAS_MMAP is disabled"
 #endif
-
-static_assert(true, "compiling this translation unit is the assertion");

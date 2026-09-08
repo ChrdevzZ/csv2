@@ -27,6 +27,10 @@ The `csv2_test_support` target supplies only test support
 code, include paths, and fixture definitions; it does not install, export, or
 propagate into `csv2::csv2`.
 
+Generated standard-library fixtures and registry test sources are updated only
+when their complete content changes. Reconfiguring unchanged inputs does not
+invalidate dependent test compilations.
+
 ## Runtime domains and stable IDs
 
 The runtime suite is organized into these domains:
