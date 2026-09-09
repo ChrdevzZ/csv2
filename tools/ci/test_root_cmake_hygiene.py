@@ -12,6 +12,67 @@ SOURCE_ROOT = Path(__file__).parents[2]
 
 
 class RootCMakeHygieneTests(unittest.TestCase):
+    def test_vendor_cache_restores_optional_metadata(self) -> None:
+        cmake = shutil.which("cmake")
+        self.assertIsNotNone(cmake, "cmake is required for CI policy tests")
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory)
+            (source / "CMakeLists.txt").write_text(
+                "cmake_minimum_required(VERSION 3.16)\n"
+                "project(cache_metadata NONE)\n"
+                f'include("{SOURCE_ROOT.as_posix()}/cmake/verification/Csv2VerificationVendor.cmake")\n'
+                + r'''
+function(check_metadata)
+  foreach(name IN ITEMS absent empty valued)
+    foreach(property IN ITEMS VALUE TYPE HELPSTRING ADVANCED STRINGS)
+      get_property(actual CACHE ${name} PROPERTY ${property})
+      get_property(actual_set CACHE ${name} PROPERTY ${property} SET)
+      if(NOT "${actual}" STREQUAL "${expected_${name}_${property}}" OR
+         NOT actual_set STREQUAL "${expected_${name}_${property}_set}")
+        message(FATAL_ERROR "${name}: ${property} metadata changed")
+      endif()
+    endforeach()
+  endforeach()
+endfunction()
+if(NOT RELOAD)
+  foreach(name IN ITEMS absent empty valued)
+    set(${name} "parent;value" CACHE STRING "parent help")
+  endforeach()
+  set_property(CACHE empty PROPERTY ADVANCED "")
+  set_property(CACHE empty PROPERTY STRINGS "")
+  set_property(CACHE valued PROPERTY ADVANCED FALSE)
+  set_property(CACHE valued PROPERTY STRINGS "first;second")
+  foreach(name IN ITEMS absent empty valued)
+    foreach(property IN ITEMS VALUE TYPE HELPSTRING ADVANCED STRINGS)
+      get_property(expected CACHE ${name} PROPERTY ${property})
+      get_property(expected_set CACHE ${name} PROPERTY ${property} SET)
+      set(expected_${name}_${property} "${expected}" CACHE INTERNAL "")
+      set(expected_${name}_${property}_set "${expected_set}" CACHE INTERNAL "")
+    endforeach()
+  endforeach()
+  csv2_vendor_cache_snapshot(saved)
+  foreach(name IN ITEMS absent empty valued)
+    set(${name} changed CACHE BOOL "changed help" FORCE)
+    set_property(CACHE ${name} PROPERTY ADVANCED TRUE)
+    set_property(CACHE ${name} PROPERTY STRINGS changed)
+  endforeach()
+  set(dependency_added value CACHE STRING "")
+  csv2_vendor_cache_restore(saved)
+endif()
+check_metadata()
+if(DEFINED CACHE{dependency_added})
+  message(FATAL_ERROR "dependency cache entry leaked")
+endif()
+''', encoding="utf-8",
+            )
+            for reload in ("OFF", "ON"):
+                result = subprocess.run(
+                    [str(cmake), "-S", str(source), "-B", str(source / "build"),
+                     "-DRELOAD=" + reload],
+                    capture_output=True, text=True, timeout=120,
+                )
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
     def test_installed_package_discovery_contract(self) -> None:
         cmake = shutil.which("cmake")
         self.assertIsNotNone(cmake, "cmake is required for CI policy tests")

@@ -45,6 +45,17 @@ macro(csv2_vendor_cache_restore prefix)
 
   foreach(csv2_cache_name IN LISTS ${prefix}_variables)
     string(SHA256 csv2_cache_id "${csv2_cache_name}")
+    get_property(csv2_cache_current_advanced_set
+      CACHE "${csv2_cache_name}" PROPERTY ADVANCED SET)
+    get_property(csv2_cache_current_strings_set
+      CACHE "${csv2_cache_name}" PROPERTY STRINGS SET)
+    if((csv2_cache_current_advanced_set AND
+        NOT ${prefix}_${csv2_cache_id}_advanced_set) OR
+       (csv2_cache_current_strings_set AND
+        NOT ${prefix}_${csv2_cache_id}_strings_set))
+      # Recreate only entries whose originally absent metadata was added.
+      unset("${csv2_cache_name}" CACHE)
+    endif()
     get_property(csv2_cache_current_type_set
       CACHE "${csv2_cache_name}" PROPERTY TYPE SET)
     if(csv2_cache_current_type_set)
@@ -80,8 +91,6 @@ macro(csv2_vendor_cache_restore prefix)
         set_property(CACHE "${csv2_cache_name}" PROPERTY ADVANCED
           "${${prefix}_${csv2_cache_id}_advanced}")
       endif()
-    elseif(csv2_cache_current_advanced_set)
-      unset("${csv2_cache_name}-ADVANCED" CACHE)
     endif()
 
     get_property(csv2_cache_current_strings_set
@@ -97,18 +106,6 @@ macro(csv2_vendor_cache_restore prefix)
         set_property(CACHE "${csv2_cache_name}" PROPERTY STRINGS
           "${${prefix}_${csv2_cache_id}_strings}")
       endif()
-    elseif(csv2_cache_current_strings_set)
-      unset("${csv2_cache_name}-STRINGS" CACHE)
-    endif()
-  endforeach()
-
-  # ADVANCED and STRINGS are represented by internal companion Cache entries.
-  # Remove any companion created while restoring an originally unset property.
-  get_cmake_property(csv2_cache_after_restore CACHE_VARIABLES)
-  foreach(csv2_cache_name IN LISTS csv2_cache_after_restore)
-    list(FIND ${prefix}_variables "${csv2_cache_name}" csv2_cache_original_index)
-    if(csv2_cache_original_index EQUAL -1)
-      unset("${csv2_cache_name}" CACHE)
     endif()
   endforeach()
 endmacro()

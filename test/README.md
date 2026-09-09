@@ -34,6 +34,9 @@ invalidate dependent test compilations.
 Dependency-isolation tests distinguish the intended target-collision rejection
 from successful configuration and unrelated setup failures. The fixture does
 not generate the failure that the test is meant to observe.
+Cache restoration preserves values, types, help strings, and the presence and
+values of the tracked ADVANCED and STRINGS properties. An originally absent
+property remains absent; empty or false values are not equivalent to absence.
 
 ## Runtime domains and stable IDs
 

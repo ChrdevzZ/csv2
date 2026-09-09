@@ -46,6 +46,14 @@ csv2_define_parent_cache(BENCHMARK_ENABLE_TESTING parent-benchmark
 csv2_define_parent_cache(HAVE_STD_REGEX parent-have
   "parent feature-probe sentinel")
 
+set(BENCHMARK_CXX_FLAGS_COVERAGE "parent-coverage" CACHE STRING
+  "parent coverage help" FORCE)
+get_property(csv2_parent_coverage_advanced
+  CACHE BENCHMARK_CXX_FLAGS_COVERAGE PROPERTY ADVANCED SET)
+if(csv2_parent_coverage_advanced)
+  message(FATAL_ERROR "Coverage sentinel must start without ADVANCED metadata")
+endif()
+
 get_cmake_property(csv2_parent_cache_before CACHE_VARIABLES)
 add_subdirectory("${CSV2_SOURCE_DIR}" csv2)
 
@@ -69,6 +77,21 @@ csv2_assert_parent_cache(BENCHMARK_ENABLE_TESTING parent-benchmark
   "parent Google Benchmark sentinel")
 csv2_assert_parent_cache(HAVE_STD_REGEX parent-have
   "parent feature-probe sentinel")
+
+get_property(csv2_coverage_value
+  CACHE BENCHMARK_CXX_FLAGS_COVERAGE PROPERTY VALUE)
+get_property(csv2_coverage_type
+  CACHE BENCHMARK_CXX_FLAGS_COVERAGE PROPERTY TYPE)
+get_property(csv2_coverage_help
+  CACHE BENCHMARK_CXX_FLAGS_COVERAGE PROPERTY HELPSTRING)
+get_property(csv2_coverage_advanced
+  CACHE BENCHMARK_CXX_FLAGS_COVERAGE PROPERTY ADVANCED SET)
+if(NOT csv2_coverage_value STREQUAL "parent-coverage" OR
+   NOT csv2_coverage_type STREQUAL "STRING" OR
+   NOT csv2_coverage_help STREQUAL "parent coverage help" OR
+   csv2_coverage_advanced)
+  message(FATAL_ERROR "Vendored dependency changed absent parent Cache metadata")
+endif()
 
 get_cmake_property(csv2_parent_cache_after CACHE_VARIABLES)
 foreach(cache_name IN LISTS csv2_parent_cache_after)
