@@ -56,15 +56,12 @@ foreach(field IN ITEMS SEMANTIC_CASE_ID BYTES)
   endif()
 endforeach()
 foreach(expected_field IN LISTS csv2_expected_fields)
-  string(REPLACE "=" ";" field_parts "${expected_field}")
-  list(GET field_parts 0 field_name)
-  list(GET field_parts 1 field_value)
-  string(REGEX MATCH
-    "(^|[ \r\n])${field_name}=([^ \r\n]+)($|[ \r\n])"
-    field_match "${csv2_wire}")
-  if(NOT field_match OR NOT CMAKE_MATCH_2 STREQUAL field_value)
-    message(FATAL_ERROR
-      "Common benchmark ${field_name} mismatch: expected ${field_value}, "
-      "got '${CMAKE_MATCH_2}' in ${csv2_wire}")
-  endif()
+  string(FIND "${expected_field}" "=" separator)
+  string(SUBSTRING "${expected_field}" 0 ${separator} field_name)
+  math(EXPR separator "${separator} + 1")
+  string(SUBSTRING "${expected_field}" ${separator} -1 field_value)
+  string(TOUPPER "${field_name}" field_name)
+  set(CSV2_EXPECTED_${field_name} "${field_value}")
 endforeach()
+set(CSV2_BENCHMARK_WIRE "${csv2_wire}")
+include("${CMAKE_CURRENT_LIST_DIR}/verify_wire.cmake")

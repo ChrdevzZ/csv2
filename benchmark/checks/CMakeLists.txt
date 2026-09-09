@@ -18,33 +18,35 @@ csv2_add_benchmark_check(csv2.benchmark.current.allocations.writer_single_execut
   COMMAND csv2_benchmark_writer_allocations
     ${csv2_SOURCE_DIR}/benchmark/datasets/fixtures/long_field.csv)
 
-csv2_add_benchmark_check(csv2.benchmark.current.protocol
-  COMMAND csv2_benchmark --csv2-input ${csv2_check_fixture}
-    --csv2-source buffer --csv2-operation traversal/rows-cells --csv2-verify
-  PASS_REGEX "protocol=csv2-current-v4.*rows=3.*cells=9"
-  TIER portability)
-
 csv2_add_benchmark_check(csv2.benchmark.current.default_input
-  COMMAND csv2_benchmark
-    --csv2-source buffer --csv2-operation traversal/rows-cells --csv2-verify
-  PASS_REGEX "protocol=csv2-current-v4.*dataset=short_unquoted.csv.*rows=128.*cells=1024"
+  COMMAND ${CMAKE_COMMAND}
+    -DCSV2_EXPECTED_PROTOCOL=csv2-current-v4
+    -DCSV2_EXPECTED_DATASET=short_unquoted.csv
+    -DCSV2_EXPECTED_ROWS=128
+    -DCSV2_EXPECTED_CELLS=1024
+    -P ${CMAKE_CURRENT_SOURCE_DIR}/verify_wire.cmake
+    -- $<TARGET_FILE:csv2_benchmark>
+    --csv2-source buffer
+    --csv2-operation traversal/rows-cells --csv2-verify
   TIER portability)
 
 function(csv2_add_exact_current_check name input operation checksum)
   csv2_add_benchmark_check(${name}
     COMMAND ${CMAKE_COMMAND}
-      -DCSV2_BENCHMARK_EXECUTABLE=$<TARGET_FILE:csv2_benchmark>
-      -DCSV2_BENCHMARK_INPUT=${input}
-      -DCSV2_BENCHMARK_SOURCE=buffer
-      -DCSV2_BENCHMARK_OPERATION=${operation}
       -DCSV2_EXPECTED_PROTOCOL=csv2-current-v4
       -DCSV2_EXPECTED_CHECKSUM=${checksum}
+      ${ARGN}
       -P ${CMAKE_CURRENT_SOURCE_DIR}/verify_wire.cmake
+      -- $<TARGET_FILE:csv2_benchmark>
+      --csv2-input ${input}
+      --csv2-source buffer
+      --csv2-operation ${operation} --csv2-verify
     TIER portability)
 endfunction()
 
 csv2_add_exact_current_check(csv2.benchmark.current.checksum.rows_cells
-  ${csv2_check_fixture} traversal/rows-cells 638386005512892526)
+  ${csv2_check_fixture} traversal/rows-cells 638386005512892526
+  -DCSV2_EXPECTED_ROWS=3 -DCSV2_EXPECTED_CELLS=9)
 csv2_add_exact_current_check(csv2.benchmark.current.checksum.writer_raw
   ${csv2_quote_fixture} writer/raw-direct 12859166230996484343)
 csv2_add_exact_current_check(csv2.benchmark.current.checksum.writer_escaped
@@ -167,64 +169,97 @@ foreach(csv2_io_failure IN LISTS csv2_io_failures)
 endforeach()
 
 csv2_add_benchmark_check(csv2.benchmark.current.observer_audit.validation
-  COMMAND csv2_benchmark_observer_audit --csv2-input ${csv2_check_fixture}
-    --csv2-source buffer --csv2-operation validation/valid
-    --csv2-observer-audit
-  PASS_REGEX "value_observations=[1-9][0-9]*")
+  COMMAND ${CMAKE_COMMAND}
+    "-DCSV2_POSITIVE_FIELDS=value_observations"
+    -P ${CMAKE_CURRENT_SOURCE_DIR}/verify_wire.cmake
+    -- $<TARGET_FILE:csv2_benchmark_observer_audit>
+    --csv2-input ${csv2_check_fixture}
+    --csv2-source buffer
+    --csv2-operation validation/valid
+    --csv2-observer-audit)
 
 csv2_add_benchmark_check(csv2.benchmark.current.observer_audit.parse
-  COMMAND csv2_benchmark_observer_audit --csv2-input ${csv2_check_fixture}
-    --csv2-source buffer --csv2-operation source/parse-borrowed
-    --csv2-observer-audit
-  PASS_REGEX "value_observations=[1-9][0-9]*")
+  COMMAND ${CMAKE_COMMAND}
+    "-DCSV2_POSITIVE_FIELDS=value_observations"
+    -P ${CMAKE_CURRENT_SOURCE_DIR}/verify_wire.cmake
+    -- $<TARGET_FILE:csv2_benchmark_observer_audit>
+    --csv2-input ${csv2_check_fixture}
+    --csv2-source buffer
+    --csv2-operation source/parse-borrowed
+    --csv2-observer-audit)
 
 csv2_add_benchmark_check(csv2.benchmark.current.observer_audit.extraction
-  COMMAND csv2_benchmark_observer_audit --csv2-input ${csv2_quote_fixture}
-    --csv2-source buffer --csv2-operation extraction/cell-content/reused-string
-    --csv2-observer-audit
-  PASS_REGEX "memory_observations=[1-9][0-9]*")
+  COMMAND ${CMAKE_COMMAND}
+    "-DCSV2_POSITIVE_FIELDS=memory_observations"
+    -P ${CMAKE_CURRENT_SOURCE_DIR}/verify_wire.cmake
+    -- $<TARGET_FILE:csv2_benchmark_observer_audit>
+    --csv2-input ${csv2_quote_fixture}
+    --csv2-source buffer
+    --csv2-operation extraction/cell-content/reused-string
+    --csv2-observer-audit)
 
 csv2_add_benchmark_check(csv2.benchmark.current.observer_audit.file_read
-  COMMAND csv2_benchmark_observer_audit --csv2-input ${csv2_check_fixture}
-    --csv2-source file --csv2-operation source/file-read-cached
-    --csv2-observer-audit
-  PASS_REGEX "memory_observations=[1-9][0-9]*")
+  COMMAND ${CMAKE_COMMAND}
+    "-DCSV2_POSITIVE_FIELDS=memory_observations"
+    -P ${CMAKE_CURRENT_SOURCE_DIR}/verify_wire.cmake
+    -- $<TARGET_FILE:csv2_benchmark_observer_audit>
+    --csv2-input ${csv2_check_fixture}
+    --csv2-source file
+    --csv2-operation source/file-read-cached
+    --csv2-observer-audit)
 
 csv2_add_benchmark_check(csv2.benchmark.current.observer_audit.writer
-  COMMAND csv2_benchmark_observer_audit --csv2-input ${csv2_quote_fixture}
-    --csv2-source buffer --csv2-operation writer/escaped-direct
-    --csv2-observer-audit
-  PASS_REGEX
-    "value_observations=[1-9][0-9]* memory_observations=[1-9][0-9]*")
+  COMMAND ${CMAKE_COMMAND}
+    "-DCSV2_POSITIVE_FIELDS=value_observations,memory_observations"
+    -P ${CMAKE_CURRENT_SOURCE_DIR}/verify_wire.cmake
+    -- $<TARGET_FILE:csv2_benchmark_observer_audit>
+    --csv2-input ${csv2_quote_fixture}
+    --csv2-source buffer
+    --csv2-operation writer/escaped-direct
+    --csv2-observer-audit)
 
 csv2_add_benchmark_check(csv2.benchmark.current.preparation.file_read
-  COMMAND csv2_benchmark --csv2-input ${csv2_check_fixture}
-    --csv2-source file --csv2-operation source/file-read-cached
-    --csv2-preparation-audit
-  PASS_REGEX "prepared=metadata-only decoded_rows=0 streamable_rows=0 output_capacity=0")
+  COMMAND ${CMAKE_COMMAND}
+    -DCSV2_EXPECTED_PREPARED=metadata-only
+    -DCSV2_EXPECTED_DECODED_ROWS=0
+    -DCSV2_EXPECTED_STREAMABLE_ROWS=0
+    -DCSV2_EXPECTED_OUTPUT_CAPACITY=0
+    -P ${CMAKE_CURRENT_SOURCE_DIR}/verify_wire.cmake
+    -- $<TARGET_FILE:csv2_benchmark>
+    --csv2-input ${csv2_check_fixture}
+    --csv2-source file
+    --csv2-operation source/file-read-cached
+    --csv2-preparation-audit)
 
 csv2_add_benchmark_check(csv2.benchmark.current.preparation.traversal
-  COMMAND csv2_benchmark --csv2-input ${csv2_check_fixture}
-    --csv2-source buffer --csv2-operation traversal/rows-cells
-    --csv2-preparation-audit
-  PASS_REGEX "prepared=data,buffer-reader decoded_rows=0 streamable_rows=0 output_capacity=0")
+  COMMAND ${CMAKE_COMMAND}
+    -DCSV2_EXPECTED_PREPARED=data,buffer-reader
+    -DCSV2_EXPECTED_DECODED_ROWS=0
+    -DCSV2_EXPECTED_STREAMABLE_ROWS=0
+    -DCSV2_EXPECTED_OUTPUT_CAPACITY=0
+    -P ${CMAKE_CURRENT_SOURCE_DIR}/verify_wire.cmake
+    -- $<TARGET_FILE:csv2_benchmark>
+    --csv2-input ${csv2_check_fixture}
+    --csv2-source buffer
+    --csv2-operation traversal/rows-cells
+    --csv2-preparation-audit)
 
 csv2_add_benchmark_check(csv2.benchmark.current.preparation.writer
-  COMMAND csv2_benchmark --csv2-input ${csv2_quote_fixture}
-    --csv2-source buffer --csv2-operation writer/raw-streamable
-    --csv2-preparation-audit
-  PASS_REGEX
-    "prepared=data,buffer-reader,decoded-rows,streamable-rows,output decoded_rows=[1-9][0-9]* streamable_rows=[1-9][0-9]* output_capacity=[1-9][0-9]*")
+  COMMAND ${CMAKE_COMMAND}
+    -DCSV2_EXPECTED_PREPARED=data,buffer-reader,decoded-rows,streamable-rows,output
+    "-DCSV2_POSITIVE_FIELDS=decoded_rows,streamable_rows,output_capacity"
+    -P ${CMAKE_CURRENT_SOURCE_DIR}/verify_wire.cmake
+    -- $<TARGET_FILE:csv2_benchmark>
+    --csv2-input ${csv2_quote_fixture}
+    --csv2-source buffer
+    --csv2-operation writer/raw-streamable
+    --csv2-preparation-audit)
 
 set(csv2_group_checks
   "source/parse-borrowed|buffer|${csv2_check_fixture}"
-  "traversal/rows-cells|buffer|${csv2_check_fixture}"
   "extraction/cell-content/reused-string|buffer|${csv2_quote_fixture}"
-  "validation/valid|buffer|${csv2_check_fixture}"
-  "conversion/integer-bool-error|buffer|${csv2_SOURCE_DIR}/benchmark/datasets/fixtures/numeric.csv"
   "ranges/pipeline|buffer|${csv2_check_fixture}"
-  "index/random-lookup|buffer|${csv2_check_fixture}"
-  "writer/escaped-direct|buffer|${csv2_quote_fixture}")
+  "index/random-lookup|buffer|${csv2_check_fixture}")
 foreach(csv2_group_check IN LISTS csv2_group_checks)
   string(REPLACE "|" ";" csv2_group_values "${csv2_group_check}")
   list(GET csv2_group_values 0 csv2_group_operation)
@@ -235,6 +270,16 @@ foreach(csv2_group_check IN LISTS csv2_group_checks)
     COMMAND csv2_benchmark --csv2-input ${csv2_group_fixture}
       --csv2-source ${csv2_group_source}
       --csv2-operation ${csv2_group_operation} --csv2-verify)
+endforeach()
+set(csv2_group_dry_runs ${csv2_group_checks}
+  "conversion/integer-bool-error|buffer|${csv2_SOURCE_DIR}/benchmark/datasets/fixtures/numeric.csv"
+  "writer/escaped-direct|buffer|${csv2_quote_fixture}")
+foreach(csv2_group_check IN LISTS csv2_group_dry_runs)
+  string(REPLACE "|" ";" csv2_group_values "${csv2_group_check}")
+  list(GET csv2_group_values 0 csv2_group_operation)
+  list(GET csv2_group_values 1 csv2_group_source)
+  list(GET csv2_group_values 2 csv2_group_fixture)
+  string(REPLACE "/" "." csv2_group_name "${csv2_group_operation}")
   csv2_add_benchmark_check(csv2.benchmark.group.${csv2_group_name}.dry_run
     COMMAND csv2_benchmark --csv2-input ${csv2_group_fixture}
       --csv2-source ${csv2_group_source}
@@ -251,19 +296,12 @@ foreach(csv2_validation_case IN LISTS csv2_validation_cases)
   string(REPLACE "|" ";" csv2_validation_values "${csv2_validation_case}")
   list(GET csv2_validation_values 0 csv2_validation_scenario)
   list(GET csv2_validation_values 1 csv2_validation_fixture)
-  foreach(csv2_validation_mode IN ITEMS verify dry_run)
-    if(csv2_validation_mode STREQUAL "verify")
-      set(csv2_validation_arguments --csv2-verify)
-    else()
-      set(csv2_validation_arguments --benchmark_dry_run)
-    endif()
-    csv2_add_benchmark_check(
-      csv2.benchmark.validation.${csv2_validation_scenario}.${csv2_validation_mode}
-      COMMAND csv2_benchmark --csv2-input ${csv2_validation_fixture}
-        --csv2-source buffer
-        --csv2-operation validation/${csv2_validation_scenario}
-        ${csv2_validation_arguments})
-  endforeach()
+  csv2_add_benchmark_check(
+    csv2.benchmark.validation.${csv2_validation_scenario}.dry_run
+    COMMAND csv2_benchmark --csv2-input ${csv2_validation_fixture}
+      --csv2-source buffer
+      --csv2-operation validation/${csv2_validation_scenario}
+      --benchmark_dry_run)
 endforeach()
 
 foreach(csv2_validation_mismatch IN ITEMS valid_as_invalid invalid_as_valid)
@@ -287,31 +325,45 @@ endforeach()
 foreach(csv2_index_operation IN ITEMS sequential-lookup random-lookup)
   csv2_add_benchmark_check(
     csv2.benchmark.current.allocations.index.${csv2_index_operation}
-    COMMAND csv2_benchmark_allocations --csv2-input ${csv2_check_fixture}
-      --csv2-source buffer --csv2-operation index/${csv2_index_operation}
-      --csv2-verify
-    PASS_REGEX "allocations=0"
+    COMMAND ${CMAKE_COMMAND}
+      -DCSV2_EXPECTED_ALLOCATIONS=0
+      -P ${CMAKE_CURRENT_SOURCE_DIR}/verify_wire.cmake
+      -- $<TARGET_FILE:csv2_benchmark_allocations>
+      --csv2-input ${csv2_check_fixture}
+      --csv2-source buffer
+      --csv2-operation index/${csv2_index_operation} --csv2-verify
     TIER portability)
 endforeach()
 
 csv2_add_benchmark_check(csv2.benchmark.current.preparation.index.sequential
-  COMMAND csv2_benchmark --csv2-input ${csv2_check_fixture}
-    --csv2-source buffer --csv2-operation index/sequential-lookup
-    --csv2-preparation-audit
-  PASS_REGEX "prepared=data,buffer-reader,buffer-index")
+  COMMAND ${CMAKE_COMMAND}
+    -DCSV2_EXPECTED_PREPARED=data,buffer-reader,buffer-index
+    -P ${CMAKE_CURRENT_SOURCE_DIR}/verify_wire.cmake
+    -- $<TARGET_FILE:csv2_benchmark>
+    --csv2-input ${csv2_check_fixture}
+    --csv2-source buffer
+    --csv2-operation index/sequential-lookup
+    --csv2-preparation-audit)
 
 csv2_add_benchmark_check(csv2.benchmark.current.preparation.index.random
-  COMMAND csv2_benchmark --csv2-input ${csv2_check_fixture}
-    --csv2-source buffer --csv2-operation index/random-lookup
-    --csv2-preparation-audit
-  PASS_REGEX "prepared=data,buffer-reader,buffer-index,random-positions")
+  COMMAND ${CMAKE_COMMAND}
+    -DCSV2_EXPECTED_PREPARED=data,buffer-reader,buffer-index,random-positions
+    -P ${CMAKE_CURRENT_SOURCE_DIR}/verify_wire.cmake
+    -- $<TARGET_FILE:csv2_benchmark>
+    --csv2-input ${csv2_check_fixture}
+    --csv2-source buffer
+    --csv2-operation index/random-lookup
+    --csv2-preparation-audit)
 
 foreach(csv2_writer_operation IN ITEMS raw-direct escaped-direct always-direct)
   csv2_add_benchmark_check(csv2.benchmark.current.allocations.${csv2_writer_operation}
-    COMMAND csv2_benchmark_allocations --csv2-input ${csv2_quote_fixture}
-      --csv2-source buffer --csv2-operation writer/${csv2_writer_operation}
-      --csv2-verify
-    PASS_REGEX "allocations=0"
+    COMMAND ${CMAKE_COMMAND}
+      -DCSV2_EXPECTED_ALLOCATIONS=0
+      -P ${CMAKE_CURRENT_SOURCE_DIR}/verify_wire.cmake
+      -- $<TARGET_FILE:csv2_benchmark_allocations>
+      --csv2-input ${csv2_quote_fixture}
+      --csv2-source buffer
+      --csv2-operation writer/${csv2_writer_operation} --csv2-verify
     TIER portability)
 endforeach()
 
@@ -324,11 +376,13 @@ foreach(csv2_extraction_operation IN ITEMS
   string(REPLACE "/" "." csv2_extraction_name "${csv2_extraction_operation}")
   csv2_add_benchmark_check(
     csv2.benchmark.current.allocations.extraction.${csv2_extraction_name}
-    COMMAND csv2_benchmark_allocations --csv2-input ${csv2_quote_fixture}
+    COMMAND ${CMAKE_COMMAND}
+      -DCSV2_EXPECTED_ALLOCATIONS=0
+      -P ${CMAKE_CURRENT_SOURCE_DIR}/verify_wire.cmake
+      -- $<TARGET_FILE:csv2_benchmark_allocations>
+      --csv2-input ${csv2_quote_fixture}
       --csv2-source buffer
-      --csv2-operation extraction/${csv2_extraction_operation}
-      --csv2-verify
-    PASS_REGEX "allocations=0")
+      --csv2-operation extraction/${csv2_extraction_operation} --csv2-verify)
 endforeach()
 
 foreach(csv2_allocating_extraction IN ITEMS
@@ -338,12 +392,13 @@ foreach(csv2_allocating_extraction IN ITEMS
     "${csv2_allocating_extraction}")
   csv2_add_benchmark_check(
     csv2.benchmark.current.allocations.positive.${csv2_allocating_extraction_name}
-    COMMAND csv2_benchmark_allocations
+    COMMAND ${CMAKE_COMMAND}
+      "-DCSV2_POSITIVE_FIELDS=allocations,allocated_bytes"
+      -P ${CMAKE_CURRENT_SOURCE_DIR}/verify_wire.cmake
+      -- $<TARGET_FILE:csv2_benchmark_allocations>
       --csv2-input ${csv2_SOURCE_DIR}/benchmark/datasets/fixtures/long_field.csv
       --csv2-source buffer
-      --csv2-operation extraction/${csv2_allocating_extraction}
-      --csv2-verify
-    PASS_REGEX "allocations=[1-9][0-9]* allocated_bytes=[1-9][0-9]*"
+      --csv2-operation extraction/${csv2_allocating_extraction} --csv2-verify
     TIER portability)
 endforeach()
 
@@ -367,21 +422,43 @@ foreach(csv2_zero_check IN LISTS csv2_zero_allocation_checks)
   string(REPLACE "/" "." csv2_zero_name "${csv2_zero_operation}")
   csv2_add_benchmark_check(
     csv2.benchmark.current.allocations.${csv2_zero_name}.${csv2_zero_source}
-    COMMAND csv2_benchmark_allocations --csv2-input ${csv2_zero_fixture}
+    COMMAND ${CMAKE_COMMAND}
+      -DCSV2_EXPECTED_ALLOCATIONS=0
+      -P ${CMAKE_CURRENT_SOURCE_DIR}/verify_wire.cmake
+      -- $<TARGET_FILE:csv2_benchmark_allocations>
+      --csv2-input ${csv2_zero_fixture}
       --csv2-source ${csv2_zero_source}
-      --csv2-operation ${csv2_zero_operation}
-      --csv2-verify
-    PASS_REGEX "allocations=0")
+      --csv2-operation ${csv2_zero_operation} --csv2-verify)
 endforeach()
 
+set(csv2_common_sources buffer)
+if(csv2_benchmark_has_mmap)
+  set(csv2_common_sources buffer+mmap)
+endif()
 csv2_add_benchmark_check(csv2.benchmark.common.protocol
-  COMMAND csv2_common_benchmark --describe
-  PASS_REGEX "protocol=csv2-common-v5.*instrumentation=none.*capabilities=legacy-reader,legacy-writer,modern-writer.*operation_contracts=rows_cells:traversal_only:.*csv2.traversal.rows-cells.v1:input_corpus"
+  COMMAND ${CMAKE_COMMAND}
+    -DCSV2_EXPECTED_PROTOCOL=csv2-common-v5
+    -DCSV2_EXPECTED_INSTRUMENTATION=none
+    -DCSV2_EXPECTED_CAPABILITIES=legacy-reader,legacy-writer,modern-writer
+    -DCSV2_REQUIRED_OPERATION_CONTRACT=rows_cells:traversal_only:${csv2_common_sources}:csv2.traversal.rows-cells.v1:input_corpus
+    -P ${CMAKE_CURRENT_SOURCE_DIR}/verify_wire.cmake
+    -- $<TARGET_FILE:csv2_common_benchmark> --describe
   TIER portability)
 csv2_add_benchmark_check(csv2.benchmark.common.rows_cells
-  COMMAND csv2_common_benchmark --operation rows_cells
-    --input ${csv2_check_fixture} --source buffer --iterations 1
-  PASS_REGEX "protocol=csv2-common-v5.*instrumentation=none.*semantic_case_id=csv2.traversal.rows-cells.v1.*rows=3.*cells=9.*timed_reader_steps=0.*timed_checksum_mix_calls=0"
+  COMMAND ${CMAKE_COMMAND}
+    -DCSV2_EXPECTED_PROTOCOL=csv2-common-v5
+    -DCSV2_EXPECTED_INSTRUMENTATION=none
+    -DCSV2_EXPECTED_SEMANTIC_CASE_ID=csv2.traversal.rows-cells.v1
+    -DCSV2_EXPECTED_ROWS=3
+    -DCSV2_EXPECTED_CELLS=9
+    -DCSV2_EXPECTED_TIMED_READER_STEPS=0
+    -DCSV2_EXPECTED_TIMED_CHECKSUM_MIX_CALLS=0
+    -DCSV2_EXPECTED_OPERATION=rows_cells
+    -DCSV2_EXPECTED_SCOPE=traversal_only
+    -DCSV2_EXPECTED_SOURCE=buffer
+    -DCSV2_EXPECTED_ITERATIONS=1
+    -P ${CMAKE_CURRENT_SOURCE_DIR}/verify_wire.cmake
+    -- $<TARGET_FILE:csv2_common_benchmark> --operation rows_cells --input ${csv2_check_fixture} --source buffer --iterations 1
   TIER portability)
 set(csv2_timer_audit_operations
   "rows_cells,legacy_writer_raw,writer_raw_direct,writer_raw_streamable,writer_escaped_direct,writer_escaped_streamable")
@@ -389,8 +466,13 @@ if(csv2_benchmark_has_mmap)
   string(APPEND csv2_timer_audit_operations ",legacy_mmap_rows_cells")
 endif()
 csv2_add_benchmark_check(csv2.benchmark.common.timer_scope_audit.protocol
-  COMMAND csv2_common_benchmark_timer_audit --describe
-  PASS_REGEX "protocol=csv2-common-v5.*instrumentation=timer_scope_audit.*capabilities=legacy-reader,legacy-writer,modern-writer.*operations=${csv2_timer_audit_operations}")
+  COMMAND ${CMAKE_COMMAND}
+    -DCSV2_EXPECTED_PROTOCOL=csv2-common-v5
+    -DCSV2_EXPECTED_INSTRUMENTATION=timer_scope_audit
+    -DCSV2_EXPECTED_CAPABILITIES=legacy-reader,legacy-writer,modern-writer
+    -DCSV2_EXPECTED_OPERATIONS=${csv2_timer_audit_operations}
+    -P ${CMAKE_CURRENT_SOURCE_DIR}/verify_wire.cmake
+    -- $<TARGET_FILE:csv2_common_benchmark_timer_audit> --describe)
 csv2_add_benchmark_check(csv2.benchmark.common.timer_scope_audit.behavior
   COMMAND ${CMAKE_COMMAND}
     -DCSV2_BENCHMARK_EXECUTABLE=$<TARGET_FILE:csv2_common_benchmark_timer_audit>
@@ -421,10 +503,6 @@ set(csv2_representation_fixture
 foreach(csv2_writer_form IN ITEMS direct streamable)
   csv2_add_benchmark_check(csv2.benchmark.current.writer_representation.${csv2_writer_form}
     COMMAND ${CMAKE_COMMAND}
-      -DCSV2_BENCHMARK_EXECUTABLE=$<TARGET_FILE:csv2_benchmark>
-      -DCSV2_BENCHMARK_INPUT=${csv2_representation_fixture}
-      -DCSV2_BENCHMARK_SOURCE=buffer
-      -DCSV2_BENCHMARK_OPERATION=writer/raw-${csv2_writer_form}
       -DCSV2_EXPECTED_SEMANTIC_CASE_ID=csv2.writer.raw-${csv2_writer_form}.decoded-content.v1
       -DCSV2_EXPECTED_SCOPE=writer_only
       -DCSV2_EXPECTED_BYTE_BASIS=input_corpus
@@ -433,6 +511,10 @@ foreach(csv2_writer_form IN ITEMS direct streamable)
       -DCSV2_EXPECTED_ROWS=2
       -DCSV2_EXPECTED_CELLS=2
       -P ${CMAKE_CURRENT_SOURCE_DIR}/verify_wire.cmake
+      -- $<TARGET_FILE:csv2_benchmark>
+      --csv2-input ${csv2_representation_fixture}
+      --csv2-source buffer
+      --csv2-operation writer/raw-${csv2_writer_form} --csv2-verify
     TIER portability)
   csv2_add_benchmark_check(csv2.benchmark.common.writer_representation.${csv2_writer_form}
     COMMAND ${CMAKE_COMMAND}
@@ -451,16 +533,27 @@ endforeach()
 
 if(csv2_benchmark_has_mmap)
   csv2_add_benchmark_check(csv2.benchmark.current.mmap
-    COMMAND csv2_benchmark --csv2-input ${csv2_check_fixture}
-      --csv2-source mmap --csv2-operation traversal/rows-cells --csv2-verify
-    PASS_REGEX "protocol=csv2-current-v4.*source=mmap"
+    COMMAND ${CMAKE_COMMAND}
+      -DCSV2_EXPECTED_PROTOCOL=csv2-current-v4
+      -DCSV2_EXPECTED_SOURCE=mmap
+      -P ${CMAKE_CURRENT_SOURCE_DIR}/verify_wire.cmake
+      -- $<TARGET_FILE:csv2_benchmark>
+      --csv2-input ${csv2_check_fixture}
+      --csv2-source mmap
+      --csv2-operation traversal/rows-cells --csv2-verify
     TIER portability)
   csv2_add_benchmark_check(csv2.benchmark.current.preparation.mmap_pretouched
-    COMMAND csv2_benchmark --csv2-input ${csv2_check_fixture}
-      --csv2-source mmap --csv2-operation source/mmap-touch-pretouched
-      --csv2-preparation-audit
-    PASS_REGEX
-      "prepared=mapping,pretouched-mapping decoded_rows=0 streamable_rows=0 output_capacity=0")
+    COMMAND ${CMAKE_COMMAND}
+      -DCSV2_EXPECTED_PREPARED=mapping,pretouched-mapping
+      -DCSV2_EXPECTED_DECODED_ROWS=0
+      -DCSV2_EXPECTED_STREAMABLE_ROWS=0
+      -DCSV2_EXPECTED_OUTPUT_CAPACITY=0
+      -P ${CMAKE_CURRENT_SOURCE_DIR}/verify_wire.cmake
+      -- $<TARGET_FILE:csv2_benchmark>
+      --csv2-input ${csv2_check_fixture}
+      --csv2-source mmap
+      --csv2-operation source/mmap-touch-pretouched
+      --csv2-preparation-audit)
 endif()
 
 foreach(csv2_contract IN ITEMS
