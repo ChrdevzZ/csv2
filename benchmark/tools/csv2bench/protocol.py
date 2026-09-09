@@ -549,14 +549,23 @@ TIME_SCALE = {"ns": 1e-9, "us": 1e-6, "ms": 1e-3, "s": 1.0}
 PMU_COUNTERS = ("cycles", "instructions", "branch-misses")
 
 
+def unique_json_object(pairs: list[tuple[str, object]]) -> dict[str, object]:
+    result: dict[str, object] = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError(f"duplicate JSON key: {key}")
+        result[key] = value
+    return result
+
+
 def parse_google_benchmark_json(
     text: str, expected_runs: int, *, require_pmu: bool = False
 ) -> dict[str, object]:
     try:
-        document = json.loads(text)
+        document = json.loads(text, object_pairs_hook=unique_json_object)
         records = _array(_object(document, "Google Benchmark JSON")["benchmarks"],
                          "Google Benchmark JSON.benchmarks")
-    except (json.JSONDecodeError, KeyError, TypeError) as error:
+    except (ValueError, KeyError, TypeError) as error:
         raise RuntimeError("Google Benchmark JSON is malformed") from error
     samples: list[dict[str, object]] = []
     names: set[str] = set()
