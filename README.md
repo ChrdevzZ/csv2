@@ -156,9 +156,13 @@ Field access is intentionally split into raw, decoded, and content forms:
 | `read_raw_value(container)` | Appends the raw bytes to a compatible container |
 | `copy_raw_to(output)` | Copies raw bytes through an output iterator |
 | `raw_trimmed_view()` / `read_view()` | C++17 borrowed view after trim policy, with outer quotes retained |
-| `read_value(container)` | Appends trimmed data and folds doubled quotes; outer quotes remain |
+| `read_value(container)` | Appends the trimmed raw field with adjacent quote pairs folded; does not perform a separate outer-quote removal step |
 | `decode_to(output)` | Output-iterator form of `read_value` |
 | `copy_content_to(output)` | Trims, removes a valid outer quote pair, and folds doubled quotes |
+
+`read_value` and `decode_to` use the legacy quote-folding representation. Folding applies across the complete
+trimmed raw field: `""` therefore produces one quote character. Use `copy_content_to` for logical field content;
+it produces an empty value for that same field. `read_view` exposes the trimmed raw bytes without quote folding.
 
 These operations append without clearing the destination. They support strings, sequence containers, available PMR
 strings, custom append sinks, and output iterators. `has_escaped_quotes()` reports doubled quote pairs found during
