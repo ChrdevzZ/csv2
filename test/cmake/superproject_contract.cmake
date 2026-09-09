@@ -43,19 +43,28 @@ execute_process(
 set(configure_log "${configure_stdout}\n${configure_stderr}")
 
 if(CSV2_TEST_CONTRACT_MODE STREQUAL "normal")
-  if(NOT configure_result EQUAL 0)
+  if(NOT configure_result STREQUAL "0")
     message(FATAL_ERROR
       "Superproject isolation configuration failed:\n${configure_log}")
   endif()
-elseif(CSV2_TEST_CONTRACT_MODE STREQUAL "catch_collision")
-  if(configure_result EQUAL 0)
-    message(FATAL_ERROR
-      "Catch2 collision contract did not fail closed:\n${configure_log}")
+elseif(CSV2_TEST_CONTRACT_MODE STREQUAL "catch_collision" OR
+       CSV2_TEST_CONTRACT_MODE STREQUAL "benchmark_collision")
+  if(CSV2_TEST_CONTRACT_MODE STREQUAL "catch_collision")
+    set(expected_dependency catch2)
+    set(expected_target "Catch2::Catch2WithMain")
+  else()
+    set(expected_dependency google_benchmark)
+    set(expected_target "benchmark::benchmark")
   endif()
-elseif(CSV2_TEST_CONTRACT_MODE STREQUAL "benchmark_collision")
-  if(configure_result EQUAL 0)
+  if(configure_result STREQUAL "0")
     message(FATAL_ERROR
-      "Google Benchmark collision contract did not fail closed:\n${configure_log}")
+      "${expected_dependency} collision contract did not fail closed:\n${configure_log}")
+  endif()
+  set(expected_diagnostic
+    "Cannot load vendored ${expected_dependency}:[ \t\r\n]+target[ \t\r\n]+${expected_target}[ \t\r\n]+already[ \t\r\n]+exists")
+  if(NOT configure_log MATCHES "${expected_diagnostic}")
+    message(FATAL_ERROR
+      "Collision configuration failed for an unrelated reason:\n${configure_log}")
   endif()
 else()
   message(FATAL_ERROR "Unknown contract mode ${CSV2_TEST_CONTRACT_MODE}")
