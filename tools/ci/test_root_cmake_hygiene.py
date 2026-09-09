@@ -12,6 +12,55 @@ SOURCE_ROOT = Path(__file__).parents[2]
 
 
 class RootCMakeHygieneTests(unittest.TestCase):
+    def test_installed_package_discovery_contract(self) -> None:
+        cmake = shutil.which("cmake")
+        self.assertIsNotNone(cmake, "cmake is required for CI policy tests")
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            build = root / "producer"
+            prefix = root / "installed package"
+
+            def run(*args: str) -> subprocess.CompletedProcess[str]:
+                return subprocess.run(
+                    [str(cmake), *args], capture_output=True, text=True, timeout=120,
+                )
+
+            for args in (
+                ("-H" + str(SOURCE_ROOT), "-B" + str(build),
+                 "-DCMAKE_INSTALL_PREFIX=" + str(prefix),
+                 "-DCSV2_BUILD_TESTS=OFF", "-DCSV2_BUILD_BENCHMARKS=OFF",
+                 "-DCSV2_BUILD_BENCHMARK_CHECKS=OFF", "-DCSV2_BUILD_FUZZERS=OFF"),
+                ("--build", str(build), "--target", "install", "--config", "Release"),
+            ):
+                result = run(*args)
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            configs = list(prefix.rglob("csv2Config.cmake"))
+            self.assertEqual(len(configs), 1)
+            # These consumers exercise package metadata, not native 32-bit code.
+            for width in (4, 8):
+                for request, accepted in (
+                    ("", True), ("1.8.0", True), ("1.7.0", True),
+                    ("9.0.0", False),
+                    ("COMPONENTS absent_component", False),
+                    ("OPTIONAL_COMPONENTS absent_component", True),
+                ):
+                    with self.subTest(width=width, request=request):
+                        consumer = root / (str(width) + "-" + request.replace(" ", "_"))
+                        consumer.mkdir()
+                        (consumer / "CMakeLists.txt").write_text(
+                            "cmake_minimum_required(VERSION 3.10)\n"
+                            "project(package_contract LANGUAGES NONE)\n"
+                            f"set(CMAKE_SIZEOF_VOID_P {width})\n"
+                            f"find_package(csv2 {request} CONFIG REQUIRED)\n"
+                            "if(NOT TARGET csv2::csv2)\n"
+                            '  message(FATAL_ERROR "missing interface target")\n'
+                            "endif()\n", encoding="utf-8",
+                        )
+                        result = run("-H" + str(consumer), "-B" + str(consumer / "build"),
+                                     "-Dcsv2_DIR=" + str(configs[0].parent))
+                        self.assertEqual(result.returncode == 0, accepted,
+                                         result.stdout + result.stderr)
+
     def test_verification_rejects_in_source_before_loading_components(self) -> None:
         cmake = shutil.which("cmake")
         if cmake is None:

@@ -431,6 +431,12 @@ target_link_libraries(csv2_consumer PRIVATE csv2::csv2)
 Configure with `-DCMAKE_PREFIX_PATH=/absolute/path/to/csv2-prefix`. Unix-like installs also provide
 `pkg-config --cflags csv2`.
 
+The installed header-only package has architecture-independent version metadata:
+its producer's pointer width does not restrict consumers. Version compatibility
+checks remain enforced. CSV2 exposes no package components; unknown required
+components are rejected, while unknown optional components permit discovery.
+Compiler and platform support still depend on the consuming toolchain.
+
 The package installs modular headers, CMake/pkg-config metadata, and licenses. It excludes tests, fuzzers, benchmarks,
 third-party verification libraries, and their tools. The generated single header is distributed separately.
 
