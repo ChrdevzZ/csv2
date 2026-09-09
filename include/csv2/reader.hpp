@@ -143,12 +143,7 @@ public:
   template <typename OutputIt> OutputIt copy_content_to(OutputIt output) const {
     if (start_ >= end_)
       return output;
-    auto bounds = trim_policy::trim(buffer_, start_, end_);
-    if (bounds.second - bounds.first >= 2 && buffer_[bounds.first] == quote_character::value &&
-        buffer_[bounds.second - 1] == quote_character::value) {
-      ++bounds.first;
-      --bounds.second;
-    }
+    const auto bounds = content_bounds_();
     for (size_t i = bounds.first; i < bounds.second; ++i) {
       *output = buffer_[i];
       ++output;
@@ -787,24 +782,7 @@ public:
 
 #if CSV2_HAS_STRING_VIEW
   // Borrow a string_view under the lifetime and mutation contract above.
-  bool parse_view(std::string_view sv) {
-    const char *const data = sv.data();
-    const size_t size = sv.size();
-    if (size == 0) {
-      reset_source_();
-      return false;
-    }
-    const bool owned_range = owns_range_(data, size);
-    if (aliases_source_(data) && !owned_range) {
-      reset_source_();
-      return false;
-    }
-    if (!owned_range)
-      reset_source_();
-    buffer_ = data;
-    buffer_size_ = size;
-    return true;
-  }
+  bool parse_view(std::string_view sv) { return parse_borrowed(sv.data(), sv.size()); }
 #endif
 
   bool validate(parse_error &error) const

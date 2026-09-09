@@ -1,0 +1,37 @@
+{
+  "schema": "csv2-verification-vendor-v1",
+  "dependencies": {
+    "catch2": {
+      "upstream": "https://github.com/catchorg/Catch2",
+      "version": "3.15.3",
+      "tag": "v3.15.3",
+      "tag_object": "95d8a61b089317bec800c7cc4c64064cbcb3802d",
+      "commit": "8b08d4d79514f45f7e4ce2a607ac9c94e920d1bb",
+      "archive_url": "https://github.com/catchorg/Catch2/archive/refs/tags/v3.15.3.tar.gz",
+      "archive_sha256": "b0299ae552918220a7a6e21e7de5b714777f4e8c883fb70c4bb23fe01df8c6e3",
+      "snapshot_sha256": "30a95651c113d1d7e7fee94504319312f9854f0c895e88da98d2233481d08925",
+      "license": "BSL-1.0",
+      "license_file": "LICENSE.txt",
+      "root": "third_party/verification/catch2",
+      "file_list": "third_party/verification/catch2.files",
+      "hash_list": "third_party/verification/catch2.sha256",
+      "patches": []
+    },
+    "google_benchmark": {
+      "upstream": "https://github.com/google/benchmark",
+      "version": "1.9.5",
+      "tag": "v1.9.5",
+      "tag_object": null,
+      "commit": "192ef10025eb2c4cdd392bc502f0c852196baa48",
+      "archive_url": "https://github.com/google/benchmark/archive/192ef10025eb2c4cdd392bc502f0c852196baa48.tar.gz",
+      "archive_sha256": "f82705a2726d8f6cdcda274b841f6314dbfc6f731cdda06c946f310ec1cc3ad9",
+      "snapshot_sha256": "e5ed0f09089472e1ea729869600ae03a8aef75fc521952dcfd30c4904481d789",
+      "license": "Apache-2.0",
+      "license_file": "LICENSE",
+      "root": "third_party/verification/google_benchmark",
+      "file_list": "third_party/verification/google_benchmark.files",
+      "hash_list": "third_party/verification/google_benchmark.sha256",
+      "patches": []
+    }
+  }
+}

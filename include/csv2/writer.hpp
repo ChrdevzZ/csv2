@@ -1,11 +1,10 @@
 #pragma once
 
-#include <cstring>
 #include <csv2/detail/config.hpp>
 #include <csv2/parameters.hpp>
 #include <fstream>
-#include <iostream>
 #include <iterator>
+#include <ostream>
 #include <sstream>
 #include <string>
 #include <type_traits>
@@ -28,8 +27,6 @@ struct always {};
 } // namespace quote_policy
 
 namespace detail {
-
-struct direct_character_fields {};
 
 using std::begin;
 using std::end;
@@ -55,21 +52,6 @@ struct is_direct_character_field<std::basic_string_view<char, Traits>> : std::tr
 
 } // namespace detail
 
-template <typename, typename T> struct has_close : std::false_type {};
-
-template <typename C, typename Ret, typename... Args> struct has_close<C, Ret(Args...)> {
-private:
-  template <typename T>
-  static constexpr auto check(T *) ->
-      typename std::is_same<decltype(std::declval<T &>().close(std::declval<Args>()...)),
-                            Ret>::type;
-
-  template <typename> static constexpr std::false_type check(...);
-
-public:
-  static constexpr bool value = decltype(check<C>(0))::value;
-};
-
 template <class delimiter = delimiter<','>, typename Stream = std::ofstream,
           typename Ownership = stream_ownership::close_on_destroy,
           typename QuotePolicy = quote_policy::none>
@@ -85,25 +67,27 @@ class basic_writer {
   Stream *stream_; // output stream for the writer
   bool active_;
 
-  static void close_stream_(Stream &stream, std::true_type) { stream.close(); }
+  template <typename CandidateStream>
+  static auto close_stream_(CandidateStream &stream,
+                            int) -> decltype(static_cast<void>(stream.close())) {
+    static_cast<void>(stream.close());
+  }
 
-  static void close_stream_(Stream &, std::false_type) {}
+  template <typename CandidateStream> static void close_stream_(CandidateStream &, long) noexcept {}
 
-  void close_noexcept_() noexcept {
+  void release_noexcept_(std::true_type) noexcept {
     if (!active_)
       return;
     active_ = false;
 #if defined(__cpp_exceptions) || defined(__EXCEPTIONS) || defined(_CPPUNWIND)
     try {
-      close_stream_(*stream_, std::integral_constant<bool, has_close<Stream, void()>::value>());
+      close_stream_(*stream_, 0);
     } catch (...) {
     }
 #else
-    close_stream_(*stream_, std::integral_constant<bool, has_close<Stream, void()>::value>());
+    close_stream_(*stream_, 0);
 #endif
   }
-
-  void release_noexcept_(std::true_type) noexcept { close_noexcept_(); }
 
   void release_noexcept_(std::false_type) noexcept { active_ = false; }
 
@@ -185,6 +169,7 @@ class basic_writer {
     std::ostringstream formatted;
     formatted.copyfmt(*stream_);
     formatted.exceptions(std::ios_base::goodbit);
+    formatted.clear(stream_->rdstate());
 #if defined(__cpp_exceptions) || defined(__EXCEPTIONS) || defined(_CPPUNWIND)
     struct formatted_state_guard {
       Stream *target;
@@ -216,7 +201,7 @@ class basic_writer {
 
     stream_->width(formatted.width());
     const std::ios_base::iostate state = formatted.rdstate();
-    const std::string value = formatted.str();
+    const std::string value = std::move(formatted).str();
     write_escaped_chars_(value.data(), value.size(), QuotePolicy());
     if (state != std::ios_base::goodbit)
       stream_->setstate(state);
@@ -275,16 +260,6 @@ class basic_writer {
   template <typename Field> void write_field_(const Field &field, std::false_type) {
     typedef typename std::decay<Field>::type field_type;
     write_escaped_field_(field, typename detail::is_direct_character_field<field_type>::type());
-  }
-
-  template <typename Field>
-  void write_field_(const Field &field, std::true_type, detail::direct_character_fields) {
-    write_field_(field, std::true_type());
-  }
-
-  template <typename Field>
-  void write_field_(const Field &field, std::false_type, detail::direct_character_fields) {
-    write_field_(field, std::false_type());
   }
 
 protected:
@@ -365,8 +340,7 @@ protected:
     write_legacy_rows_dispatch_(std::forward<Container>(rows), 0);
   }
 
-  template <typename Container, typename FieldPolicy>
-  void write_row_with_policy_(Container &&row, FieldPolicy field_policy) {
+  template <typename Container> void write_row_impl_(Container &&row) {
     if (!active_)
       return;
     auto &&strings = std::forward<Container>(row);
@@ -375,20 +349,17 @@ protected:
     auto current = begin(strings);
     const auto last = end(strings);
     if (current != last) {
-      write_field_(*current, typename std::is_same<QuotePolicy, quote_policy::none>::type(),
-                   field_policy);
+      write_field_(*current, typename std::is_same<QuotePolicy, quote_policy::none>::type());
       const char separator = delimiter::value;
       while (++current != last) {
         *stream_ << separator;
-        write_field_(*current, typename std::is_same<QuotePolicy, quote_policy::none>::type(),
-                     field_policy);
+        write_field_(*current, typename std::is_same<QuotePolicy, quote_policy::none>::type());
       }
     }
     *stream_ << '\n';
   }
 
-  template <typename Container, typename FieldPolicy>
-  void write_rows_with_policy_(Container &&rows, FieldPolicy field_policy) {
+  template <typename Container> void write_rows_impl_(Container &&rows) {
     if (!active_)
       return;
     auto &&container_of_rows = std::forward<Container>(rows);
@@ -397,7 +368,7 @@ protected:
     auto current = begin(container_of_rows);
     const auto last = end(container_of_rows);
     while (current != last) {
-      write_row_with_policy_(*current, field_policy);
+      write_row_impl_(*current);
       ++current;
     }
   }
@@ -430,15 +401,15 @@ public:
     if (!active_)
       return;
     active_ = false;
-    close_stream_(*stream_, std::integral_constant<bool, has_close<Stream, void()>::value>());
+    close_stream_(*stream_, 0);
   }
 
   template <typename Container> void write_row(Container &&row) {
-    write_row_with_policy_(std::forward<Container>(row), detail::direct_character_fields());
+    write_row_impl_(std::forward<Container>(row));
   }
 
   template <typename Container> void write_rows(Container &&rows) {
-    write_rows_with_policy_(std::forward<Container>(rows), detail::direct_character_fields());
+    write_rows_impl_(std::forward<Container>(rows));
   }
 };
 

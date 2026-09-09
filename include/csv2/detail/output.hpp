@@ -3,7 +3,6 @@
 #include <csv2/detail/config.hpp>
 
 #include <cstddef>
-#include <iterator>
 #include <type_traits>
 #include <utility>
 
@@ -17,7 +16,10 @@ template <typename Container>
 CSV2_FORCE_INLINE auto reserve_for_append_impl(Container &output, std::size_t additional,
                                                output_priority<2>)
     -> decltype(output.reserve(output.size() + additional), void()) {
-  output.reserve(output.size() + additional);
+  // Preserve the container's amortized growth when accumulating multiple extractions.
+  if (output.size() == 0) {
+    output.reserve(additional);
+  }
 }
 
 template <typename Container>
@@ -139,33 +141,6 @@ CSV2_FORCE_INLINE void append_decoded(Container &output, const char *buffer, std
                                       std::size_t last, char quote) {
   append_decoded_impl(output, buffer, first, last, quote,
                       std::integral_constant<bool, supports_push_back<Container>::value>());
-}
-
-template <typename Container> class container_output_iterator {
-public:
-  using iterator_category = std::output_iterator_tag;
-  using value_type = void;
-  using difference_type = void;
-  using pointer = void;
-  using reference = void;
-
-  explicit container_output_iterator(Container &output) : output_(&output) {}
-
-  container_output_iterator &operator=(char value) {
-    append_range(*output_, &value, &value + 1);
-    return *this;
-  }
-  container_output_iterator &operator*() { return *this; }
-  container_output_iterator &operator++() { return *this; }
-  container_output_iterator operator++(int) { return *this; }
-
-private:
-  Container *output_;
-};
-
-template <typename Container>
-container_output_iterator<Container> container_inserter(Container &output) {
-  return container_output_iterator<Container>(output);
 }
 
 template <typename OutputIt>

@@ -1,0 +1,413 @@
+from __future__ import annotations
+
+import json
+import contextlib
+import io
+import sys
+import tempfile
+import unittest
+import unittest.mock
+from pathlib import Path
+
+import _support  # noqa: F401
+from csv2bench import runner
+
+
+def result(revision: str, elapsed: int = 100) -> dict[str, str]:
+    return {
+        "protocol": "csv2-common-v5",
+        "revision": revision,
+        "instrumentation": "none",
+        "capabilities": "legacy-reader,legacy-writer,modern-writer",
+        "operation": "rows_cells",
+        "scope": "traversal_only",
+        "source": "buffer",
+        "semantic_case_id": "csv2.traversal.rows-cells.v1",
+        "byte_basis": "input_corpus",
+        "bytes": "4",
+        "iterations": "1",
+        "elapsed_ns": str(elapsed),
+        "rows": "1",
+        "cells": "2",
+        "row_bytes": "3",
+        "checksum": "42",
+        "timed_reader_steps": "0",
+        "timed_checksum_mix_calls": "0",
+    }
+
+
+class RunnerTests(unittest.TestCase):
+    def test_runtime_boundaries_prevent_completed_publication_after_drift(self) -> None:
+        import test_protocol
+
+        for level, drift in (("controlled", "before"), ("controlled", "after"),
+                             ("controlled", None), ("exploratory", None)):
+            with self.subTest(level=level, drift=drift), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory).resolve()
+                executable = root / "driver"
+                executable.write_text("fixture", encoding="utf-8")
+                (root / "input.csv").write_text("a,b\n", encoding="utf-8")
+                adapter = root / "benchmark/compare/common_driver.cpp"
+                adapter.parent.mkdir(parents=True)
+                adapter.write_text("adapter", encoding="utf-8")
+                profile = {"artifact": runner.artifacts.metadata(executable),
+                           "observation": {"process_affinity": [2]}}
+                built = test_protocol.controlled_comparison_report()["baseline"]["build"]
+                built.update(output={"path": str(executable)}, capabilities=["legacy-reader", "legacy-writer"])
+                built["header_export"].update(root=str(root), files=[])
+                owned = {"baseline": built, "candidate": built,
+                         "adapter": {"root": str(root), "commit": "e" * 40}}
+                description = test_protocol.comparison_report()["baseline"]["description"]
+                description.update(revision=built["revision"],
+                                   _command='["benchmark", "--describe"]', _stdout="", _stderr="")
+                description["operations"] += ",legacy_writer_raw"
+                description["operation_contracts"] += (
+                    ";legacy_writer_raw:writer_only:buffer:"
+                    "csv2.writer.legacy-raw.v1:input_corpus")
+                events = []
+
+                def check(binding):
+                    self.assertEqual(binding, profile)
+                    phase = "after" if "sample" in events else "before"
+                    events.append(phase)
+                    if drift == phase:
+                        raise RuntimeError("runtime state changed: governor")
+
+                def sample(*args, **kwargs):
+                    events.append("sample")
+                    return {}
+
+                output = root / "report.json"
+                argv = ["run_suite", "--baseline-ref", "HEAD", "--candidate-ref", "HEAD",
+                        "--compiler-executable", sys.executable, "--compiler-flags=-O3",
+                        "--datasets", str(root), "--operations", "rows_cells", "--sources", "buffer",
+                        "--mode", "aa", "--runs", "20", "--evidence-level", level,
+                        "--output", str(output)]
+                if level == "controlled":
+                    argv += ["--cpu-affinity", "2", "--machine-profile", str(executable)]
+                with contextlib.ExitStack() as stack:
+                    stack.enter_context(unittest.mock.patch.object(sys, "argv", argv))
+                    for obj, name, kwargs in (
+                        (runner.platform, "system", {"return_value": "Linux"}),
+                        (runner.os, "sched_getaffinity", {"return_value": {2}, "create": True}),
+                        (runner.builds, "build_common_pair", {"return_value": owned}),
+                        (runner.builds, "assert_compatible_builds", {}),
+                        (runner.machine, "load", {"return_value": profile}),
+                        (runner.machine, "verify_runtime", {"side_effect": check}),
+                        (runner, "describe", {"return_value": description}),
+                        (runner, "measure_case", {"side_effect": sample}),
+                        (runner.wire, "validate_comparison_report", {}),
+                        (runner.wire, "validate_artifact_manifest", {}),
+                    ):
+                        stack.enter_context(unittest.mock.patch.object(obj, name, **kwargs))
+                    if drift:
+                        with self.assertRaisesRegex(RuntimeError, "runtime state changed"):
+                            runner.main()
+                    else:
+                        runner.main()
+                report = json.loads(output.read_text(encoding="utf-8"))
+                self.assertEqual(report["status"], "failed" if drift else "completed")
+                self.assertEqual(output.with_suffix(".json.sha256.json").exists(), drift is None)
+                self.assertEqual(events, ["before"] if drift == "before" else
+                                 ["before", "sample", "after"] if level == "controlled" else ["sample"])
+
+    def test_mode_invariants_distinguish_calibration_from_comparison(self) -> None:
+        runner.validate_mode_invariants(
+            "aa", "same", "same", "a" * 64, "a" * 64, "b" * 64, "b" * 64
+        )
+        with self.assertRaisesRegex(ValueError, "same revision"):
+            runner.validate_mode_invariants(
+                "aa", "base", "candidate", "a" * 64, "a" * 64, None, None
+            )
+        with self.assertRaisesRegex(ValueError, "different revisions"):
+            runner.validate_mode_invariants(
+                "compare", "same", "same", "a" * 64, "b" * 64, None, None
+            )
+        with self.assertRaisesRegex(ValueError, "build identity"):
+            runner.validate_mode_invariants(
+                "aa", "same", "same", "a" * 64, "a" * 64, "b" * 64, "c" * 64
+            )
+    def test_parser_rejects_old_common_protocol(self) -> None:
+        line = " ".join(f"{key}={value}" for key, value in result("x").items())
+        self.assertEqual(runner.parse_output(line)["revision"], "x")
+        with self.assertRaisesRegex(RuntimeError, "unsupported benchmark protocol"):
+            runner.parse_output(line.replace("csv2-common-v5", "csv2-common-v4"))
+
+    def test_parser_rejects_timer_scope_audit_driver(self) -> None:
+        value = result("x")
+        value["instrumentation"] = "timer_scope_audit"
+        line = " ".join(f"{key}={field}" for key, field in value.items())
+        with self.assertRaisesRegex(RuntimeError, "instrumentation=none"):
+            runner.parse_output(line)
+
+    def test_selection_rejects_unknown_duplicate_and_empty_entries(self) -> None:
+        with self.assertRaisesRegex(ValueError, "unknown"):
+            runner.selected("missing", ("one", "two"))
+        with self.assertRaisesRegex(ValueError, "duplicates"):
+            runner.selected("one,one", ("one", "two"))
+        with self.assertRaisesRegex(ValueError, "empty"):
+            runner.selected("one,", ("one", "two"))
+
+    def test_invalid_selection_fails_before_owned_build(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            datasets = root / "datasets"
+            datasets.mkdir()
+            (datasets / "input.csv").write_text("a,b\n", encoding="utf-8")
+            arguments = [
+                "run_suite.py",
+                "--repository", str(Path.cwd()),
+                "--baseline-ref", "HEAD",
+                "--candidate-ref", "HEAD",
+                "--compiler-executable", sys.executable,
+                "--compiler-flags", "-O3",
+                "--datasets", str(datasets),
+                "--operations", "missing",
+                "--allow-uncalibrated",
+                "--output", str(root / "report.json"),
+            ]
+            with (
+                unittest.mock.patch.object(sys, "argv", arguments),
+                unittest.mock.patch.object(runner.builds, "build_common_pair") as build_pair,
+                contextlib.redirect_stderr(io.StringIO()),
+                self.assertRaises(SystemExit) as raised,
+            ):
+                runner.main()
+        self.assertEqual(raised.exception.code, 2)
+        build_pair.assert_not_called()
+
+    def test_incompatible_source_fails_before_owned_build(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            datasets = root / "datasets"
+            datasets.mkdir()
+            (datasets / "input.csv").write_text("a,b\n", encoding="utf-8")
+            arguments = [
+                "run_suite.py",
+                "--repository", str(Path.cwd()),
+                "--baseline-ref", "HEAD",
+                "--candidate-ref", "HEAD",
+                "--compiler-executable", sys.executable,
+                "--compiler-flags", "-O3",
+                "--datasets", str(datasets),
+                "--operations", "legacy_mmap_rows_cells",
+                "--sources", "buffer",
+                "--allow-uncalibrated",
+                "--output", str(root / "report.json"),
+            ]
+            with (
+                unittest.mock.patch.object(sys, "argv", arguments),
+                unittest.mock.patch.object(runner.builds, "build_common_pair") as build_pair,
+                contextlib.redirect_stderr(io.StringIO()),
+                self.assertRaises(SystemExit) as raised,
+            ):
+                runner.main()
+        self.assertEqual(raised.exception.code, 2)
+        build_pair.assert_not_called()
+
+    def test_noncanonical_capabilities_are_rejected_before_measurement(self) -> None:
+        import test_protocol
+
+        for encoded in ("legacy-writer,legacy-reader", "legacy-reader",
+                        "legacy-reader,legacy-writer,legacy-writer", "", "unknown"):
+            with self.subTest(capabilities=encoded), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                executable = root / "driver"
+                executable.write_text("fixture", encoding="utf-8")
+                (root / "input.csv").write_text("a,b\n", encoding="utf-8")
+                description = test_protocol.comparison_report()["baseline"]["description"]
+                description["capabilities"] = encoded
+                if "legacy-writer" in encoded:
+                    description["operations"] += ",legacy_writer_raw"
+                    description["operation_contracts"] += (
+                        ";legacy_writer_raw:writer_only:buffer:"
+                        "csv2.writer.legacy-raw.v1:input_corpus")
+                output = root / "report.json"
+                argv = ["run_suite", "--external-artifacts", "--baseline", str(executable),
+                        "--candidate", str(executable), "--baseline-revision", "candidate",
+                        "--candidate-revision", "candidate", "--compiler-flags=-O3",
+                        "--datasets", str(root), "--operations", "rows_cells", "--sources", "buffer",
+                        "--mode", "aa", "--output", str(output)]
+                with (unittest.mock.patch.object(sys, "argv", argv),
+                      unittest.mock.patch.object(runner, "describe", return_value=description),
+                      unittest.mock.patch.object(runner, "measure_case") as measure,
+                      contextlib.redirect_stderr(io.StringIO()) as stderr,
+                      self.assertRaises(SystemExit) as raised):
+                    runner.main()
+                self.assertEqual(raised.exception.code, 2)
+                self.assertIn("capabilities are malformed", stderr.getvalue())
+                measure.assert_not_called()
+                self.assertFalse(output.exists())
+
+    def test_measurement_alternates_launch_order_and_preserves_semantics(self) -> None:
+        launches: list[str] = []
+
+        def invoke(executable, operation, dataset, source, iterations):
+            side = str(executable)
+            launches.append(side)
+            value = result("base" if side == "base" else "candidate", 100)
+            value["_stdout"] = " ".join(
+                f"{key}={field}"
+                for key, field in value.items()
+                if not key.startswith("_")
+            )
+            value["_stderr"] = ""
+            value["_command"] = json.dumps([side])
+            return value
+
+        with tempfile.TemporaryDirectory() as directory:
+            dataset = Path(directory) / "data.csv"
+            dataset.write_bytes(b"a,b\n")
+            case = runner.measure_case(
+                Path("base"),
+                Path("candidate"),
+                "rows_cells",
+                dataset,
+                "buffer",
+                runs=3,
+                iterations=1,
+                warmups=3,
+                expected_scope="traversal_only",
+                expected_semantic_case_id="csv2.traversal.rows-cells.v1",
+                expected_byte_basis="input_corpus",
+                calibration_noise=0.0,
+                baseline_revision="base",
+                candidate_revision="candidate",
+                invoke_fn=invoke,
+            )
+        self.assertEqual(launches, ["base", "candidate", "candidate", "base", "base", "candidate"] * 2)
+        self.assertEqual(
+            [(launch["phase"], launch["round"], launch["order"], launch["side"])
+             for launch in case["launches"]],
+            [
+                ("warmup", 0, 0, "baseline"), ("warmup", 0, 1, "candidate"),
+                ("warmup", 1, 0, "candidate"), ("warmup", 1, 1, "baseline"),
+                ("warmup", 2, 0, "baseline"), ("warmup", 2, 1, "candidate"),
+                ("sample", 0, 0, "baseline"), ("sample", 0, 1, "candidate"),
+                ("sample", 1, 0, "candidate"), ("sample", 1, 1, "baseline"),
+                ("sample", 2, 0, "baseline"), ("sample", 2, 1, "candidate"),
+            ],
+        )
+        self.assertFalse(case["regression"])
+
+    def test_writer_only_result_rejects_timed_reader_work(self) -> None:
+        writer_result = result("candidate")
+        writer_result.update(
+            operation="writer_raw_direct",
+            scope="writer_only",
+            timed_reader_steps="1",
+        )
+        with self.assertRaisesRegex(RuntimeError, "timer-scope audit work"):
+            runner.validate_result(
+                writer_result,
+                "writer_raw_direct",
+                "buffer",
+                1,
+                expected_scope="writer_only",
+                expected_semantic_case_id="csv2.traversal.rows-cells.v1",
+                expected_byte_basis="input_corpus",
+                expected_bytes=4,
+                expected_revision="candidate",
+            )
+
+    def test_calibration_rejects_v3_schema(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "calibration.json"
+            path.write_text(
+                json.dumps(
+                    {"schema": "csv2-benchmark-report-v3", "mode": "aa", "status": "completed"}
+                ),
+                encoding="utf-8",
+            )
+            with self.assertRaisesRegex(RuntimeError, "completed A/A"):
+                runner.load_calibration(path)
+
+    def test_calibration_runs_full_semantic_validation(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "calibration.json"
+            path.write_text(
+                json.dumps(
+                    {
+                        "schema": "csv2-benchmark-report-v7",
+                        "mode": "aa",
+                        "status": "completed",
+                    }
+                ),
+                encoding="utf-8",
+            )
+            with unittest.mock.patch.object(
+                runner.wire,
+                "validate_comparison_report",
+                side_effect=RuntimeError("incomplete controlled evidence"),
+            ) as validator:
+                with self.assertRaisesRegex(RuntimeError, "incomplete controlled evidence"):
+                    runner.load_calibration(path)
+            validator.assert_called_once()
+
+    def test_calibration_rejects_sampling_and_affinity_mismatches(self) -> None:
+        calibration = {
+            "artifact_mode": "external",
+            "compiler": "c++",
+            "compiler_flags": "-O3",
+            "runs": 20,
+            "iterations_per_run": 10,
+            "warmups": 3,
+            "host": {
+                "platform": "linux",
+                "node": "host",
+                "machine": "x86_64",
+                "processor": "cpu",
+                "cpu_model": "model",
+                "cpu_model_source": "test",
+                "logical_cpus": 2,
+                "process_affinity": [0],
+                "python": "3.10",
+            },
+            "runner": {"sha256": "runner"},
+            "adapter_source": {"sha256": "adapter"},
+            "candidate": {"artifact": {"sha256": "candidate"}},
+            "datasets": [],
+        }
+        runner.validate_calibration_context(calibration, calibration)
+        for field in ("runs", "warmups", "iterations_per_run", "process_affinity"):
+            with self.subTest(field=field):
+                current = json.loads(json.dumps(calibration))
+                if field == "process_affinity":
+                    current["host"][field] = [1]
+                else:
+                    current[field] += 1
+                with self.assertRaisesRegex(RuntimeError, field):
+                    runner.validate_calibration_context(calibration, current)
+
+    def test_calibration_rejects_tool_bundle_drift(self) -> None:
+        calibration = {
+            "artifact_mode": "external",
+            "compiler": "c++",
+            "compiler_flags": "-O3",
+            "runs": 20,
+            "iterations_per_run": 10,
+            "warmups": 3,
+            "host": {
+                "platform": "linux",
+                "node": "host",
+                "machine": "x86_64",
+                "processor": "cpu",
+                "cpu_model": "model",
+                "cpu_model_source": "test",
+                "logical_cpus": 2,
+                "process_affinity": [0],
+                "python": "3.10",
+            },
+            "runner": {"sha256": "old-tool-bundle"},
+            "adapter_source": {"sha256": "adapter"},
+            "candidate": {"artifact": {"sha256": "candidate"}},
+            "datasets": [],
+        }
+        current = json.loads(json.dumps(calibration))
+        current["runner"]["sha256"] = "new-tool-bundle"
+        with self.assertRaisesRegex(RuntimeError, "runner.sha256"):
+            runner.validate_calibration_context(calibration, current)
+
+
+if __name__ == "__main__":
+    unittest.main()

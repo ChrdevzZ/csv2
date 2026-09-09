@@ -374,7 +374,6 @@ bool parse_integer(const char *first, const char *last, Integer &output, convers
 // #include <csv2/detail/config.hpp>
 
 #include <cstddef>
-#include <iterator>
 #include <type_traits>
 #include <utility>
 
@@ -388,7 +387,10 @@ template <typename Container>
 CSV2_FORCE_INLINE auto reserve_for_append_impl(Container &output, std::size_t additional,
                                                output_priority<2>)
     -> decltype(output.reserve(output.size() + additional), void()) {
-  output.reserve(output.size() + additional);
+  // Preserve the container's amortized growth when accumulating multiple extractions.
+  if (output.size() == 0) {
+    output.reserve(additional);
+  }
 }
 
 template <typename Container>
@@ -512,33 +514,6 @@ CSV2_FORCE_INLINE void append_decoded(Container &output, const char *buffer, std
                       std::integral_constant<bool, supports_push_back<Container>::value>());
 }
 
-template <typename Container> class container_output_iterator {
-public:
-  using iterator_category = std::output_iterator_tag;
-  using value_type = void;
-  using difference_type = void;
-  using pointer = void;
-  using reference = void;
-
-  explicit container_output_iterator(Container &output) : output_(&output) {}
-
-  container_output_iterator &operator=(char value) {
-    append_range(*output_, &value, &value + 1);
-    return *this;
-  }
-  container_output_iterator &operator*() { return *this; }
-  container_output_iterator &operator++() { return *this; }
-  container_output_iterator operator++(int) { return *this; }
-
-private:
-  Container *output_;
-};
-
-template <typename Container>
-container_output_iterator<Container> container_inserter(Container &output) {
-  return container_output_iterator<Container>(output);
-}
-
 template <typename OutputIt>
 OutputIt copy_chars(const char *first, const char *last, OutputIt output) {
   while (first != last) {
@@ -656,8 +631,9 @@ record_bounds find_record_bounds(const char *buffer, std::size_t buffer_size,
     return {content_end, newline_index + 1};
   }
 
-  bool quote_opened = false;
-  for (std::size_t i = start; i < buffer_size; ++i) {
+  // The prefix before the first quote contains neither quotes nor a record separator.
+  bool quote_opened = true;
+  for (std::size_t i = static_cast<std::size_t>(quote - buffer) + 1; i < buffer_size; ++i) {
     if (buffer[i] == QuoteCharacter::value) {
       if (quote_opened && i + 1 < buffer_size && buffer[i + 1] == QuoteCharacter::value) {
         ++i;
@@ -896,38 +872,17 @@ bool validate_csv(const char *buffer, std::size_t size,
  * OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
  */
 
-#ifndef MIO_MMAP_HEADER
-#define MIO_MMAP_HEADER
-
-// #include "mio/page.hpp"
-/* Copyright 2017 https://github.com/mandreyel
- *
- * Permission is hereby granted, free of charge, to any person obtaining a copy of this
- * software and associated documentation files (the "Software"), to deal in the Software
- * without restriction, including without limitation the rights to use, copy, modify,
- * merge, publish, distribute, sublicense, and/or sell copies of the Software, and to
- * permit persons to whom the Software is furnished to do so, subject to the following
- * conditions:
- *
- * The above copyright notice and this permission notice shall be included in all copies
- * or substantial portions of the Software.
- *
- * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED,
- * INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A
- * PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT
- * HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF
- * CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE
- * OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
- */
-
-#ifndef MIO_PAGE_HEADER
-#define MIO_PAGE_HEADER
-
 #ifdef _WIN32
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
 #include <windows.h>
 #else
 #include <unistd.h>
 #endif
+
+#ifndef MIO_PAGE_HEADER
+#define MIO_PAGE_HEADER
 
 namespace mio {
 
@@ -972,8 +927,31 @@ inline size_t make_offset_page_aligned(size_t offset) noexcept {
 
 #endif // MIO_PAGE_HEADER
 
+#ifndef MIO_MMAP_HEADER
+#define MIO_MMAP_HEADER
+
+// #include "mio/page.hpp"
+/* Copyright 2017 https://github.com/mandreyel
+ *
+ * Permission is hereby granted, free of charge, to any person obtaining a copy of this
+ * software and associated documentation files (the "Software"), to deal in the Software
+ * without restriction, including without limitation the rights to use, copy, modify,
+ * merge, publish, distribute, sublicense, and/or sell copies of the Software, and to
+ * permit persons to whom the Software is furnished to do so, subject to the following
+ * conditions:
+ *
+ * The above copyright notice and this permission notice shall be included in all copies
+ * or substantial portions of the Software.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED,
+ * INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A
+ * PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT
+ * HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF
+ * CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE
+ * OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+ */
+
 #include <cstdint>
-// #include <csv2/detail/config.hpp>
 #include <iterator>
 #include <limits>
 #include <string>
@@ -984,15 +962,6 @@ inline size_t make_offset_page_aligned(size_t offset) noexcept {
 #if CSV2_HAS_FILESYSTEM
 #include <filesystem>
 #endif
-
-#ifdef _WIN32
-#ifndef WIN32_LEAN_AND_MEAN
-#define WIN32_LEAN_AND_MEAN
-#endif // WIN32_LEAN_AND_MEAN
-#include <windows.h>
-#else // ifdef _WIN32
-#define INVALID_HANDLE_VALUE -1
-#endif // ifdef _WIN32
 
 namespace mio {
 
@@ -1008,7 +977,11 @@ using file_handle_type = int;
 
 // This value represents an invalid file handle type. This can be used to
 // determine whether `basic_mmap::file_handle` is valid, for example.
+#ifdef _WIN32
 const static file_handle_type invalid_handle = INVALID_HANDLE_VALUE;
+#else
+const static file_handle_type invalid_handle = -1;
+#endif
 
 // Windows file-mapping APIs use nullptr rather than INVALID_HANDLE_VALUE.
 #ifdef _WIN32
@@ -1049,7 +1022,7 @@ private:
   // Windows systems the file handle is necessary to retrieve a file mapping
   // handle, but any subsequent operations on the mapped region must be done
   // through the latter.
-  handle_type file_handle_ = INVALID_HANDLE_VALUE;
+  handle_type file_handle_ = invalid_handle;
 #ifdef _WIN32
   handle_type file_mapping_handle_ = invalid_mapping_handle;
 #endif
@@ -1137,10 +1110,9 @@ public:
   bool is_mapped() const noexcept;
 
   /**
-   * `size` and `length` both return the logical length, i.e. the number of bytes
-   * user requested to be mapped, while `mapped_length` returns the actual number of
-   * bytes that were mapped which is a multiple of the underlying operating system's
-   * page allocation granularity.
+   * size() and length() report the requested byte count. mapped_length() also
+   * includes the leading offset adjustment from the aligned mapping address.
+   * It is not a page-rounded residency or allocation size.
    */
   size_type size() const noexcept { return length(); }
   size_type length() const noexcept { return length_; }
@@ -1153,9 +1125,9 @@ public:
    * Returns a pointer to the first requested byte, or `nullptr` if no memory mapping
    * exists.
    */
-  template <access_mode A = AccessMode,
-            typename = typename std::enable_if<A == access_mode::write>::type>
-  pointer data() noexcept {
+  template <access_mode A = AccessMode, typename = void>
+  typename std::enable_if<A == AccessMode && A == access_mode::write, pointer>::type
+  data() noexcept {
     return data_;
   }
   const_pointer data() const noexcept { return data_; }
@@ -1164,9 +1136,9 @@ public:
    * Returns an iterator to the first requested byte, if a valid memory mapping
    * exists, otherwise this function call is undefined behaviour.
    */
-  template <access_mode A = AccessMode,
-            typename = typename std::enable_if<A == access_mode::write>::type>
-  iterator begin() noexcept {
+  template <access_mode A = AccessMode, typename = void>
+  typename std::enable_if<A == AccessMode && A == access_mode::write, iterator>::type
+  begin() noexcept {
     return data();
   }
   const_iterator begin() const noexcept { return data(); }
@@ -1176,9 +1148,9 @@ public:
    * Returns an iterator one past the last requested byte, if a valid memory mapping
    * exists, otherwise this function call is undefined behaviour.
    */
-  template <access_mode A = AccessMode,
-            typename = typename std::enable_if<A == access_mode::write>::type>
-  iterator end() noexcept {
+  template <access_mode A = AccessMode, typename = void>
+  typename std::enable_if<A == AccessMode && A == access_mode::write, iterator>::type
+  end() noexcept {
     return data() + length();
   }
   const_iterator end() const noexcept { return data() + length(); }
@@ -1189,9 +1161,9 @@ public:
    * memory mapping exists, otherwise this function call is undefined
    * behaviour.
    */
-  template <access_mode A = AccessMode,
-            typename = typename std::enable_if<A == access_mode::write>::type>
-  reverse_iterator rbegin() noexcept {
+  template <access_mode A = AccessMode, typename = void>
+  typename std::enable_if<A == AccessMode && A == access_mode::write, reverse_iterator>::type
+  rbegin() noexcept {
     return reverse_iterator(end());
   }
   const_reverse_iterator rbegin() const noexcept { return const_reverse_iterator(end()); }
@@ -1201,9 +1173,9 @@ public:
    * Returns a reverse iterator past the first mapped byte, if a valid memory
    * mapping exists, otherwise this function call is undefined behaviour.
    */
-  template <access_mode A = AccessMode,
-            typename = typename std::enable_if<A == access_mode::write>::type>
-  reverse_iterator rend() noexcept {
+  template <access_mode A = AccessMode, typename = void>
+  typename std::enable_if<A == AccessMode && A == access_mode::write, reverse_iterator>::type
+  rend() noexcept {
     return reverse_iterator(begin());
   }
   const_reverse_iterator rend() const noexcept { return const_reverse_iterator(begin()); }
@@ -1214,18 +1186,19 @@ public:
    * by `data`). If this is invoked when no valid memory mapping has been created
    * prior to this call, undefined behaviour ensues.
    */
-  reference operator[](const size_type i) noexcept { return data_[i]; }
+  typename std::conditional<AccessMode == access_mode::write, reference, const_reference>::type
+  operator[](const size_type i) noexcept {
+    return data_[i];
+  }
   const_reference operator[](const size_type i) const noexcept { return data_[i]; }
 
   /**
-   * Establishes a memory mapping with AccessMode. If the mapping is unsuccesful, the
-   * reason is reported via `error` and the object remains in a state as if this
-   * function hadn't been called.
+   * Establishes a memory mapping with AccessMode. On failure, `error` is set
+   * and any previous mapping is preserved. A successful call replaces it.
    *
    * `path`, which must be a path to an existing file, is used to retrieve a file
    * handle (which is closed when the object destructs or `unmap` is called), which is
-   * then used to memory map the requested region. Upon failure, `error` is set to
-   * indicate the reason and the object remains in an unmapped state.
+   * then used to memory map the requested region.
    *
    * `offset` is the number of bytes, relative to the start of the file, where the
    * mapping should begin. When specifying it, there is no need to worry about
@@ -1242,14 +1215,12 @@ public:
            std::error_code &error);
 
   /**
-   * Establishes a memory mapping with AccessMode. If the mapping is unsuccesful, the
-   * reason is reported via `error` and the object remains in a state as if this
-   * function hadn't been called.
+   * Establishes a memory mapping with AccessMode. On failure, `error` is set
+   * and any previous mapping is preserved. A successful call replaces it.
    *
    * `path`, which must be a path to an existing file, is used to retrieve a file
    * handle (which is closed when the object destructs or `unmap` is called), which is
-   * then used to memory map the requested region. Upon failure, `error` is set to
-   * indicate the reason and the object remains in an unmapped state.
+   * then used to memory map the requested region.
    *
    * The entire file is mapped.
    */
@@ -1258,13 +1229,11 @@ public:
   }
 
   /**
-   * Establishes a memory mapping with AccessMode. If the mapping is
-   * unsuccesful, the reason is reported via `error` and the object remains in
-   * a state as if this function hadn't been called.
+   * Establishes a memory mapping with AccessMode. On failure, `error` is set
+   * and any previous mapping is preserved. A successful call replaces it.
    *
    * `handle`, which must be a valid file handle, which is used to memory map the
-   * requested region. Upon failure, `error` is set to indicate the reason and the
-   * object remains in an unmapped state.
+   * requested region.
    *
    * `offset` is the number of bytes, relative to the start of the file, where the
    * mapping should begin. When specifying it, there is no need to worry about
@@ -1280,13 +1249,11 @@ public:
            std::error_code &error);
 
   /**
-   * Establishes a memory mapping with AccessMode. If the mapping is
-   * unsuccesful, the reason is reported via `error` and the object remains in
-   * a state as if this function hadn't been called.
+   * Establishes a memory mapping with AccessMode. On failure, `error` is set
+   * and any previous mapping is preserved. A successful call replaces it.
    *
    * `handle`, which must be a valid file handle, which is used to memory map the
-   * requested region. Upon failure, `error` is set to indicate the reason and the
-   * object remains in an unmapped state.
+   * requested region.
    *
    * The entire file is mapped.
    */
@@ -1309,7 +1276,8 @@ public:
 
   /** Flushes the memory mapped page to disk. Errors are reported via `error`. */
   template <access_mode A = AccessMode>
-  typename std::enable_if<A == access_mode::write, void>::type sync(std::error_code &error);
+  typename std::enable_if<A == AccessMode && A == access_mode::write, void>::type
+  sync(std::error_code &error);
 
   /**
    * All operators compare the address of the first byte and size of the two mapped
@@ -1318,7 +1286,7 @@ public:
 
 private:
   template <access_mode A = AccessMode,
-            typename = typename std::enable_if<A == access_mode::write>::type>
+            typename = typename std::enable_if<A == AccessMode && A == access_mode::write>::type>
   pointer get_mapping_start() noexcept {
     return !data() ? nullptr : data() - mapping_offset();
   }
@@ -2019,7 +1987,7 @@ void basic_mmap<AccessMode, ByteT>::map(const handle_type handle, const size_typ
 
 template <access_mode AccessMode, typename ByteT>
 template <access_mode A>
-typename std::enable_if<A == access_mode::write, void>::type
+typename std::enable_if<A == AccessMode && A == access_mode::write, void>::type
 basic_mmap<AccessMode, ByteT>::sync(std::error_code &error) {
   error.clear();
   if (!is_open()) {
@@ -2185,57 +2153,6 @@ bool operator>=(const basic_mmap<AccessMode, ByteT> &a, const basic_mmap<AccessM
  * OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
  */
 
-#ifndef MIO_PAGE_HEADER
-#define MIO_PAGE_HEADER
-
-#ifdef _WIN32
-#include <windows.h>
-#else
-#include <unistd.h>
-#endif
-
-namespace mio {
-
-/**
- * This is used by `basic_mmap` to determine whether to create a read-only or
- * a read-write memory mapping.
- */
-enum class access_mode { read, write };
-
-/**
- * Determines the operating system's page allocation granularity.
- *
- * On the first call to this function, it invokes the operating system specific syscall
- * to determine the page size, caches the value, and returns it. Any subsequent call to
- * this function serves the cached value, so no further syscalls are made.
- */
-inline size_t page_size() {
-  static const size_t page_size = [] {
-#ifdef _WIN32
-    SYSTEM_INFO SystemInfo;
-    GetSystemInfo(&SystemInfo);
-    return SystemInfo.dwAllocationGranularity;
-#else
-    return sysconf(_SC_PAGE_SIZE);
-#endif
-  }();
-  return page_size;
-}
-
-/**
- * Alligns `offset` to the operating's system page size such that it subtracts the
- * difference until the nearest page boundary before `offset`, or does nothing if
- * `offset` is already page aligned.
- */
-inline size_t make_offset_page_aligned(size_t offset) noexcept {
-  const size_t page_size_ = page_size();
-  // Use integer division to round down to the nearest page alignment.
-  return offset / page_size_ * page_size_;
-}
-
-} // namespace mio
-
-#endif // MIO_PAGE_HEADER
 /* Copyright 2017 https://github.com/mandreyel
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy of this
@@ -2382,10 +2299,9 @@ public:
   bool empty() const noexcept { return !pimpl_ || pimpl_->empty(); }
 
   /**
-   * `size` and `length` both return the logical length, i.e. the number of bytes
-   * user requested to be mapped, while `mapped_length` returns the actual number of
-   * bytes that were mapped which is a multiple of the underlying operating system's
-   * page allocation granularity.
+   * size() and length() report the requested byte count. mapped_length() also
+   * includes the leading offset adjustment from the aligned mapping address.
+   * It is not a page-rounded residency or allocation size.
    */
   size_type size() const noexcept { return pimpl_ ? pimpl_->length() : 0; }
   size_type length() const noexcept { return pimpl_ ? pimpl_->length() : 0; }
@@ -2395,10 +2311,10 @@ public:
    * Returns a pointer to the first requested byte, or `nullptr` if no memory mapping
    * exists.
    */
-  template <access_mode A = AccessMode,
-            typename = typename std::enable_if<A == access_mode::write>::type>
-  pointer data() noexcept {
-    return pimpl_->data();
+  template <access_mode A = AccessMode, typename = void>
+  typename std::enable_if<A == AccessMode && A == access_mode::write, pointer>::type
+  data() noexcept {
+    return pimpl_ ? pimpl_->data() : nullptr;
   }
   const_pointer data() const noexcept { return pimpl_ ? pimpl_->data() : nullptr; }
 
@@ -2406,7 +2322,11 @@ public:
    * Returns an iterator to the first requested byte, if a valid memory mapping
    * exists, otherwise this function call is undefined behaviour.
    */
-  iterator begin() noexcept { return pimpl_->begin(); }
+  template <access_mode A = AccessMode, typename = void>
+  typename std::enable_if<A == AccessMode && A == access_mode::write, iterator>::type
+  begin() noexcept {
+    return pimpl_->begin();
+  }
   const_iterator begin() const noexcept { return pimpl_->begin(); }
   const_iterator cbegin() const noexcept { return pimpl_->cbegin(); }
 
@@ -2414,9 +2334,9 @@ public:
    * Returns an iterator one past the last requested byte, if a valid memory mapping
    * exists, otherwise this function call is undefined behaviour.
    */
-  template <access_mode A = AccessMode,
-            typename = typename std::enable_if<A == access_mode::write>::type>
-  iterator end() noexcept {
+  template <access_mode A = AccessMode, typename = void>
+  typename std::enable_if<A == AccessMode && A == access_mode::write, iterator>::type
+  end() noexcept {
     return pimpl_->end();
   }
   const_iterator end() const noexcept { return pimpl_->end(); }
@@ -2427,9 +2347,9 @@ public:
    * memory mapping exists, otherwise this function call is undefined
    * behaviour.
    */
-  template <access_mode A = AccessMode,
-            typename = typename std::enable_if<A == access_mode::write>::type>
-  reverse_iterator rbegin() noexcept {
+  template <access_mode A = AccessMode, typename = void>
+  typename std::enable_if<A == AccessMode && A == access_mode::write, reverse_iterator>::type
+  rbegin() noexcept {
     return pimpl_->rbegin();
   }
   const_reverse_iterator rbegin() const noexcept { return pimpl_->rbegin(); }
@@ -2439,9 +2359,9 @@ public:
    * Returns a reverse iterator past the first mapped byte, if a valid memory
    * mapping exists, otherwise this function call is undefined behaviour.
    */
-  template <access_mode A = AccessMode,
-            typename = typename std::enable_if<A == access_mode::write>::type>
-  reverse_iterator rend() noexcept {
+  template <access_mode A = AccessMode, typename = void>
+  typename std::enable_if<A == AccessMode && A == access_mode::write, reverse_iterator>::type
+  rend() noexcept {
     return pimpl_->rend();
   }
   const_reverse_iterator rend() const noexcept { return pimpl_->rend(); }
@@ -2452,18 +2372,19 @@ public:
    * by `data`). If this is invoked when no valid memory mapping has been created
    * prior to this call, undefined behaviour ensues.
    */
-  reference operator[](const size_type i) noexcept { return (*pimpl_)[i]; }
+  typename std::conditional<AccessMode == access_mode::write, reference, const_reference>::type
+  operator[](const size_type i) noexcept {
+    return (*pimpl_)[i];
+  }
   const_reference operator[](const size_type i) const noexcept { return (*pimpl_)[i]; }
 
   /**
-   * Establishes a memory mapping with AccessMode. If the mapping is unsuccesful, the
-   * reason is reported via `error` and the object remains in a state as if this
-   * function hadn't been called.
+   * Establishes a memory mapping with AccessMode. On failure, `error` is set
+   * and any previous mapping is preserved. A successful call replaces it.
    *
    * `path`, which must be a path to an existing file, is used to retrieve a file
    * handle (which is closed when the object destructs or `unmap` is called), which is
-   * then used to memory map the requested region. Upon failure, `error` is set to
-   * indicate the reason and the object remains in an unmapped state.
+   * then used to memory map the requested region.
    *
    * `offset` is the number of bytes, relative to the start of the file, where the
    * mapping should begin. When specifying it, there is no need to worry about
@@ -2482,14 +2403,12 @@ public:
   }
 
   /**
-   * Establishes a memory mapping with AccessMode. If the mapping is unsuccesful, the
-   * reason is reported via `error` and the object remains in a state as if this
-   * function hadn't been called.
+   * Establishes a memory mapping with AccessMode. On failure, `error` is set
+   * and any previous mapping is preserved. A successful call replaces it.
    *
    * `path`, which must be a path to an existing file, is used to retrieve a file
    * handle (which is closed when the object destructs or `unmap` is called), which is
-   * then used to memory map the requested region. Upon failure, `error` is set to
-   * indicate the reason and the object remains in an unmapped state.
+   * then used to memory map the requested region.
    *
    * The entire file is mapped.
    */
@@ -2498,13 +2417,11 @@ public:
   }
 
   /**
-   * Establishes a memory mapping with AccessMode. If the mapping is unsuccesful, the
-   * reason is reported via `error` and the object remains in a state as if this
-   * function hadn't been called.
+   * Establishes a memory mapping with AccessMode. On failure, `error` is set
+   * and any previous mapping is preserved. A successful call replaces it.
    *
    * `handle`, which must be a valid file handle, which is used to memory map the
-   * requested region. Upon failure, `error` is set to indicate the reason and the
-   * object remains in an unmapped state.
+   * requested region.
    *
    * `offset` is the number of bytes, relative to the start of the file, where the
    * mapping should begin. When specifying it, there is no need to worry about
@@ -2522,13 +2439,11 @@ public:
   }
 
   /**
-   * Establishes a memory mapping with AccessMode. If the mapping is unsuccesful, the
-   * reason is reported via `error` and the object remains in a state as if this
-   * function hadn't been called.
+   * Establishes a memory mapping with AccessMode. On failure, `error` is set
+   * and any previous mapping is preserved. A successful call replaces it.
    *
    * `handle`, which must be a valid file handle, which is used to memory map the
-   * requested region. Upon failure, `error` is set to indicate the reason and the
-   * object remains in an unmapped state.
+   * requested region.
    *
    * The entire file is mapped.
    */
@@ -2553,11 +2468,13 @@ public:
   void swap(basic_shared_mmap &other) { pimpl_.swap(other.pimpl_); }
 
   /** Flushes the memory mapped page to disk. Errors are reported via `error`. */
-  template <access_mode A = AccessMode,
-            typename = typename std::enable_if<A == access_mode::write>::type>
-  void sync(std::error_code &error) {
+  template <access_mode A = AccessMode, typename = void>
+  typename std::enable_if<A == AccessMode && A == access_mode::write, void>::type
+  sync(std::error_code &error) {
     if (pimpl_)
       pimpl_->sync(error);
+    else
+      error = std::make_error_code(std::errc::bad_file_descriptor);
   }
 
   /** All operators compare the underlying `basic_mmap`'s addresses. */
@@ -2821,12 +2738,7 @@ public:
   template <typename OutputIt> OutputIt copy_content_to(OutputIt output) const {
     if (start_ >= end_)
       return output;
-    auto bounds = trim_policy::trim(buffer_, start_, end_);
-    if (bounds.second - bounds.first >= 2 && buffer_[bounds.first] == quote_character::value &&
-        buffer_[bounds.second - 1] == quote_character::value) {
-      ++bounds.first;
-      --bounds.second;
-    }
+    const auto bounds = content_bounds_();
     for (size_t i = bounds.first; i < bounds.second; ++i) {
       *output = buffer_[i];
       ++output;
@@ -3465,24 +3377,7 @@ public:
 
 #if CSV2_HAS_STRING_VIEW
   // Borrow a string_view under the lifetime and mutation contract above.
-  bool parse_view(std::string_view sv) {
-    const char *const data = sv.data();
-    const size_t size = sv.size();
-    if (size == 0) {
-      reset_source_();
-      return false;
-    }
-    const bool owned_range = owns_range_(data, size);
-    if (aliases_source_(data) && !owned_range) {
-      reset_source_();
-      return false;
-    }
-    if (!owned_range)
-      reset_source_();
-    buffer_ = data;
-    buffer_size_ = size;
-    return true;
-  }
+  bool parse_view(std::string_view sv) { return parse_borrowed(sv.data(), sv.size()); }
 #endif
 
   bool validate(parse_error &error) const
@@ -3629,12 +3524,11 @@ public:
 } // namespace csv2
 #pragma once
 
-#include <cstring>
 // #include <csv2/detail/config.hpp>
 // #include <csv2/parameters.hpp>
 #include <fstream>
-#include <iostream>
 #include <iterator>
+#include <ostream>
 #include <sstream>
 #include <string>
 #include <type_traits>
@@ -3657,8 +3551,6 @@ struct always {};
 } // namespace quote_policy
 
 namespace detail {
-
-struct direct_character_fields {};
 
 using std::begin;
 using std::end;
@@ -3684,21 +3576,6 @@ struct is_direct_character_field<std::basic_string_view<char, Traits>> : std::tr
 
 } // namespace detail
 
-template <typename, typename T> struct has_close : std::false_type {};
-
-template <typename C, typename Ret, typename... Args> struct has_close<C, Ret(Args...)> {
-private:
-  template <typename T>
-  static constexpr auto check(T *) ->
-      typename std::is_same<decltype(std::declval<T &>().close(std::declval<Args>()...)),
-                            Ret>::type;
-
-  template <typename> static constexpr std::false_type check(...);
-
-public:
-  static constexpr bool value = decltype(check<C>(0))::value;
-};
-
 template <class delimiter = delimiter<','>, typename Stream = std::ofstream,
           typename Ownership = stream_ownership::close_on_destroy,
           typename QuotePolicy = quote_policy::none>
@@ -3714,25 +3591,27 @@ class basic_writer {
   Stream *stream_; // output stream for the writer
   bool active_;
 
-  static void close_stream_(Stream &stream, std::true_type) { stream.close(); }
+  template <typename CandidateStream>
+  static auto close_stream_(CandidateStream &stream,
+                            int) -> decltype(static_cast<void>(stream.close())) {
+    static_cast<void>(stream.close());
+  }
 
-  static void close_stream_(Stream &, std::false_type) {}
+  template <typename CandidateStream> static void close_stream_(CandidateStream &, long) noexcept {}
 
-  void close_noexcept_() noexcept {
+  void release_noexcept_(std::true_type) noexcept {
     if (!active_)
       return;
     active_ = false;
 #if defined(__cpp_exceptions) || defined(__EXCEPTIONS) || defined(_CPPUNWIND)
     try {
-      close_stream_(*stream_, std::integral_constant<bool, has_close<Stream, void()>::value>());
+      close_stream_(*stream_, 0);
     } catch (...) {
     }
 #else
-    close_stream_(*stream_, std::integral_constant<bool, has_close<Stream, void()>::value>());
+    close_stream_(*stream_, 0);
 #endif
   }
-
-  void release_noexcept_(std::true_type) noexcept { close_noexcept_(); }
 
   void release_noexcept_(std::false_type) noexcept { active_ = false; }
 
@@ -3814,6 +3693,7 @@ class basic_writer {
     std::ostringstream formatted;
     formatted.copyfmt(*stream_);
     formatted.exceptions(std::ios_base::goodbit);
+    formatted.clear(stream_->rdstate());
 #if defined(__cpp_exceptions) || defined(__EXCEPTIONS) || defined(_CPPUNWIND)
     struct formatted_state_guard {
       Stream *target;
@@ -3845,7 +3725,7 @@ class basic_writer {
 
     stream_->width(formatted.width());
     const std::ios_base::iostate state = formatted.rdstate();
-    const std::string value = formatted.str();
+    const std::string value = std::move(formatted).str();
     write_escaped_chars_(value.data(), value.size(), QuotePolicy());
     if (state != std::ios_base::goodbit)
       stream_->setstate(state);
@@ -3904,16 +3784,6 @@ class basic_writer {
   template <typename Field> void write_field_(const Field &field, std::false_type) {
     typedef typename std::decay<Field>::type field_type;
     write_escaped_field_(field, typename detail::is_direct_character_field<field_type>::type());
-  }
-
-  template <typename Field>
-  void write_field_(const Field &field, std::true_type, detail::direct_character_fields) {
-    write_field_(field, std::true_type());
-  }
-
-  template <typename Field>
-  void write_field_(const Field &field, std::false_type, detail::direct_character_fields) {
-    write_field_(field, std::false_type());
   }
 
 protected:
@@ -3994,8 +3864,7 @@ protected:
     write_legacy_rows_dispatch_(std::forward<Container>(rows), 0);
   }
 
-  template <typename Container, typename FieldPolicy>
-  void write_row_with_policy_(Container &&row, FieldPolicy field_policy) {
+  template <typename Container> void write_row_impl_(Container &&row) {
     if (!active_)
       return;
     auto &&strings = std::forward<Container>(row);
@@ -4004,20 +3873,17 @@ protected:
     auto current = begin(strings);
     const auto last = end(strings);
     if (current != last) {
-      write_field_(*current, typename std::is_same<QuotePolicy, quote_policy::none>::type(),
-                   field_policy);
+      write_field_(*current, typename std::is_same<QuotePolicy, quote_policy::none>::type());
       const char separator = delimiter::value;
       while (++current != last) {
         *stream_ << separator;
-        write_field_(*current, typename std::is_same<QuotePolicy, quote_policy::none>::type(),
-                     field_policy);
+        write_field_(*current, typename std::is_same<QuotePolicy, quote_policy::none>::type());
       }
     }
     *stream_ << '\n';
   }
 
-  template <typename Container, typename FieldPolicy>
-  void write_rows_with_policy_(Container &&rows, FieldPolicy field_policy) {
+  template <typename Container> void write_rows_impl_(Container &&rows) {
     if (!active_)
       return;
     auto &&container_of_rows = std::forward<Container>(rows);
@@ -4026,7 +3892,7 @@ protected:
     auto current = begin(container_of_rows);
     const auto last = end(container_of_rows);
     while (current != last) {
-      write_row_with_policy_(*current, field_policy);
+      write_row_impl_(*current);
       ++current;
     }
   }
@@ -4059,15 +3925,15 @@ public:
     if (!active_)
       return;
     active_ = false;
-    close_stream_(*stream_, std::integral_constant<bool, has_close<Stream, void()>::value>());
+    close_stream_(*stream_, 0);
   }
 
   template <typename Container> void write_row(Container &&row) {
-    write_row_with_policy_(std::forward<Container>(row), detail::direct_character_fields());
+    write_row_impl_(std::forward<Container>(row));
   }
 
   template <typename Container> void write_rows(Container &&rows) {
-    write_rows_with_policy_(std::forward<Container>(rows), detail::direct_character_fields());
+    write_rows_impl_(std::forward<Container>(rows));
   }
 };
 
