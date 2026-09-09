@@ -119,9 +119,24 @@ if(CSV2_IS_TOP_LEVEL)
 
   configure_package_config_file(csv2Config.cmake.in
     ${CMAKE_CURRENT_BINARY_DIR}/csv2Config.cmake
-    INSTALL_DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/csv2)
-  write_basic_package_version_file(csv2ConfigVersion.cmake
-                                   COMPATIBILITY AnyNewerVersion)
+    INSTALL_DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/csv2
+    NO_SET_AND_CHECK_MACRO)
+
+  function(csv2_write_package_version)
+    if(CMAKE_VERSION VERSION_LESS 3.14)
+      # Older CMake omits the architecture check for an unspecified pointer size.
+      set(CMAKE_SIZEOF_VOID_P "")
+      set(csv2_version_options)
+    else()
+      set(csv2_version_options ARCH_INDEPENDENT)
+    endif()
+    write_basic_package_version_file(
+      "${CMAKE_CURRENT_BINARY_DIR}/csv2ConfigVersion.cmake"
+      VERSION "${PROJECT_VERSION}"
+      COMPATIBILITY AnyNewerVersion
+      ${csv2_version_options})
+  endfunction()
+  csv2_write_package_version()
 
   configure_file(csv2.pc.in csv2.pc @ONLY)
 

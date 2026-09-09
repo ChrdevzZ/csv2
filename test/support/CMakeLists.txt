@@ -14,11 +14,10 @@ set(csv2_minitest_capacity_source
   "${CMAKE_CURRENT_BINARY_DIR}/minitest_registry_capacity.cpp")
 string(CONCAT csv2_minitest_capacity_content
   "#include <csv2_test/case_registry.hpp>\n\n"
-  "namespace {\nint executed = 0;\n")
+  "namespace {\nint executed = 0;\nvoid execute_case() { ++executed; }\n")
 foreach(case_index RANGE 0 599)
   string(APPEND csv2_minitest_capacity_content
-    "void case_${case_index}() { ++executed; }\n"
-    "csv2_test::registrar registrar_${case_index}(\"registry.capacity.${case_index}\", \"registry.capacity\", &case_${case_index});\n")
+    "csv2_test::registrar registrar_${case_index}(\"registry.capacity.${case_index}\", \"registry.capacity\", &execute_case);\n")
 endforeach()
 string(APPEND csv2_minitest_capacity_content
   "} // namespace\n\n"
