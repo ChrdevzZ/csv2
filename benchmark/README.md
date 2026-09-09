@@ -165,7 +165,10 @@ zero-allocation allocates. CI currently gates zero allocation for traversal,
 borrowed parsing, reused extraction, strict validation/conversion/ranges, and
 direct Writer paths. `checks/expected_checksums.json` is executable test data:
 CI runs every listed operation and compares complete wire fields and the full
-decimal checksum; prefix matches are rejected.
+decimal checksum; prefix matches are rejected. Positive wire and audit checks
+require successful process termination and validate complete stdout fields.
+Identical verification launches are consolidated; Google Benchmark dry-runs
+remain separate from semantic verification and allocation/observer audits.
 
 Each Writer verification invocation writes the prepared rows once. Its allocation
 count and allocated bytes cover that same single output; independent checksum
