@@ -130,12 +130,20 @@ CSV2_TEST_CASE("reader.scan.reject-a-carriage-return-quote-outside-a-quoted-fiel
 }
 
 CSV2_TEST_CASE("reader.scan.scan-cell-boundaries-through-the-shared-fast-path", "reader.scan") {
-  ReaderWithoutHeader reader;
-  const std::string wide_field(160, 'x');
-  const std::string input = wide_field + ",\"quoted,field\",\"a\"\"b\",tail,";
-  CSV2_REQUIRE(reader.parse(input));
-  CSV2_REQUIRE(read_cells(*reader.begin()) ==
-               std::vector<std::string>({wide_field, "\"quoted,field\"", "\"a\"b\"", "tail", ""}));
+  const std::size_t prefix_lengths[] = {0, 63, 64, 65, 256, 4096};
+  for (const std::size_t prefix_length : prefix_lengths) {
+    ReaderWithoutHeader reader;
+    const std::string wide_field(prefix_length, 'x');
+    const std::string input = "first,row\r\n" + wide_field +
+                              ",\"quoted,field\",\"a\"\"b\",tail,\r\n" + wide_field +
+                              ",\"quoted\nfield\",end\r\n" + wide_field + ",\"unfinished\nfield";
+    CSV2_REQUIRE(reader.parse(input));
+    CSV2_REQUIRE(read_rows(reader) == std::vector<std::vector<std::string>>(
+                                          {{"first", "row"},
+                                           {wide_field, "\"quoted,field\"", "\"a\"b\"", "tail", ""},
+                                           {wide_field, "\"quoted\nfield\"", "end"},
+                                           {wide_field, "\"unfinished\nfield"}}));
+  }
 }
 
 CSV2_TEST_CASE("reader.scan.handle-record-terminators-and-quoted-newlines", "reader.scan") {

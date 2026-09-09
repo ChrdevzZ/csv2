@@ -631,8 +631,9 @@ record_bounds find_record_bounds(const char *buffer, std::size_t buffer_size,
     return {content_end, newline_index + 1};
   }
 
-  bool quote_opened = false;
-  for (std::size_t i = start; i < buffer_size; ++i) {
+  // The prefix before the first quote contains neither quotes nor a record separator.
+  bool quote_opened = true;
+  for (std::size_t i = static_cast<std::size_t>(quote - buffer) + 1; i < buffer_size; ++i) {
     if (buffer[i] == QuoteCharacter::value) {
       if (quote_opened && i + 1 < buffer_size && buffer[i + 1] == QuoteCharacter::value) {
         ++i;
