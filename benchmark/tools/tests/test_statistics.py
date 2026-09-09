@@ -26,6 +26,30 @@ class StatisticsTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "baseline samples"):
             statistics.paired_bootstrap_ratio([0.0], [1.0], samples=100)
 
+    def test_single_pair_bootstrap_is_exact(self) -> None:
+        for baseline, candidate in ((2.0, 3.0), (4.0, 0.0), (2.0, -1.0)):
+            with self.subTest(baseline=baseline, candidate=candidate):
+                ratio = candidate / baseline
+                self.assertEqual(
+                    statistics.paired_bootstrap_ratio([baseline], [candidate]),
+                    (ratio, ratio),
+                )
+
+    def test_single_pair_preserves_parameter_validation(self) -> None:
+        cases = (
+            ([], [], {}, ValueError, "non-empty"),
+            ([1.0], [1.0, 2.0], {}, ValueError, "equal in length"),
+            ([1.0], [2.0], {"samples": 99}, ValueError, "at least 100"),
+            ([1.0], [2.0], {"samples": 100.5}, TypeError, "integer"),
+            ([1.0], [2.0], {"seed": []}, TypeError, ""),
+            ([0.0], [2.0], {}, ValueError, "must be positive"),
+            ([-1.0], [2.0], {}, ValueError, "must be positive"),
+        )
+        for baseline, candidate, options, error, message in cases:
+            with self.subTest(baseline=baseline, options=options):
+                with self.assertRaisesRegex(error, message):
+                    statistics.paired_bootstrap_ratio(baseline, candidate, **options)
+
     def test_regression_threshold_has_five_percent_floor(self) -> None:
         self.assertEqual(statistics.regression_threshold(0.01, 0.02), 0.05)
         self.assertEqual(statistics.regression_threshold(0.07, 0.02), 0.07)
