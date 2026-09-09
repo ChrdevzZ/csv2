@@ -263,7 +263,8 @@ Catch2 is an offline test-only snapshot. Its targets are
 loaded with `EXCLUDE_FROM_ALL`, receive neither CSV2
 Werror/sanitizer/coverage flags nor install/export rules, and are absent when
 only C++11/no-exceptions tests or fuzzers are configured. The loader rejects
-pre-existing target names and restores the complete parent CMake Cache state.
+pre-existing target names and restores parent cache entries with their tracked
+value, type, help text, and ADVANCED/STRINGS presence and values.
 See
 [`third_party/verification/README.md`](../third_party/verification/README.md).
 

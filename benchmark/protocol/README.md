@@ -310,7 +310,7 @@ bundle even when the corpus file hashes themselves are correct.
 ## Controlled build inputs (build v2)
 
 Build v2 requires `input_policy` and `dependencies`; build v1 is rejected.
-Comparison v7, fixed-machine v7, artifact-manifest v4, and evidence-bundle v4
+Comparison v7, fixed-machine v9, artifact-manifest v4, and evidence-bundle v4
 carry this stronger contract. `csv2-compile-dependencies-v2` records consumed
 first-party paths and SHA-256 values against immutable Git exports, compiler
 system inputs and roots, and every current-tree owned translation unit.

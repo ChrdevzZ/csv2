@@ -57,7 +57,8 @@ as C++17 and is never installed or exported.
 their allocation-sensitive frontends remain separate. Revision and default
 input definitions live in a small shared build-config object. The observer
 audit intentionally recompiles the complete source set under its observer
-macro and Release IPO, so LTO cannot erase the contract being audited.
+macro, enabling Release IPO when the toolchain supports it. The audit checks
+that optimization preserves the required observations.
 The owned-build File API audit checks each compile owner independently: both
 frontends must close over the same two object libraries, target-specific macros
 must remain isolated, and every owner must carry the requested optimized modern
@@ -127,8 +128,9 @@ uses distinct timed and verification function pointers, so checksum branches
 and row/cell metadata traversal cannot enter timed kernels. Every timed kernel
 also passes its live local result through an inline `TimedObserver`: scalars
 use `DoNotOptimize`, while live contiguous memory escapes its pointer/size
-before `ClobberMemory`. A dedicated Release IPO/LTO audit proves that each
-affected kernel observes a value or memory. The common driver likewise writes
+before `ClobberMemory`. A dedicated observer audit checks that each affected
+kernel observes a value or memory, with IPO/LTO enabled in Release when supported
+by the toolchain. The common driver likewise writes
 into a preallocated fixed buffer and asserts that its checksum mixer is never
 called while the timer is active.
 
