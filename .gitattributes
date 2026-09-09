@@ -1,4 +1,7 @@
 * text=auto eol=lf
 
 *.png binary
-benchmark/fixtures/*.csv -text -eol whitespace=-trailing-space
+test/fixtures/**/*.csv -text -whitespace
+test/fuzz/corpus/** -text -whitespace
+benchmark/datasets/fixtures/**/*.csv -text -whitespace
+third_party/verification/** -whitespace

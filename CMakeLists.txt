@@ -50,47 +50,23 @@ else()
   set(CSV2_IS_TOP_LEVEL OFF)
 endif()
 
-if(EXISTS "${CMAKE_BINARY_DIR}/conanbuildinfo.cmake")
-    include("${CMAKE_BINARY_DIR}/conanbuildinfo.cmake")
-    conan_basic_setup()
-endif()
+include(${CMAKE_CURRENT_LIST_DIR}/cmake/verification/Csv2VerificationOptions.cmake)
 
-option(CSV2_BUILD_TESTS "Build csv2 tests + enable CTest" OFF)
-option(CSV2_BUILD_BENCHMARKS "Build csv2 benchmarks" OFF)
-option(CSV2_BUILD_FUZZERS "Build the Clang libFuzzer target" OFF)
-option(CSV2_ENABLE_SANITIZERS
-  "Enable AddressSanitizer and, where supported, UndefinedBehaviorSanitizer for tests" OFF)
-
-# Keep every optional build matrix on one compiler/CMake-supported standard
-# list. CXX_STANDARD 20 and 23 were added in CMake 3.12 and 3.20 respectively.
-set(csv2_supported_standards)
-foreach(csv2_standard IN ITEMS 11 14 17)
-  if(cxx_std_${csv2_standard} IN_LIST CMAKE_CXX_COMPILE_FEATURES)
-    list(APPEND csv2_supported_standards ${csv2_standard})
+if(csv2_verification_enabled)
+  get_filename_component(csv2_source_real_path "${CMAKE_CURRENT_SOURCE_DIR}" REALPATH)
+  get_filename_component(csv2_binary_real_path "${CMAKE_CURRENT_BINARY_DIR}" REALPATH)
+  if(csv2_source_real_path STREQUAL csv2_binary_real_path)
+    message(FATAL_ERROR
+      "CSV2 verification requires an out-of-source build. Configure with a "
+      "separate binary directory when enabling tests, benchmarks, or fuzzers.")
   endif()
-endforeach()
-if(CMAKE_VERSION VERSION_GREATER_EQUAL 3.12 AND
-   cxx_std_20 IN_LIST CMAKE_CXX_COMPILE_FEATURES)
-  list(APPEND csv2_supported_standards 20)
-endif()
-if(CMAKE_VERSION VERSION_GREATER_EQUAL 3.20 AND
-   cxx_std_23 IN_LIST CMAKE_CXX_COMPILE_FEATURES)
-  list(APPEND csv2_supported_standards 23)
+
+  include(${CMAKE_CURRENT_LIST_DIR}/cmake/verification/Csv2VerificationStandards.cmake)
+  include(${CMAKE_CURRENT_LIST_DIR}/cmake/verification/Csv2VerificationTargetOptions.cmake)
+  include(${CMAKE_CURRENT_LIST_DIR}/cmake/verification/Csv2VerificationVendor.cmake)
+  include(${CMAKE_CURRENT_LIST_DIR}/cmake/verification/Csv2VerificationPython.cmake)
 endif()
 
-function(csv2_filter_supported_standards output)
-  set(csv2_filtered_standards)
-  foreach(csv2_standard IN LISTS ARGN)
-    if(csv2_standard IN_LIST csv2_supported_standards)
-      list(APPEND csv2_filtered_standards ${csv2_standard})
-    endif()
-  endforeach()
-  set(${output} ${csv2_filtered_standards} PARENT_SCOPE)
-endfunction()
-
-if(CSV2_BUILD_FUZZERS AND NOT CSV2_BUILD_TESTS)
-  message(FATAL_ERROR "CSV2_BUILD_FUZZERS requires CSV2_BUILD_TESTS=ON")
-endif()
 if(CSV2_BUILD_FUZZERS AND NOT 20 IN_LIST csv2_supported_standards)
   message(FATAL_ERROR
     "CSV2_BUILD_FUZZERS requires CMake and a compiler with C++20 support")
@@ -106,15 +82,32 @@ target_include_directories(csv2 INTERFACE
   $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>
   $<BUILD_INTERFACE:${CMAKE_CURRENT_LIST_DIR}/include>)
 
-if(CSV2_BUILD_TESTS)
+if(CSV2_BUILD_TESTS OR CSV2_BUILD_FUZZERS OR CSV2_BUILD_BENCHMARK_CHECKS)
   if(CSV2_IS_TOP_LEVEL)
     enable_testing()
   endif()
+endif()
+
+if(CSV2_BUILD_TESTS OR CSV2_BUILD_FUZZERS)
   add_subdirectory(test)
 endif()
 
 if(CSV2_BUILD_BENCHMARKS)
-  add_subdirectory(benchmark)
+  if(CSV2_BENCHMARKS_EXCLUDE_FROM_ALL)
+    add_subdirectory(benchmark EXCLUDE_FROM_ALL)
+  else()
+    add_subdirectory(benchmark)
+  endif()
+
+  # Keep one root-level entry point for the cross-platform portability owner.
+  # Visual Studio does not expose excluded subdirectory projects as direct
+  # root-solution targets, while this aggregate remains outside the default
+  # ALL build and follows its dependencies on every generator.
+  add_custom_target(csv2_benchmark_portability)
+  add_dependencies(csv2_benchmark_portability
+    csv2_benchmark
+    csv2_benchmark_allocations
+    csv2_common_benchmark)
 endif()
 
 if(CSV2_IS_TOP_LEVEL)
@@ -126,9 +119,24 @@ if(CSV2_IS_TOP_LEVEL)
 
   configure_package_config_file(csv2Config.cmake.in
     ${CMAKE_CURRENT_BINARY_DIR}/csv2Config.cmake
-    INSTALL_DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/csv2)
-  write_basic_package_version_file(csv2ConfigVersion.cmake
-                                   COMPATIBILITY AnyNewerVersion)
+    INSTALL_DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/csv2
+    NO_SET_AND_CHECK_MACRO)
+
+  function(csv2_write_package_version)
+    if(CMAKE_VERSION VERSION_LESS 3.14)
+      # Older CMake omits the architecture check for an unspecified pointer size.
+      set(CMAKE_SIZEOF_VOID_P "")
+      set(csv2_version_options)
+    else()
+      set(csv2_version_options ARCH_INDEPENDENT)
+    endif()
+    write_basic_package_version_file(
+      "${CMAKE_CURRENT_BINARY_DIR}/csv2ConfigVersion.cmake"
+      VERSION "${PROJECT_VERSION}"
+      COMPATIBILITY AnyNewerVersion
+      ${csv2_version_options})
+  endfunction()
+  csv2_write_package_version()
 
   configure_file(csv2.pc.in csv2.pc @ONLY)
 
@@ -149,34 +157,5 @@ if(CSV2_IS_TOP_LEVEL)
   install(FILES LICENSE LICENSE.mio
           DESTINATION ${CMAKE_INSTALL_DATAROOTDIR}/licenses/csv2)
 
-  if(EXISTS "${PROJECT_SOURCE_DIR}/.gitignore")
-    # Simple glob to regex conversion (.gitignore => CPACK_SOURCE_IGNORE_FILES)
-    file(READ ".gitignore" DOT_GITIGNORE)
-    string(REPLACE ";" "RANDOMSEQUENCE" DOT_GITIGNORE "${DOT_GITIGNORE}")
-    string(REPLACE "\n" ";" DOT_GITIGNORE "${DOT_GITIGNORE}")
-    string(REPLACE "RANDOMSEQUENCE" "\\;" DOT_GITIGNORE "${DOT_GITIGNORE}")
-    foreach(IGNORE_LINE ${DOT_GITIGNORE})
-      if(NOT IGNORE_LINE OR IGNORE_LINE MATCHES "^#")
-        continue()
-      endif()
-      string(REPLACE "\\" "\\\\" IGNORE_LINE "${IGNORE_LINE}")
-      string(REPLACE "." "\\\\." IGNORE_LINE "${IGNORE_LINE}")
-      string(REPLACE "*" ".*" IGNORE_LINE "${IGNORE_LINE}")
-      string(REPLACE "+" "\\\\+" IGNORE_LINE "${IGNORE_LINE}")
-      list(APPEND CPACK_SOURCE_IGNORE_FILES "${IGNORE_LINE}")
-    endforeach()
-  endif()
-
-  # extra ignored files
-  list(APPEND CPACK_SOURCE_IGNORE_FILES
-    .editorconfig
-    .git
-    .gitignore
-    .travis.yml
-    .appveyor.yml
-  )
-  set(CPACK_SOURCE_PACKAGE_FILE_NAME "${PROJECT_NAME}-${PROJECT_VERSION}")
-  set(CPACK_GENERATOR "TGZ;TXZ")
-  set(CPACK_SOURCE_GENERATOR "TGZ;TXZ")
-  include(CPack)
+  include(cmake/Csv2SourcePackaging.cmake)
 endif()

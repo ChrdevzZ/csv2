@@ -1,0 +1,7 @@
+self-hosted-runner:
+  labels:
+    - csv2-perf
+
+config-variables: null
+
+paths:
