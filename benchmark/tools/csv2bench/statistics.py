@@ -31,7 +31,13 @@ def paired_bootstrap_ratio(
     generator = random.Random(seed)
     ratios: list[float] = []
     count = len(baseline)
-    for _ in range(samples):
+    resamples = range(samples)
+    if count == 1:
+        if baseline[0] <= 0:
+            raise ValueError("baseline samples must be positive")
+        ratio = candidate[0] / baseline[0]
+        return ratio, ratio
+    for _ in resamples:
         indices = [generator.randrange(count) for _ in range(count)]
         baseline_median = statistics.median(baseline[index] for index in indices)
         candidate_median = statistics.median(candidate[index] for index in indices)

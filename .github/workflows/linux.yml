@@ -199,7 +199,7 @@ jobs:
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ${{ env.CCACHE_DIR }}
-          key: csv2-ccache-v3-linux-${{ runner.arch }}-gcc14-quick-${{ github.sha }}
+          key: ${{ steps.ccache-restore.outputs.cache-primary-key }}
 
   gcc-sanitizers:
     if: inputs.quick
@@ -305,7 +305,7 @@ jobs:
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ${{ env.CCACHE_DIR }}
-          key: csv2-ccache-v3-linux-${{ runner.arch }}-gcc14-sanitizer-${{ github.sha }}
+          key: ${{ steps.ccache-restore.outputs.cache-primary-key }}
 
   clang:
     if: inputs.quick || inputs.benchmark
@@ -456,4 +456,4 @@ jobs:
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ${{ env.CCACHE_DIR }}
-          key: csv2-ccache-v3-linux-${{ runner.arch }}-clang18-libcxx-${{ matrix.sanitizers == 'ON' && 'sanitizer' || 'quick' }}-${{ github.sha }}
+          key: ${{ steps.ccache-restore.outputs.cache-primary-key }}

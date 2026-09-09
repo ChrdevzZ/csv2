@@ -37,6 +37,11 @@ jobs:
           fi
           git diff --no-renames --check "$comparison"
 
+      - name: Set up minimum supported Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: '3.10'
+
       - name: Run CI policy tests
         run: |
           python3 -m unittest discover -s tools/ci -p 'test_*.py'

@@ -62,8 +62,9 @@ ownership, no-mmap/no-exceptions behavior, or platform mapping. Use `perf` only
 with the benchmark evidence process; profile selection is not itself a claim
 that a machine is controlled.
 
-Full/perf profiles and every CI job require Python 3.10 audits. A quick local
-configuration may continue without Python only after printing the skipped
+Full/perf profiles and every CI job require Python 3.10 audits.
+Preflight runs the shared Python suites on Python 3.10 to verify the minimum.
+A quick local configuration may continue without Python only after printing the skipped
 audit categories; do not report that run as the complete quick gate.
 
 `CSV2_ENABLE_SANITIZERS=ON` applies supported sanitizers only to first-party

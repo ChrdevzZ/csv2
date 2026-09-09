@@ -397,7 +397,10 @@ def bind_metrics_invocations(report):
         if key not in report:
             continue
         timing = report[key]
-        name = f"csv2/{report["operation"]}/{report["source"]}/{result["dataset"]}/real_time"
+        name = (
+            f"csv2/{report['operation']}/{report['source']}/"
+            f"{result['dataset']}/real_time"
+        )
         timing["benchmark"] = name
         for sample in timing["samples"]:
             sample["name"] = name

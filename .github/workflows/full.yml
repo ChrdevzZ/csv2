@@ -188,7 +188,7 @@ jobs:
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ${{ env.CCACHE_DIR }}
-          key: csv2-ccache-v3-linux-${{ runner.arch }}-${{ matrix.cache_family }}-full-${{ env.CSV2_CACHE_PROFILE }}-${{ github.sha }}
+          key: ${{ steps.ccache-restore.outputs.cache-primary-key }}
 
   windows:
     if: inputs.extended && !inputs.coverage_only
