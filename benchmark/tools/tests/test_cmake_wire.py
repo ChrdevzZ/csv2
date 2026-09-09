@@ -29,6 +29,9 @@ class CMakeWireTests(unittest.TestCase):
                 ("rows=3 allocations=1", 0, "stdout", False),
                 ("rows=3 cells=9 allocations=10junk", 0, "stdout", False),
                 ("rows=3 cells=9 allocations=0", 0, "stdout", False),
+                ("rows= rows=3 cells=9 allocations=1", 0, "stdout", False),
+                ("rows=3 rows= cells=9 allocations=1", 0, "stdout", False),
+                ("rows=3 cells=9 allocations= allocations=1", 0, "stdout", False),
                 ("rows=3 rows=30 cells=9 allocations=1", 0, "stdout", False),
             )
             for wire, status, channel, accepted in cases:

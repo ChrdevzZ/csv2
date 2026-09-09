@@ -75,12 +75,21 @@ csv2_set_test_standard(csv2_benchmark_observer_audit
   ${csv2_current_benchmark_standard})
 csv2_enable_test_options(csv2_benchmark_observer_audit)
 
-include(CheckIPOSupported)
-check_ipo_supported(RESULT csv2_benchmark_ipo_supported
-  OUTPUT csv2_benchmark_ipo_error LANGUAGES CXX)
-if(csv2_benchmark_ipo_supported)
-  set_property(TARGET csv2_benchmark_observer_audit PROPERTY
-    INTERPROCEDURAL_OPTIMIZATION_RELEASE TRUE)
+get_property(csv2_benchmark_multi_config GLOBAL PROPERTY GENERATOR_IS_MULTI_CONFIG)
+if(csv2_benchmark_multi_config)
+  set(csv2_benchmark_configurations "${CMAKE_CONFIGURATION_TYPES}")
 else()
-  message(STATUS "CSV2 observer audit IPO unavailable: ${csv2_benchmark_ipo_error}")
+  set(csv2_benchmark_configurations "${CMAKE_BUILD_TYPE}")
+endif()
+string(TOUPPER "${csv2_benchmark_configurations}" csv2_benchmark_configurations)
+if("RELEASE" IN_LIST csv2_benchmark_configurations)
+  include(CheckIPOSupported)
+  check_ipo_supported(RESULT csv2_benchmark_ipo_supported
+    OUTPUT csv2_benchmark_ipo_error LANGUAGES CXX)
+  if(csv2_benchmark_ipo_supported)
+    set_property(TARGET csv2_benchmark_observer_audit PROPERTY
+      INTERPROCEDURAL_OPTIMIZATION_RELEASE TRUE)
+  else()
+    message(STATUS "CSV2 observer audit IPO unavailable: ${csv2_benchmark_ipo_error}")
+  endif()
 endif()
