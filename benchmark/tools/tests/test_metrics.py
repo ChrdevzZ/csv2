@@ -536,6 +536,24 @@ class MetricsTests(unittest.TestCase):
                 protocol.parse_google_benchmark_json(json.dumps({"benchmarks": [
                     {**record, "repetition_index": 0}, {**record, **second}]}), 2)
 
+    def test_google_benchmark_json_rejects_duplicate_members(self) -> None:
+        record = ('{"name":"probe","real_time":1,"time_unit":"s",'
+                  '"bytes_per_second":2,"items_per_second":3,'
+                  '"cycles":4,"instructions":5,"branch-misses":0}')
+        raw = '{"benchmarks":[' + record + ']}'
+        protocol.parse_google_benchmark_json(raw, 1, require_pmu=True)
+        mutations = (
+            raw.replace('"name":', '"error_occurred":true,"error_occurred":false,"name":'),
+            raw.replace('"name":', '"skipped":true,"skipped":false,"name":'),
+            raw.replace('"real_time":1', '"real_time":-1,"real_time":1'),
+            raw.replace('"cycles":4', '"cycles":-1,"cycles":4'),
+            '{"benchmarks":[],"benchmarks":[' + record + ']}',
+            raw.replace('"name":', '"future":{"value":1,"value":2},"name":'),
+        )
+        for changed in mutations:
+            with self.subTest(raw=changed), self.assertRaisesRegex(RuntimeError, "malformed"):
+                protocol.parse_google_benchmark_json(changed, 1, require_pmu=True)
+
     def test_google_benchmark_json_ignores_unconsumed_extensions(self) -> None:
         record = {"name": "probe", "real_time": 1000, "time_unit": "ms",
                   "bytes_per_second": 2, "items_per_second": 3}

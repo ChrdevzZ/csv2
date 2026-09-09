@@ -154,7 +154,10 @@ Saved commands and benchmark names must match the bound artifacts and selected
 operation. Timing and PMU invocations retain Google Benchmark JSON stdout and
 stderr. Collection and offline validation use one parser to reconstruct every
 sample, counter, median, and MAD from that raw JSON; the reconstructed result
-must equal the normalized fields. Unknown third-party JSON fields are ignored.
+must equal the normalized fields. Raw Google Benchmark JSON rejects duplicate
+member names in every object before interpreting failure flags, samples, or
+counters. Component documents and embedded JSON use the same unique-member
+rule. Unknown uniquely named third-party fields remain extensible.
 Missing or malformed raw records cannot be replaced by internally consistent
 summaries. Each
 real-time sample must satisfy `seconds * bytes_per_second = input corpus size`

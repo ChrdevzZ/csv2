@@ -35,33 +35,15 @@ foreach(field IN ITEMS ROWS CELLS ROW_BYTES)
   endif()
 endforeach()
 
-set(csv2_expected_fields
-  "protocol=csv2-common-v5"
-  "instrumentation=none"
-  "capabilities=legacy-reader,legacy-writer,modern-writer"
-  "operation=${CSV2_BENCHMARK_OPERATION}"
-  "scope=writer_only"
-  "source=buffer"
-  "iterations=2"
-  "rows=${CSV2_EXPECTED_ROWS}"
-  "cells=${CSV2_EXPECTED_CELLS}"
-  "row_bytes=${CSV2_EXPECTED_ROW_BYTES}"
-  "timed_reader_steps=0"
-  "timed_checksum_mix_calls=0"
-  "checksum=${CSV2_EXPECTED_CHECKSUM}")
-foreach(field IN ITEMS SEMANTIC_CASE_ID BYTES)
-  if(DEFINED CSV2_EXPECTED_${field})
-    string(TOLOWER "${field}" field_name)
-    list(APPEND csv2_expected_fields "${field_name}=${CSV2_EXPECTED_${field}}")
-  endif()
-endforeach()
-foreach(expected_field IN LISTS csv2_expected_fields)
-  string(FIND "${expected_field}" "=" separator)
-  string(SUBSTRING "${expected_field}" 0 ${separator} field_name)
-  math(EXPR separator "${separator} + 1")
-  string(SUBSTRING "${expected_field}" ${separator} -1 field_value)
-  string(TOUPPER "${field_name}" field_name)
-  set(CSV2_EXPECTED_${field_name} "${field_value}")
-endforeach()
+set(CSV2_EXPECTED_PROTOCOL csv2-common-v5)
+set(CSV2_EXPECTED_INSTRUMENTATION none)
+set(CSV2_EXPECTED_CAPABILITIES legacy-reader,legacy-writer,modern-writer)
+set(CSV2_EXPECTED_OPERATION "${CSV2_BENCHMARK_OPERATION}")
+set(CSV2_EXPECTED_SCOPE writer_only)
+set(CSV2_EXPECTED_SOURCE buffer)
+set(CSV2_EXPECTED_ITERATIONS 2)
+set(CSV2_EXPECTED_TIMED_READER_STEPS 0)
+set(CSV2_EXPECTED_TIMED_CHECKSUM_MIX_CALLS 0)
+
 set(CSV2_BENCHMARK_WIRE "${csv2_wire}")
 include("${CMAKE_CURRENT_LIST_DIR}/verify_wire.cmake")

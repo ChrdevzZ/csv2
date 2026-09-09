@@ -833,6 +833,9 @@ class ProtocolTests(unittest.TestCase):
         mutations = {
             "consistent timing scale": scale_measurements,
             "missing raw JSON": lambda r: r["timing_invocation"].update(stdout=""),
+            "duplicate embedded arrays": lambda r: r["timing_invocation"].update(
+                stdout=r["timing_invocation"]["stdout"].replace(
+                    '{"benchmarks":', '{"benchmarks": [], "benchmarks":', 1)),
             "corrupt raw JSON": lambda r: r["timing_invocation"].update(stdout="{"),
             "checksum": lambda r: r["verification"]["result"].update(checksum="2"),
             "allocation count": lambda r: r["allocations"].update(count=2),

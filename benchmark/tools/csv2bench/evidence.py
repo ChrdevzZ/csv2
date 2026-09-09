@@ -15,15 +15,6 @@ from . import artifacts, atomic, builds, machine as machine_profile_tool, protoc
 Document = dict[str, object]
 
 
-def _unique_object(pairs: list[tuple[str, object]]) -> Document:
-    result: Document = {}
-    for key, value in pairs:
-        if key in result:
-            raise ValueError(f"duplicate JSON key: {key}")
-        result[key] = value
-    return result
-
-
 def load_document(path: Path, label: str) -> tuple[Document, Path, Document]:
     canonical = artifacts.canonical_existing(path, label)
     if not canonical.is_file():
@@ -32,7 +23,7 @@ def load_document(path: Path, label: str) -> tuple[Document, Path, Document]:
     try:
         contents = canonical.read_bytes()
         document = json.loads(
-            contents.decode("utf-8"), object_pairs_hook=_unique_object
+            contents.decode("utf-8"), object_pairs_hook=protocol.unique_json_object
         )
     except (OSError, UnicodeDecodeError, json.JSONDecodeError, ValueError) as error:
         raise RuntimeError(f"{label} is not valid unique-key UTF-8 JSON") from error
