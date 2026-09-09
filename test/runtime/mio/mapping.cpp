@@ -202,15 +202,25 @@ CSV2_TEST_CASE("mio.mapping.preserve-ownership-through-shared-and-writable-same-
 
   mio::shared_mmap_sink shared_sink;
   CSV2_REQUIRE(shared_sink.data() == nullptr);
+  error.clear();
+  shared_sink.sync(error);
+  CSV2_REQUIRE(error == std::errc::bad_file_descriptor);
+  error = std::make_error_code(std::errc::address_in_use);
+  shared_sink.sync(error);
+  CSV2_REQUIRE(error == std::errc::bad_file_descriptor);
   shared_sink.map(path, error);
   CSV2_REQUIRE_FALSE(error);
   shared_sink[0] = 'Q';
   mio::shared_mmap_sink moved_sink(std::move(shared_sink));
   CSV2_REQUIRE(shared_sink.data() == nullptr);
+  shared_sink.sync(error);
+  CSV2_REQUIRE(error == std::errc::bad_file_descriptor);
   CSV2_REQUIRE(moved_sink[0] == 'Q');
   moved_sink.sync(error);
   CSV2_REQUIRE_FALSE(error);
   moved_sink.unmap();
+  moved_sink.sync(error);
+  CSV2_REQUIRE(error == std::errc::bad_file_descriptor);
 
   std::ifstream input(path.c_str(), std::ios::binary);
   std::string persisted((std::istreambuf_iterator<char>(input)), std::istreambuf_iterator<char>());
