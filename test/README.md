@@ -31,6 +31,10 @@ Generated standard-library fixtures and registry test sources are updated only
 when their complete content changes. Reconfiguring unchanged inputs does not
 invalidate dependent test compilations.
 
+Dependency-isolation tests distinguish the intended target-collision rejection
+from successful configuration and unrelated setup failures. The fixture does
+not generate the failure that the test is meant to observe.
+
 ## Runtime domains and stable IDs
 
 The runtime suite is organized into these domains:

@@ -1,7 +1,6 @@
 function(csv2_add_header_self_containment target header_definition include_directory standard)
   add_library(${target} OBJECT headers/self_containment.cpp)
   target_compile_definitions(${target} PRIVATE
-    CSV2_TEST_HEADER_ONLY
     ${header_definition})
   target_include_directories(${target} PRIVATE ${include_directory})
   csv2_set_test_standard(${target} ${standard})
