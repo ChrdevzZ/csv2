@@ -250,9 +250,14 @@ CSV quoting rules.
 
 ### Ranges and Field Dispatch
 
-Writer uses ADL `begin` and `end` for arrays, containers, iterator/sentinel ranges, and C++20 views. Custom stream
-insertion takes precedence; otherwise contiguous character fields use direct writes and other streamable values keep the
-destination's formatting state.
+All writer interfaces support ADL-based range traversal. The historical two-parameter `Writer` preserves stream
+insertion, including chained delimiter/field insertion where available, and falls back to contiguous character output
+when insertion is unavailable.
+
+`basic_writer` and its quoting aliases use direct character-field paths for recognized character strings and string
+views. Raw output preserves the existing nonzero-width formatting path. Other field types use the available insertion
+or contiguous-field fallback appropriate to the selected quoting policy. These dispatch rules are intentionally not
+identical to the historical `Writer` interface.
 
 Quoting writers scan contiguous character fields and write segments. Fields requiring formatted escaping use a
 temporary stream initialized with the destination's formatting settings and current error state. One-shot width and

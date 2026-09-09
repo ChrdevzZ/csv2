@@ -951,7 +951,6 @@ inline size_t make_offset_page_aligned(size_t offset) noexcept {
  */
 
 #include <cstdint>
-// #include <csv2/detail/config.hpp>
 #include <iterator>
 #include <limits>
 #include <string>
@@ -2473,6 +2472,8 @@ public:
   sync(std::error_code &error) {
     if (pimpl_)
       pimpl_->sync(error);
+    else
+      error = std::make_error_code(std::errc::bad_file_descriptor);
   }
 
   /** All operators compare the underlying `basic_mmap`'s addresses. */
