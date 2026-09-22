@@ -4,59 +4,31 @@
 from __future__ import annotations
 
 import argparse
-import re
 import subprocess
 import sys
 
-
-def commit_id(value: str) -> str:
-    if not re.fullmatch(r"(?:[0-9a-fA-F]{40}|[0-9a-fA-F]{64})", value):
-        raise argparse.ArgumentTypeError("expected a full commit object ID")
-    return value
-
-
-def has_commit(sha: str) -> bool:
-    return subprocess.run(
-        ["git", "cat-file", "-e", f"{sha}^{{commit}}"],
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-    ).returncode == 0
+from resolve_comparison import EVENTS, diff_range, resolve
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--base", required=True, type=commit_id)
-    parser.add_argument("--head", required=True, type=commit_id)
+    parser.add_argument("--base", required=True)
+    parser.add_argument("--head", required=True)
     parser.add_argument(
         "--event", required=True,
-        choices=("push", "pull_request", "merge_group", "workflow_dispatch"),
+        choices=EVENTS,
     )
     args = parser.parse_args()
-    if not has_commit(args.head):
-        print("Patch head is absent from the checkout; refusing to change the range.",
-              file=sys.stderr)
+    try:
+        resolved = resolve(args.event, args.base, args.head)
+        comparison = diff_range(args.event, resolved["base"], resolved["head"])
+    except (ValueError, subprocess.CalledProcessError) as error:
+        print(str(error), file=sys.stderr)
         return 1
-    if not has_commit(args.base):
-        # Jobs have separate object databases. The classifier's fetch does not
-        # make a discarded push base available in this preflight checkout.
-        print("Fetching the missing comparison base from origin.", file=sys.stderr)
-        fetched = subprocess.run(
-            ["git", "fetch", "--no-tags", "--no-write-fetch-head", "origin", args.base],
-            check=False,
-        )
-        if fetched.returncode != 0 or not has_commit(args.base):
-            print(
-                "Cannot retrieve the comparison base; the patch was NOT checked. "
-                "For an intentional history rewrite, dispatch CI on the rewritten "
-                "branch to validate its current revision separately. "
-                "Do not substitute HEAD or skip the patch check.",
-                file=sys.stderr,
-            )
-            return 1
-    separator = "..." if args.event in ("pull_request", "merge_group") else ".."
+    print(f"Whitespace scope: {resolved['mode']}", file=sys.stderr)
     return subprocess.run(
         ["git", "diff", "--no-ext-diff", "--no-textconv", "--no-renames", "--check",
-         f"{args.base}{separator}{args.head}", "--"],
+         comparison, "--"],
         check=False,
     ).returncode
 

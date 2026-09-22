@@ -67,6 +67,28 @@ class PatchWhitespaceTests(unittest.TestCase):
         self.assertFalse((clone / ".git" / "shallow").exists())
         self.assertFalse((clone / ".git" / "FETCH_HEAD").exists())
 
+    def test_classifier_fetch_is_repeated_in_separate_preflight_checkout(self) -> None:
+        classify_checkout, old, new = self.rewritten_checkout("bad patch \n")
+        preflight_checkout = self.root / "preflight"
+        git(self.root, "clone", "--quiet", "--no-local", "--single-branch",
+            "--branch", "rewritten", str(self.source), str(preflight_checkout))
+        resolved = subprocess.run(
+            [sys.executable, str(SCRIPT.with_name("resolve_comparison.py")),
+             "--event", "push", "--base", old, "--head", new],
+            cwd=classify_checkout, capture_output=True, text=True,
+        )
+        self.assertEqual(resolved.returncode, 0, resolved.stderr)
+        self.assertIn("base=" + old, resolved.stdout)
+        missing = subprocess.run(
+            ["git", "cat-file", "-e", f"{old}^{{commit}}"],
+            cwd=preflight_checkout, capture_output=True,
+        )
+        self.assertNotEqual(missing.returncode, 0)
+        checked = self.check(preflight_checkout, old, new)
+        self.assertNotEqual(checked.returncode, 0)
+        self.assertIn("Fetching", checked.stderr)
+        self.assertIn("trailing whitespace", checked.stdout)
+
     def test_fetched_base_does_not_hide_whitespace_errors(self) -> None:
         clone, old, new = self.rewritten_checkout("bad patch \n")
         result = self.check(clone, old, new)
@@ -83,8 +105,7 @@ class PatchWhitespaceTests(unittest.TestCase):
     def test_missing_head_is_not_replaced_with_checkout_head(self) -> None:
         result = self.check(self.source, self.common, "f" * 40)
         self.assertNotEqual(result.returncode, 0)
-        self.assertIn("head is absent", result.stderr)
-        self.assertNotIn("Fetching", result.stderr)
+        self.assertIn("Cannot retrieve the comparison head", result.stderr)
 
     def test_pull_request_and_merge_group_keep_merge_base_semantics(self) -> None:
         # The base branch fixes inherited whitespace. A PR does not reintroduce
@@ -100,11 +121,33 @@ class PatchWhitespaceTests(unittest.TestCase):
             with self.subTest(event=event):
                 result = self.check(self.source, base, head, event)
                 self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        for event in ("push", "workflow_dispatch"):
+        for event in ("push",):
             with self.subTest(event=event):
                 result = self.check(self.source, base, head, event)
                 self.assertNotEqual(result.returncode, 0)
                 self.assertIn("trailing whitespace", result.stdout)
+
+    def test_root_and_new_branch_check_the_snapshot(self) -> None:
+        (self.source / "data.txt").write_text("bad snapshot \n", encoding="utf-8")
+        head = commit_all(self.source, "bad snapshot")
+        result = self.check(self.source, "0" * 40, head)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("trailing whitespace", result.stdout)
+        self.assertIn("new-branch-snapshot", result.stderr)
+
+    def test_manual_scope_checks_first_parent_not_supplied_old_base(self) -> None:
+        (self.source / "data.txt").write_text("bad manual patch \n", encoding="utf-8")
+        head = commit_all(self.source, "bad manual patch")
+        result = self.check(self.source, "f" * 40, head, "workflow_dispatch")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("trailing whitespace", result.stdout)
+        self.assertIn("manual-current-revision", result.stderr)
+
+    def test_missing_head_is_fetched_exactly_without_switching_checkout(self) -> None:
+        clone, old, new = self.rewritten_checkout("clean patch\n")
+        result = self.check(clone, self.common, old)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(git(clone, "rev-parse", "HEAD"), new)
 
     def test_revision_expressions_are_rejected(self) -> None:
         result = self.check(self.source, "HEAD^", self.common)

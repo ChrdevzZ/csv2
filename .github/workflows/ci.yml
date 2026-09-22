@@ -29,6 +29,7 @@ jobs:
     outputs:
       base: ${{ steps.range.outputs.base }}
       head: ${{ steps.range.outputs.head }}
+      comparison_mode: ${{ steps.range.outputs.mode }}
       quick: ${{ steps.classify.outputs.quick }}
       benchmark: ${{ steps.classify.outputs.benchmark }}
       fuzz: ${{ steps.classify.outputs.fuzz }}
@@ -44,29 +45,12 @@ jobs:
       - name: Resolve complete comparison range
         id: range
         env:
+          EVENT_NAME: ${{ github.event_name }}
           EVENT_BASE: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || github.event.before }}
           EVENT_HEAD: ${{ github.event.pull_request.head.sha || github.event.merge_group.head_sha || github.sha }}
         run: |
-          set -euo pipefail
-          base="$EVENT_BASE"
-          head="$EVENT_HEAD"
-          force_all=false
-          if [[ -z "$head" ]] || ! git cat-file -e "${head}^{commit}" 2>/dev/null; then
-            head=$(git rev-parse HEAD)
-          fi
-          if [[ -n "$base" ]] && [[ ! "$base" =~ ^0+$ ]] && \
-             ! git cat-file -e "${base}^{commit}" 2>/dev/null; then
-            git fetch --no-tags --depth=1 origin "$base" || true
-          fi
-          if [[ -z "$base" ]] || [[ "$base" =~ ^0+$ ]] || \
-             ! git cat-file -e "${base}^{commit}" 2>/dev/null; then
-            base=$(git rev-parse "${head}^" 2>/dev/null || printf '%s' "$head")
-            force_all=true
-          fi
-          base=$(git rev-parse "${base}^{commit}")
-          head=$(git rev-parse "${head}^{commit}")
-          printf 'base=%s\nhead=%s\nforce_all=%s\n' \
-            "$base" "$head" "$force_all" >> "$GITHUB_OUTPUT"
+          python3 tools/ci/resolve_comparison.py \
+            --event "$EVENT_NAME" --base "$EVENT_BASE" --head "$EVENT_HEAD"
 
       - name: Classify complete Git diff
         id: classify
@@ -198,6 +182,7 @@ jobs:
         if: always()
         env:
           EVENT_HEAD: ${{ github.event.pull_request.head.sha || github.event.merge_group.head_sha || github.sha }}
+          COMPARISON_MODE: ${{ needs.classify.outputs.comparison_mode }}
           PLAN_BENCHMARK: ${{ needs.classify.outputs.benchmark }}
           PLAN_FULL: ${{ needs.classify.outputs.full }}
           PLAN_FUZZ: ${{ needs.classify.outputs.fuzz }}
@@ -206,6 +191,7 @@ jobs:
         run: |
           {
             printf '### CI provenance\n\n'
+            printf -- '- comparison scope: %s\n' "${COMPARISON_MODE:-unavailable}"
             printf -- "- workflow SHA: \`%s\`\n" "$GITHUB_SHA"
             printf -- "- exact event head: \`%s\`\n" "$EVENT_HEAD"
             printf -- "- run ID / attempt: \`%s\` / \`%s\`\n" \
