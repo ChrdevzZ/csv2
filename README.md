@@ -394,6 +394,11 @@ C++11–23, modular/single-header, and variant matrix; C++26 is compile-only. De
 The always-run `CI` workflow classifies the complete Git diff and ends in one
 stable `CI / gate`. Documentation-only changes run preflight and the Gate.
 Preflight also owns the build-independent Python benchmark tooling suite.
+Its patch whitespace check fetches an absent comparison base by exact commit ID,
+since objects fetched by the classifier are not shared with other jobs. If the
+base is no longer retrievable, the check fails explicitly. After an intentional
+history rewrite, manually dispatch `CI` to validate the current revision
+separately; this does not certify the unavailable historical comparison.
 Unknown paths fail safe by selecting every owner applicable to the event. Automatic
 performance-protocol smoke is PR-only. Selected changes call the
 reusable Linux, Windows, macOS, fuzz, exact-head full, and
