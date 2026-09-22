@@ -22,7 +22,7 @@ class PatchWhitespaceTests(unittest.TestCase):
         initialize_repository(self.source)
         git(self.source, "config", "core.autocrlf", "false")
         git(self.source, "config", "commit.gpgsign", "false")
-        (self.source / "data.txt").write_text("initial\n", encoding="utf-8")
+        (self.source / "data.txt").write_text("initial\n", encoding="utf-8", newline="\n")
         self.common = commit_all(self.source, "common")
 
     def check(self, repo: Path, base: str, head: str,
@@ -34,10 +34,10 @@ class PatchWhitespaceTests(unittest.TestCase):
 
     def rewritten_checkout(self, text: str) -> tuple[Path, str, str]:
         git(self.source, "switch", "--quiet", "--create", "discarded")
-        (self.source / "data.txt").write_text("old head\n", encoding="utf-8")
+        (self.source / "data.txt").write_text("old head\n", encoding="utf-8", newline="\n")
         old = commit_all(self.source, "old history")
         git(self.source, "switch", "--quiet", "--create", "rewritten", self.common)
-        (self.source / "data.txt").write_text(text, encoding="utf-8")
+        (self.source / "data.txt").write_text(text, encoding="utf-8", newline="\n")
         new = commit_all(self.source, "rewritten history")
         clone = self.root / "checkout"
         git(self.root, "clone", "--quiet", "--no-local", "--single-branch",
@@ -50,7 +50,7 @@ class PatchWhitespaceTests(unittest.TestCase):
         return clone, old, new
 
     def test_existing_base_does_not_need_a_remote(self) -> None:
-        (self.source / "data.txt").write_text("clean patch\n", encoding="utf-8")
+        (self.source / "data.txt").write_text("clean patch\n", encoding="utf-8", newline="\n")
         head = commit_all(self.source, "clean patch")
         result = self.check(self.source, self.common, head)
         self.assertEqual(result.returncode, 0, result.stderr)
@@ -110,12 +110,12 @@ class PatchWhitespaceTests(unittest.TestCase):
     def test_pull_request_and_merge_group_keep_merge_base_semantics(self) -> None:
         # The base branch fixes inherited whitespace. A PR does not reintroduce
         # that whitespace unless its patch against the common ancestor adds it.
-        (self.source / "inherited.txt").write_text("inherited \n", encoding="utf-8")
+        (self.source / "inherited.txt").write_text("inherited \n", encoding="utf-8", newline="\n")
         ancestor = commit_all(self.source, "inherited whitespace")
-        (self.source / "inherited.txt").write_text("inherited\n", encoding="utf-8")
+        (self.source / "inherited.txt").write_text("inherited\n", encoding="utf-8", newline="\n")
         base = commit_all(self.source, "base branch fix")
         git(self.source, "switch", "--quiet", "--detach", ancestor)
-        (self.source / "data.txt").write_text("clean topic change\n", encoding="utf-8")
+        (self.source / "data.txt").write_text("clean topic change\n", encoding="utf-8", newline="\n")
         head = commit_all(self.source, "topic change")
         for event in ("pull_request", "merge_group"):
             with self.subTest(event=event):
@@ -128,7 +128,7 @@ class PatchWhitespaceTests(unittest.TestCase):
                 self.assertIn("trailing whitespace", result.stdout)
 
     def test_root_and_new_branch_check_the_snapshot(self) -> None:
-        (self.source / "data.txt").write_text("bad snapshot \n", encoding="utf-8")
+        (self.source / "data.txt").write_text("bad snapshot \n", encoding="utf-8", newline="\n")
         head = commit_all(self.source, "bad snapshot")
         result = self.check(self.source, "0" * 40, head)
         self.assertNotEqual(result.returncode, 0)
@@ -136,7 +136,7 @@ class PatchWhitespaceTests(unittest.TestCase):
         self.assertIn("new-branch-snapshot", result.stderr)
 
     def test_manual_scope_checks_first_parent_not_supplied_old_base(self) -> None:
-        (self.source / "data.txt").write_text("bad manual patch \n", encoding="utf-8")
+        (self.source / "data.txt").write_text("bad manual patch \n", encoding="utf-8", newline="\n")
         head = commit_all(self.source, "bad manual patch")
         result = self.check(self.source, "f" * 40, head, "workflow_dispatch")
         self.assertNotEqual(result.returncode, 0)
