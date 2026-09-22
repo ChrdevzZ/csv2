@@ -1,6 +1,7 @@
 self-hosted-runner:
   labels:
     - csv2-perf
+    - csv2-perf-public
 
 config-variables: null
 

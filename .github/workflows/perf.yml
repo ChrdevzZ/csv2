@@ -349,10 +349,16 @@ jobs:
           DISPATCH_REF: ${{ github.ref }}
           OPERATIONS: ${{ inputs.operations }}
           OWNER: ${{ github.repository_owner }}
+          PUBLIC_RUNNER_APPROVED: ${{ vars.CSV2_PERF_PUBLIC_RUNNER_APPROVED }}
           RUNS: ${{ inputs.runs }}
           TRIGGERING_ACTOR: ${{ github.triggering_actor }}
         run: |
           set -euo pipefail
+          if [[ "$PUBLIC_RUNNER_APPROVED" != 'true' ]]; then
+            echo 'Controlled cloud runs require a dedicated public runner and CSV2_PERF_PUBLIC_RUNNER_APPROVED=true.' >&2
+            echo 'Logs, machine profiles, paths, raw evidence, and failure diagnostics will be public. Use the local protocol for private machines.' >&2
+            exit 1
+          fi
           test "$ACTOR" = "$OWNER"
           test "$TRIGGERING_ACTOR" = "$OWNER"
           test "$DISPATCH_REF" = "refs/heads/$DEFAULT_BRANCH"
@@ -370,7 +376,7 @@ jobs:
     needs: authorize-controlled
     if: needs.authorize-controlled.result == 'success'
     name: Perf / controlled / csv2-perf runner
-    runs-on: [self-hosted, linux, x64, csv2-perf]
+    runs-on: [self-hosted, linux, x64, csv2-perf, csv2-perf-public]
     environment: csv2-perf
     timeout-minutes: 180
     steps:

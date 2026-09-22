@@ -491,8 +491,8 @@ All timing remains `exploratory` and non-decision-eligible.
 
 The manual `Performance evidence` workflow produces and finalizes broader
 exploratory artifacts on a hosted runner or controlled artifacts only on a
-self-hosted runner carrying the `csv2-perf` label. It checks out the exact
-candidate, verifies `HEAD`, loads the preconfigured
+dedicated self-hosted runner carrying both `csv2-perf` and `csv2-perf-public` labels.
+It checks out the exact candidate, verifies `HEAD`, and loads the preconfigured
 `CSV2_PERF_MACHINE_PROFILE` on a controlled runner. Controlled dispatch also
 requires `cpu_affinity`: the workflow normalizes that explicit CPU list and
 checks its actual taskset affinity against the profile before any build, then
@@ -507,6 +507,23 @@ produced; failed runs upload a separate diagnostics artifact, never an evidence 
 Controlled execution is additionally restricted to a repository-owner manual
 dispatch from the default branch with explicit full baseline/candidate SHAs and
 the `csv2-perf` Environment; compiler caches remain disabled on that path.
+Controlled cloud runs are disabled by default. Before setting the repository variable
+`CSV2_PERF_PUBLIC_RUNNER_APPROVED=true`, provision a dedicated runner whose identity,
+hostname, account/workspace paths, machine profile, compiler diagnostics, and
+benchmark inputs are all suitable for public disclosure, and then assign its
+`csv2-perf-public` label. The authorization job rejects absent or other variable
+values before scheduling the self-hosted job. Keep the variable unset for private
+machines; use the local commands above and retain their complete output privately.
+Do not assign this label to a personal workstation or a machine with private mounts.
+
+Artifacts and Actions logs in this public repository are public evidence, including
+failure diagnostics. Environment approval restricts execution, not artifact access.
+Raw profiles, paths, and host observations participate in the evidence binding;
+redacting them in place invalidates the report. Any manually published summary of
+private measurements must be separate from the original evidence, omit private
+identifiers, and must not claim to be a complete independently verifiable bundle.
+Changing the workflow does not remove artifacts or logs from earlier runs.
+
 This infrastructure makes no library performance claim.
 
 Owned builds accept only controlled code-generation flags and bind sanitized

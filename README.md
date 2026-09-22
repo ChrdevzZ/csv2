@@ -407,7 +407,9 @@ Unknown paths fail safe by selecting every owner applicable to the event. Automa
 performance-protocol smoke is PR-only. Selected changes call the
 reusable Linux, Windows, macOS, fuzz, exact-head full, and
 performance-protocol workflows. Manual full and performance runs retain the
-broader platform matrix and controlled self-hosted path.
+broader platform matrix and controlled self-hosted path. Cloud controlled runs require
+a dedicated public runner and explicit repository opt-in; see the
+[benchmark publication policy](benchmark/README.md).
 
 ## Installing and Consuming with CMake
 
