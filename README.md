@@ -394,11 +394,22 @@ C++11–23, modular/single-header, and variant matrix; C++26 is compile-only. De
 The always-run `CI` workflow classifies the complete Git diff and ends in one
 stable `CI / gate`. Documentation-only changes run preflight and the Gate.
 Preflight also owns the build-independent Python benchmark tooling suite.
+Both classification and patch whitespace checks fetch absent event objects by exact commit ID,
+since objects fetched by the classifier are not shared with other jobs. If the
+base or head is no longer retrievable, the check fails explicitly; neither is
+replaced with `HEAD` or its parent. After an intentional history rewrite, manually
+dispatch `CI` to validate the current revision
+separately, with whitespace checked against its first parent (the empty tree for a root).
+The run summary labels this manual scope; it does not certify the unavailable historical comparison.
+A new-branch push checks its complete snapshot against the empty tree and selects all applicable owners.
+PR and merge-group checks retain merge-base semantics. Shallow histories are rejected.
 Unknown paths fail safe by selecting every owner applicable to the event. Automatic
 performance-protocol smoke is PR-only. Selected changes call the
 reusable Linux, Windows, macOS, fuzz, exact-head full, and
 performance-protocol workflows. Manual full and performance runs retain the
-broader platform matrix and controlled self-hosted path.
+broader platform matrix and controlled self-hosted path. Cloud controlled runs require
+a dedicated public runner and explicit repository opt-in; see the
+[benchmark publication policy](benchmark/README.md).
 
 ## Installing and Consuming with CMake
 

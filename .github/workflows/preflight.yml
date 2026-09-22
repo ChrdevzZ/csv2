@@ -31,11 +31,8 @@ jobs:
           EVENT_NAME: ${{ github.event_name }}
           HEAD_SHA: ${{ inputs.head }}
         run: |
-          comparison="$BASE_SHA..$HEAD_SHA"
-          if [[ "$EVENT_NAME" == 'pull_request' || "$EVENT_NAME" == 'merge_group' ]]; then
-            comparison="$BASE_SHA...$HEAD_SHA"
-          fi
-          git diff --no-renames --check "$comparison"
+          python3 tools/ci/check_patch_whitespace.py \
+            --base "$BASE_SHA" --head "$HEAD_SHA" --event "$EVENT_NAME"
 
       - name: Set up minimum supported Python
         uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
